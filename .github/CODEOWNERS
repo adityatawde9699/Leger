@@ -1,0 +1,25 @@
+# CODEOWNERS — auto-assigns reviewers for PRs
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything
+* @your-username
+
+# Backend
+/backend/                       @your-username
+/backend/app/services/          @your-username
+/backend/app/models.py          @your-username
+/backend/app/main.py            @your-username
+
+# Frontend
+/frontend/                      @your-username
+/frontend/src/views/            @your-username
+/frontend/src/styles.css        @your-username
+
+# CI/CD & DevOps
+/.github/                       @your-username
+/docker-compose.yml             @your-username
+
+# Security-sensitive files
+/backend/app/auth.py            @your-username
+/backend/app/config.py          @your-username
+/SECURITY.md                    @your-username
