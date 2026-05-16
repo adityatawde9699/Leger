@@ -2,24 +2,24 @@
 # https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Default owners for everything
-* @your-username
+* @adityatawde9699
 
 # Backend
-/backend/                       @your-username
-/backend/app/services/          @your-username
-/backend/app/models.py          @your-username
-/backend/app/main.py            @your-username
+/backend/                       @adityatawde9699
+/backend/app/services/          @adityatawde9699
+/backend/app/models.py          @adityatawde9699
+/backend/app/main.py            @adityatawde9699
 
 # Frontend
-/frontend/                      @your-username
-/frontend/src/views/            @your-username
-/frontend/src/styles.css        @your-username
+/frontend/                      @adityatawde9699
+/frontend/src/views/            @adityatawde9699
+/frontend/src/styles.css        @adityatawde9699
 
 # CI/CD & DevOps
-/.github/                       @your-username
-/docker-compose.yml             @your-username
+/.github/                       @adityatawde9699
+/docker-compose.yml             @adityatawde9699
 
 # Security-sensitive files
-/backend/app/auth.py            @your-username
-/backend/app/config.py          @your-username
-/SECURITY.md                    @your-username
+/backend/app/auth.py            @adityatawde9699
+/backend/app/config.py          @adityatawde9699
+/SECURITY.md                    @adityatawde9699

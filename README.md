@@ -7,7 +7,7 @@
 Track expenses, automate categorization, scan receipts, manage investments,
 and get AI-powered financial insights — all with local-first privacy.
 
-[![CI](https://github.com/your-username/ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/ledger/actions/workflows/ci.yml)
+[![CI](https://github.com/adityatawde9699/Leger/actions/workflows/ci.yml/badge.svg)](https://github.com/adityatawde9699/Leger/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -75,7 +75,7 @@ and get AI-powered financial insights — all with local-first privacy.
 ### 1. Clone
 
 ```bash
-git clone https://github.com/your-username/ledger.git
+git clone https://github.com/adityatawde9699/Leger.git
 cd ledger
 ```
 

@@ -12,7 +12,7 @@
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/ledger.git
+git clone https://github.com/adityatawde9699/Leger.git
 cd ledger
 ```
 

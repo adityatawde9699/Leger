@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup-labels.sh — Run once after creating the GitHub repo
-# Usage: GITHUB_TOKEN=ghp_xxx ./scripts/setup-labels.sh your-username/ledger
+# Usage: GITHUB_TOKEN=ghp_xxx ./scripts/setup-labels.sh adityatawde9699/Leger
 
 set -euo pipefail
 

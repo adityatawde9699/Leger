@@ -14,7 +14,7 @@ Thank you for your interest in contributing to Ledger! This guide will help you 
 
 ```bash
 # Fork and clone
-git clone https://github.com/<your-username>/ledger.git
+git clone https://github.com/adityatawde9699/Leger.git
 cd ledger
 
 # Backend
@@ -150,7 +150,7 @@ cd frontend && npm run build
 
 ## Getting Help
 
-- Open an [issue](https://github.com/your-username/ledger/issues) for bugs or features
+- Open an [issue](https://github.com/adityatawde9699/Leger/issues) for bugs or features
 - Check existing issues and PRs before creating new ones
 - Tag issues with appropriate labels
 

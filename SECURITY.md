@@ -14,7 +14,7 @@
 Please report security issues responsibly:
 
 1. **Email:** Send details to `security@your-domain.com`
-2. **GitHub:** Use [GitHub's private vulnerability reporting](https://github.com/your-username/ledger/security/advisories/new)
+2. **GitHub:** Use [GitHub's private vulnerability reporting](https://github.com/adityatawde9699/Leger/security/advisories/new)
 
 ### Include in Your Report
 

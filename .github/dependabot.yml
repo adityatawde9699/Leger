@@ -8,7 +8,7 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     labels: ["dependencies", "backend"]
-    reviewers: ["your-username"]
+    reviewers: ["adityatawde9699"]
     commit-message:
       prefix: "deps(py):"
     ignore:
@@ -23,7 +23,7 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     labels: ["dependencies", "frontend"]
-    reviewers: ["your-username"]
+    reviewers: ["adityatawde9699"]
     commit-message:
       prefix: "deps(js):"
     ignore:
