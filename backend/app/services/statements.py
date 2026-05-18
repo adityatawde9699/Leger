@@ -147,66 +147,50 @@ def _parse_text_rows(text: str) -> list[dict]:
     return rows
 
 
-# ── OCR pipeline for scanned/image PDFs ─────────────────────────
-
-async def _anthropic_parse_pdf(content: bytes) -> str:
-    """
-    Send the PDF to Anthropic Claude 3.5 Sonnet to extract the transaction text
-    since it natively supports PDF parsing (both text and image-based PDFs).
-    Returns concatenated raw text for the regex parser.
-    """
-    if not settings.anthropic_api_key:
-        logger.warning("No Anthropic API key found. Cannot parse image-based PDF.")
+async def _gemini_parse_pdf(content: bytes) -> str:
+    """Send the PDF to Gemini 1.5 Flash to extract transaction text."""
+    if not settings.gemini_api_key:
+        return ""
+    
+    logger.info("Sending PDF to Gemini for extraction...")
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=settings.gemini_api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        
+        pdf_part = {"mime_type": "application/pdf", "data": content}
+        prompt = "You are a financial data extraction assistant. Extract all transaction rows from this bank statement. Maintain the original row structure so regex can parse it. Do not add any extra commentary."
+        
+        response = await model.generate_content_async([pdf_part, prompt])
+        return response.text
+    except Exception as e:
+        logger.warning("Gemini PDF extraction failed: %s", e)
         return ""
 
-    logger.info("Sending PDF to Anthropic for extraction...")
-    
-    b64_pdf = base64.b64encode(content).decode("utf-8")
-    
-    payload = {
-        "model": "claude-3-5-sonnet-latest",
-        "max_tokens": 4096,
-        "system": "You are a financial data extraction assistant. Extract all transaction rows from this bank statement. Maintain the original row structure so regex can parse it. Do not add any extra commentary.",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": b64_pdf
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": "Extract all transactions."
-                    }
-                ]
-            }
-        ]
-    }
+async def _mistral_ocr_pdf(content: bytes) -> str:
+    """Send the PDF to Mistral OCR as a fallback."""
+    if not settings.mistral_api_key:
+        return ""
 
+    logger.info("Sending PDF to Mistral OCR...")
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": settings.anthropic_api_key,
-                    "anthropic-version": "2023-06-01",
-                    "anthropic-beta": "pdfs-2024-09-25"
-                },
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["content"][0]["text"]
-            
-    except (json.JSONDecodeError, KeyError, httpx.HTTPError) as e:
-        logger.warning("Anthropic PDF extraction failed: %s", e)
-        if isinstance(e, httpx.HTTPError) and hasattr(e, "response") and e.response is not None:
-             logger.warning("Anthropic API Error body: %s", e.response.text)
+        from mistralai import Mistral
+        import base64
+        
+        client = Mistral(api_key=settings.mistral_api_key)
+        pdf_b64 = base64.b64encode(content).decode("utf-8")
+        
+        response = await client.ocr.process_async(
+            model="mistral-ocr-latest",
+            document={
+                "type": "document_url",
+                "document_url": f"data:application/pdf;base64,{pdf_b64}"
+            }
+        )
+        texts = [page.markdown for page in response.pages]
+        return "\n".join(texts)
+    except Exception as e:
+        logger.warning("Mistral OCR extraction failed: %s", e)
         return ""
 
 
@@ -244,22 +228,22 @@ async def parse_pdf(content: bytes) -> list[dict]:
         logger.info("PDF: no structured tables found, trying text-regex parser")
         rows = _parse_text_rows("\n".join(full_text_lines))
 
-    # ── 3. OCR fallback (image-based / scanned PDF) ──
+    # ── 3. AI Parsing fallback (image-based / scanned PDF) ──
     if not rows and not has_any_text:
-        logger.info("PDF appears to be image-based, attempting Anthropic extraction")
+        logger.info("PDF appears to be image-based, attempting Gemini extraction")
+        ocr_text = await _gemini_parse_pdf(content)
         
-        ocr_text = await _anthropic_parse_pdf(content)
+        if not ocr_text.strip():
+            logger.info("Gemini failed or returned empty, attempting Mistral OCR")
+            ocr_text = await _mistral_ocr_pdf(content)
         
         if ocr_text.strip():
-            # Pass raw OCR text block into the same regex parser
+            # Pass raw extracted text block into the same regex parser
             rows = _parse_text_rows(ocr_text)
             
             if not rows:
-                logger.warning("Anthropic extracted text but regex parser found no transactions.")
+                logger.warning("AI extracted text but regex parser found no transactions.")
         else:
-            logger.warning(
-                "PDF is image-based and Anthropic returned no text. "
-                "Ensure ANTHROPIC_API_KEY is configured."
-            )
+            logger.warning("PDF is image-based and all AI extractors failed.")
 
     return rows

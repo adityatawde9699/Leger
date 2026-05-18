@@ -10,4 +10,9 @@ python-jose[cryptography]==3.3.0
 httpx==0.28.1
 firebase-admin==6.6.0
 slowapi==0.1.9
-# OCR & Local LLM dependencies removed for cloud API offloading
+# Free Tier AI Providers
+groq==0.9.0
+google-generativeai==0.8.3
+cerebras-cloud-sdk==1.5.0
+openai==1.51.0
+mistralai==1.0.3

@@ -12,7 +12,14 @@ class Settings(BaseSettings):
     supabase_jwks_url: str | None = None
     firebase_project_id: str | None = None
 
-    # AI — Cloud
+    # AI Providers (free tiers)
+    groq_api_key: str | None = None
+    gemini_api_key: str | None = None
+    cerebras_api_key: str | None = None
+    openrouter_api_key: str | None = None
+    mistral_api_key: str | None = None
+
+    # Keep this so existing .env files don't break — but it won't be used
     anthropic_api_key: str | None = None
 
 
@@ -45,9 +52,14 @@ class Settings(BaseSettings):
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            if not self.anthropic_api_key:
+            if not any([
+                self.groq_api_key, 
+                self.cerebras_api_key, 
+                self.gemini_api_key, 
+                self.openrouter_api_key
+            ]):
                 print(
-                    "WARNING: No AI backend configured. Set ANTHROPIC_API_KEY.",
+                    "WARNING: No AI backend configured. Set at least one provider API key.",
                     file=sys.stderr,
                 )
         elif self.auth_provider == "dev":
