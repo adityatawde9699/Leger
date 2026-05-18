@@ -155,6 +155,9 @@ def _paddleocr_parse_pdf(content: bytes) -> str:
     Returns concatenated raw text for the regex parser.
     """
     try:
+        import os
+        # Disable MKLDNN to fix Windows CPU (Unimplemented) ConvertPirAttribute2RuntimeAttribute bug
+        os.environ['PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT'] = '0'
         import pypdfium2 as pdfium
         from paddleocr import PaddleOCR
         import numpy as np

@@ -33,6 +33,8 @@ RECEIPT TEXT:
 def _paddleocr_extract(image_bytes: bytes) -> str:
     """Extract raw text from receipt image using PaddleOCR."""
     try:
+        import os
+        os.environ['PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT'] = '0'
         from paddleocr import PaddleOCR
         import numpy as np
         from PIL import Image
