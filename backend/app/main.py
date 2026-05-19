@@ -361,53 +361,66 @@ def get_summary(
     budgets = db.query(Budget).filter(Budget.user_id == user.id).all()
     summary = monthly_summary(transactions)
 
-    # ── Compute opening / closing balance via direct SQL (reliable for batch imports) ──
-    # Batch-imported transactions share an identical created_at timestamp. We stored
-    # stmt_seq (CSV row index) during import to preserve original statement order.
-    opening_balance = None
-    closing_balance = None
+    from decimal import Decimal
 
-    if transactions:
-        bal_filter = [
-            Transaction.user_id == user.id,
-            Transaction.running_balance.isnot(None),
-            Transaction.stmt_seq.isnot(None),
-        ]
-        if month:
-            period_start, period_end = _month_range(month)
-            bal_filter += [Transaction.date >= period_start, Transaction.date < period_end]
-        elif range:
-            period_start_d = _history_start(range)
-            if period_start_d:
-                bal_filter.append(Transaction.date >= period_start_d)
-
-        # Closing balance: the LAST row in statement order (highest stmt_seq) gives
-        # the authoritative closing balance for the period.
-        last_tx = (
-            db.query(Transaction)
-            .filter(*bal_filter)
-            .order_by(Transaction.stmt_seq.desc())
-            .first()
+    def _calculate_balance_at(db_session, user_id, as_of_date: date | None = None) -> Decimal | None:
+        """Calculates the true balance up to (but not including) as_of_date. If as_of_date is None, up to now."""
+        base_query = db_session.query(Transaction).filter(
+            Transaction.user_id == user_id,
+            Transaction.running_balance.isnot(None)
         )
-        if last_tx:
-            closing_balance = last_tx.running_balance
+        if as_of_date:
+            base_query = base_query.filter(Transaction.date < as_of_date)
+            
+        last_known_tx = base_query.order_by(
+            Transaction.date.desc(),
+            Transaction.created_at.desc(),
+            Transaction.stmt_seq.desc()
+        ).first()
 
-        # Opening balance: reconstruct from the FIRST row in statement order (lowest stmt_seq).
-        # opening = running_balance_of_first_tx ± first_tx_amount
-        first_tx = (
-            db.query(Transaction)
-            .filter(*bal_filter)
-            .order_by(Transaction.stmt_seq.asc())
-            .first()
+        if not last_known_tx:
+            return None
+
+        subsequent_query = db_session.query(Transaction).filter(
+            Transaction.user_id == user_id,
+            Transaction.date >= last_known_tx.date
         )
-        if first_tx:
-            if first_tx.type == "income":
-                opening_balance = first_tx.running_balance - first_tx.amount
-            else:
-                opening_balance = first_tx.running_balance + first_tx.amount
+        if as_of_date:
+            subsequent_query = subsequent_query.filter(Transaction.date < as_of_date)
+            
+        net_change = Decimal("0")
+        for tx in subsequent_query.all():
+            if tx.id == last_known_tx.id:
+                continue
+            is_after = False
+            if tx.date > last_known_tx.date:
+                is_after = True
+            elif tx.date == last_known_tx.date:
+                if tx.created_at > last_known_tx.created_at:
+                    is_after = True
+                elif tx.created_at == last_known_tx.created_at:
+                    if (tx.stmt_seq or 0) > (last_known_tx.stmt_seq or 0):
+                        is_after = True
+                    elif tx.id > last_known_tx.id and (tx.stmt_seq or 0) == (last_known_tx.stmt_seq or 0):
+                        is_after = True
+                        
+            if is_after:
+                if tx.type == "income":
+                    net_change += tx.amount
+                else:
+                    net_change -= tx.amount
+                    
+        return last_known_tx.running_balance + net_change
 
-    summary["opening_balance"] = opening_balance
-    summary["closing_balance"] = closing_balance
+    period_end = None
+    period_start_d = None
+    if month:
+        period_start_d, period_end = _month_range(month)
+    elif range:
+        period_start_d = _history_start(range)
+
+    summary["closing_balance"] = _calculate_balance_at(db, user.id, period_end)
+    summary["opening_balance"] = _calculate_balance_at(db, user.id, period_start_d) if period_start_d else None
 
     return {
         **summary,
