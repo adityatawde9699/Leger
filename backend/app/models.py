@@ -32,6 +32,8 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    currency_preference: Mapped[str] = mapped_column(String(3), default="INR")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")
     budgets: Mapped[list["Budget"]] = relationship(back_populates="user")

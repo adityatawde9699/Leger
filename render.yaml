@@ -1,0 +1,37 @@
+# Render.com deployment configuration
+# Docs: https://render.com/docs/yaml-spec
+
+services:
+  - type: web
+    name: ledger-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free          # upgrade to starter for persistent disk
+    region: singapore   # closest to India; change to ohio for US users
+    healthCheckPath: /ping
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false     # set in Render dashboard → secret
+      - key: AUTH_PROVIDER
+        sync: false     # supabase | firebase
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false     # comma-separated, e.g. https://your-app.vercel.app
+      # AI Providers — set at least one
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Optional
+      - key: WORKERS
+        value: "1"      # free tier has 512MB RAM — 1 worker is safer
+      - key: ADVISOR_RATE_LIMIT
+        value: "10/minute"

@@ -12,6 +12,33 @@ class UserContext(BaseModel):
     email: str | None = None
 
 
+# ── Profile ───────────────────────────────────────────────────────────────────
+
+
+class UserProfileIn(BaseModel):
+    display_name: str | None = Field(default=None, max_length=128)
+    currency_preference: str = Field(default="INR", pattern="^[A-Z]{3}$")
+
+
+class UserProfileOut(BaseModel):
+    id: str
+    email: str | None
+    display_name: str | None
+    currency_preference: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProfileStatsOut(BaseModel):
+    total_transactions: int
+    total_income: Decimal
+    total_expenses: Decimal
+    net_balance: Decimal
+    accounts_count: int
+    budgets_count: int
+
+
 # ── Accounts ─────────────────────────────────────────────────────────────────
 
 

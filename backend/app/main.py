@@ -29,6 +29,7 @@ from .models import (
     ImportJob,
     Portfolio,
     Transaction,
+    User,
     Webhook,
 )
 from .schemas import (
@@ -54,11 +55,14 @@ from .schemas import (
     PortfolioIn,
     PortfolioOut,
     ProactiveInsight,
+    ProfileStatsOut,
     SmsParseRequest,
     SmsWebhookRequest,
     TransactionIn,
     TransactionOut,
     UserContext,
+    UserProfileIn,
+    UserProfileOut,
     WebhookIn,
     WebhookOut,
 )
@@ -339,10 +343,81 @@ def _format_overspending(transactions: list[Transaction]) -> str:
     )
 
 
+# ── Keep-alive ping (Render free tier cold-start prevention) ─────────────────
+@app.get("/ping")
+def ping():
+    """Lightweight health check / keep-alive. No DB, no auth. ~0ms overhead."""
+    return {"pong": True}
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"ok": True, "version": "1.0.1"}
+
+
+# ── Profile ───────────────────────────────────────────────────────────────────
+@app.get("/profile", response_model=UserProfileOut)
+def get_profile(
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db_user = db.get(User, user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return db_user
+
+
+@app.put("/profile", response_model=UserProfileOut)
+def update_profile(
+    payload: UserProfileIn,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db_user = db.get(User, user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if payload.display_name is not None:
+        db_user.display_name = payload.display_name.strip() or None
+    db_user.currency_preference = payload.currency_preference
+    db.commit()
+    db.refresh(db_user)
+    logger.info("profile.updated user=%s", user.id)
+    return db_user
+
+
+@app.get("/profile/stats", response_model=ProfileStatsOut)
+def get_profile_stats(
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from sqlalchemy import func
+
+    # SQLite-compatible separate aggregate queries
+    total_txns = db.query(func.count(Transaction.id)).filter(
+        Transaction.user_id == user.id
+    ).scalar() or 0
+    total_income = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+        Transaction.user_id == user.id, Transaction.type == "income"
+    ).scalar() or Decimal("0")
+    total_expenses = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+        Transaction.user_id == user.id, Transaction.type == "expense"
+    ).scalar() or Decimal("0")
+    accounts_count = db.query(func.count(Account.id)).filter(
+        Account.user_id == user.id, Account.is_active.is_(True)
+    ).scalar() or 0
+    budgets_count = db.query(func.count(Budget.id)).filter(
+        Budget.user_id == user.id
+    ).scalar() or 0
+
+    return ProfileStatsOut(
+        total_transactions=total_txns,
+        total_income=total_income,
+        total_expenses=total_expenses,
+        net_balance=total_income - total_expenses,
+        accounts_count=accounts_count,
+        budgets_count=budgets_count,
+    )
 
 
 # ── Transactions ──────────────────────────────────────────────────────────────

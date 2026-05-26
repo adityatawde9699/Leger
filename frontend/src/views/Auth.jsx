@@ -18,6 +18,16 @@ export default function Auth() {
     setMessage(null);
 
     try {
+      if (import.meta.env.VITE_AUTH_PROVIDER === 'dev') {
+        const session = {
+          access_token: "dev-user",
+          user: { email: email || "dev@ledger.local" },
+        };
+        localStorage.setItem("dev-session", JSON.stringify(session));
+        window.location.reload();
+        return;
+      }
+
       if (isLogin) {
         const { error } = await supabase.auth.signInWithPassword({
           email,

@@ -26,21 +26,30 @@ class Settings(BaseSettings):
     # Redis (optional — L2 cache, gracefully skipped if unavailable)
     redis_url: str = "redis://localhost:6379/0"
 
-    # CORS — comma-separated list of allowed origins
-    cors_origins: list[str] = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://ledger-beta-two.vercel.app",
-    ]
+    # CORS — comma-separated or JSON list of allowed origins
+    # Render sets env vars as plain strings, so support both formats:
+    #   CORS_ORIGINS=https://my-app.vercel.app,https://my-app-preview.vercel.app
+    cors_origins_raw: str = (
+        "http://localhost:5173,"
+        "http://127.0.0.1:5173,"
+        "https://ledger-beta-two.vercel.app"
+    )
+
+    @property
+    def cors_origins(self) -> list[str]:
+        raw = self.cors_origins_raw.strip()
+        if raw.startswith("["):  # JSON array format
+            import json
+            return json.loads(raw)
+        return [o.strip() for o in raw.split(",") if o.strip()]
 
     # Rate limiting
     advisor_rate_limit: str = "10/minute"
 
-    # ── AI Intelligence Settings (v2) ─────────────────────────────────────────
-    # Local embeddings (sentence-transformers)
-    enable_local_embeddings: bool = True
-    embedding_model: str = "all-MiniLM-L6-v2"
+    # Logging
+    log_level: str = "info"
 
+    # ── AI Intelligence Settings (v2) ─────────────────────────────────────────
     # Categorization confidence threshold below which LLM is called
     categorization_confidence_threshold: float = 0.85
 
@@ -61,6 +70,8 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         env_parse_none_str="",
+        # Allow "cors_origins" in .env to map to cors_origins_raw
+        populate_by_name=True,
     )
 
     def validate_for_production(self) -> None:
