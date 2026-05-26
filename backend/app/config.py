@@ -1,5 +1,7 @@
+import json
 import sys
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,17 +28,18 @@ class Settings(BaseSettings):
     # Redis (optional — L2 cache, gracefully skipped if unavailable)
     redis_url: str = "redis://localhost:6379/0"
 
-    # CORS — comma-separated or JSON list of allowed origins
-    # Render sets env vars as plain strings, so support both formats:
-    #   CORS_ORIGINS=https://my-app.vercel.app,https://my-app-preview.vercel.app
-    cors_origins_raw: str = "http://localhost:5173,http://127.0.0.1:5173,https://ledger-beta-two.vercel.app"
+    # CORS — comma-separated list of allowed origins.
+    # Set CORS_ORIGINS on Render as:
+    #   https://your-app.vercel.app,https://ledger-beta-two.vercel.app
+    cors_origins: str = Field(
+        default=("http://localhost:5173,http://127.0.0.1:5173,https://ledger-beta-two.vercel.app"),
+        alias="CORS_ORIGINS",
+    )
 
-    @property
-    def cors_origins(self) -> list[str]:
-        raw = self.cors_origins_raw.strip()
-        if raw.startswith("["):  # JSON array format
-            import json
-
+    def get_cors_origins(self) -> list[str]:
+        """Parse CORS_ORIGINS string into a list. Supports comma-sep or JSON array."""
+        raw = self.cors_origins.strip()
+        if raw.startswith("["):
             return json.loads(raw)
         return [o.strip() for o in raw.split(",") if o.strip()]
 
@@ -67,7 +70,6 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         env_parse_none_str="",
-        # Allow "cors_origins" in .env to map to cors_origins_raw
         populate_by_name=True,
     )
 

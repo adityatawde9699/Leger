@@ -168,11 +168,35 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+# ── Global error handler — ensures CORS headers on 500s ───────────────────────
+# Starlette's ServerErrorMiddleware intercepts unhandled exceptions before the
+# CORS middleware can add headers. This handler re-adds them so the browser
+# gets a proper CORS-compliant error response instead of a blocked request.
+@app.exception_handler(Exception)
+async def _global_exception_handler(request, exc: Exception):
+    from fastapi.responses import JSONResponse
+
+    logger.exception("Unhandled error: %s %s", request.method, request.url.path)
+    origin = request.headers.get("origin", "")
+    allowed = settings.get_cors_origins()
+    headers = {}
+    if origin and (origin in allowed or "*" in allowed):
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers=headers,
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
