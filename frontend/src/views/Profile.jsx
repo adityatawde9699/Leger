@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch, money } from "../lib";
 import { useToast } from "../components/ui";
 import {
   User, Mail, Calendar, TrendingUp, TrendingDown,
   DollarSign, CreditCard, Target, Edit3, Check, X,
   LogOut, AlertTriangle, Shield, Wallet, BarChart3,
-  Loader2, RefreshCw,
+  Loader2, RefreshCw, Camera
 } from "lucide-react";
 
 // ── Avatar helpers ────────────────────────────────────────────────────────────
@@ -40,6 +40,7 @@ function formatDate(isoStr) {
 // ── Main Profile component ────────────────────────────────────────────────────
 export default function Profile({ onSignOut }) {
   const toast = useToast();
+  const fileInputRef = useRef(null);
   const [profile, setProfile] = useState(null);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -47,6 +48,7 @@ export default function Profile({ onSignOut }) {
   const [saving, setSaving] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [form, setForm] = useState({ display_name: "", currency_preference: "INR" });
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const loadProfile = useCallback(async () => {
     setLoading(true);
@@ -92,6 +94,54 @@ export default function Profile({ onSignOut }) {
     setEditing(false);
   };
 
+  const handleAvatarClick = () => {
+    if (fileInputRef.current) fileInputRef.current.click();
+  };
+
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast("Please select an image file", "error");
+      return;
+    }
+    
+    if (file.size > 2 * 1024 * 1024) {
+      toast("Image must be smaller than 2MB", "error");
+      return;
+    }
+
+    setUploadingAvatar(true);
+    try {
+      // Convert to base64
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = async () => {
+        const base64Str = reader.result;
+        
+        const updated = await apiFetch("/profile", {
+          method: "PUT",
+          body: JSON.stringify({
+            avatar_url: base64Str,
+          }),
+        });
+        setProfile(updated);
+        toast("Profile photo updated", "success");
+        setUploadingAvatar(false);
+      };
+      reader.onerror = () => {
+        toast("Failed to read file", "error");
+        setUploadingAvatar(false);
+      };
+    } catch (err) {
+      toast(err.message, "error");
+      setUploadingAvatar(false);
+    }
+    // reset input
+    e.target.value = null;
+  };
+
   if (loading) {
     return (
       <div className="view-profile">
@@ -104,7 +154,7 @@ export default function Profile({ onSignOut }) {
           </div>
         </div>
         <div className="profile-stats-grid">
-          {[1,2,3,4].map(i => (
+          {[1,2,3,4,5,6].map(i => (
             <div key={i} className="card profile-stat-card skeleton-card">
               <div className="skeleton-line narrow" style={{ marginBottom: 12 }} />
               <div className="skeleton-line wide" />
@@ -118,6 +168,7 @@ export default function Profile({ onSignOut }) {
   const displayName = profile?.display_name || profile?.email?.split("@")[0] || "User";
   const initials = getInitials(profile?.display_name, profile?.email);
   const gradient = pickGradient(profile?.id || "");
+  const avatarUrl = profile?.avatar_url;
 
   const statCards = [
     {
@@ -148,17 +199,38 @@ export default function Profile({ onSignOut }) {
   ];
 
   return (
-    <div className="view-profile">
+    <div className="view-profile premium-view">
       {/* ── Profile Hero ─────────────────────────────────────────────── */}
-      <div className="profile-hero card">
-        <div className="profile-avatar-wrap">
-          <div
-            className="profile-avatar-lg"
-            style={{ background: gradient }}
-            aria-label={`Avatar for ${displayName}`}
-          >
-            {initials}
+      <div className="profile-hero card premium-hero">
+        <div className="profile-avatar-wrap" onClick={handleAvatarClick} style={{ cursor: "pointer" }}>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleAvatarChange} 
+            accept="image/*" 
+            style={{ display: "none" }} 
+          />
+          {avatarUrl ? (
+            <img src={avatarUrl} alt="Avatar" className="profile-avatar-lg" />
+          ) : (
+            <div
+              className="profile-avatar-lg"
+              style={{ background: gradient }}
+              aria-label={`Avatar for ${displayName}`}
+            >
+              {initials}
+            </div>
+          )}
+          
+          <div className="profile-avatar-overlay-hover">
+            <Camera size={24} color="#fff" />
           </div>
+
+          {uploadingAvatar && (
+            <div className="profile-avatar-overlay">
+              <Loader2 className="spin" size={24} color="#fff" />
+            </div>
+          )}
           <div className="profile-avatar-badge">
             <Shield size={12} />
           </div>
@@ -166,10 +238,10 @@ export default function Profile({ onSignOut }) {
 
         <div className="profile-hero-info">
           {editing ? (
-            <div className="profile-edit-inline">
+            <div className="profile-edit-inline fade-in">
               <input
                 autoFocus
-                className="profile-name-input"
+                className="profile-name-input premium-input"
                 value={form.display_name}
                 onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))}
                 placeholder="Your display name"
@@ -196,8 +268,8 @@ export default function Profile({ onSignOut }) {
               </div>
             </div>
           ) : (
-            <div className="profile-name-row">
-              <h1 className="profile-name">{displayName}</h1>
+            <div className="profile-name-row fade-in">
+              <h1 className="profile-name premium-title">{displayName}</h1>
               <button
                 className="profile-edit-btn"
                 onClick={() => setEditing(true)}
@@ -221,7 +293,7 @@ export default function Profile({ onSignOut }) {
         </div>
 
         <button
-          className="profile-refresh-btn"
+          className="profile-refresh-btn premium-icon-btn"
           onClick={loadProfile}
           aria-label="Refresh profile"
           title="Refresh"
@@ -233,8 +305,8 @@ export default function Profile({ onSignOut }) {
       {/* ── Stats Grid ───────────────────────────────────────────────── */}
       <div className="profile-stats-grid">
         {statCards.map(({ icon: Icon, label, value, isCount, color, bg }) => (
-          <div key={label} className="card profile-stat-card">
-            <div className="profile-stat-icon" style={{ background: bg, color }}>
+          <div key={label} className="card profile-stat-card glass-card">
+            <div className="profile-stat-icon premium-icon" style={{ background: bg, color }}>
               <Icon size={16} />
             </div>
             <div className="profile-stat-value" style={{ color }}>
@@ -245,97 +317,95 @@ export default function Profile({ onSignOut }) {
         ))}
       </div>
 
-      {/* ── Preferences Section ──────────────────────────────────────── */}
-      <div className="card profile-section">
-        <h2 className="profile-section-title">
-          <CreditCard size={18} /> Preferences
-        </h2>
-        <div className="form-grid-2" style={{ marginBottom: 0 }}>
-          <div className="form-field" style={{ marginBottom: 0 }}>
-            <label className="form-label">Currency</label>
-            <select
-              value={form.currency_preference}
-              onChange={e => setForm(f => ({ ...f, currency_preference: e.target.value }))}
-            >
-              <option value="INR">🇮🇳 INR — Indian Rupee</option>
-              <option value="USD">🇺🇸 USD — US Dollar</option>
-              <option value="EUR">🇪🇺 EUR — Euro</option>
-              <option value="GBP">🇬🇧 GBP — British Pound</option>
-              <option value="AED">🇦🇪 AED — UAE Dirham</option>
-              <option value="SGD">🇸🇬 SGD — Singapore Dollar</option>
-            </select>
+      {/* ── Combined Settings Section ─────────────────────────────────── */}
+      <div className="card profile-settings-card premium-settings">
+        <div className="settings-section">
+          <h2 className="settings-title">
+            <CreditCard size={18} /> Preferences
+          </h2>
+          <div className="settings-list">
+            <div className="settings-item">
+              <div className="settings-item-info">
+                <span className="settings-item-label">Currency</span>
+                <span className="settings-item-desc">Choose your primary display currency</span>
+              </div>
+              <div className="settings-item-action">
+                <select
+                  className="premium-select"
+                  value={form.currency_preference}
+                  onChange={e => setForm(f => ({ ...f, currency_preference: e.target.value }))}
+                >
+                  <option value="INR">🇮🇳 INR — Indian Rupee</option>
+                  <option value="USD">🇺🇸 USD — US Dollar</option>
+                  <option value="EUR">🇪🇺 EUR — Euro</option>
+                  <option value="GBP">🇬🇧 GBP — British Pound</option>
+                  <option value="AED">🇦🇪 AED — UAE Dirham</option>
+                  <option value="SGD">🇸🇬 SGD — Singapore Dollar</option>
+                </select>
+              </div>
+            </div>
           </div>
-          <div className="form-field" style={{ marginBottom: 0 }}>
-            <label className="form-label">Display Name</label>
-            <input
-              value={form.display_name}
-              onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))}
-              placeholder="How should we address you?"
-              maxLength={128}
-            />
-          </div>
+          <button
+            className="btn-primary settings-save-btn"
+            onClick={handleSave}
+            disabled={saving || (form.currency_preference === profile?.currency_preference)}
+          >
+            {saving ? <><Loader2 size={16} className="spin" /> Saving…</> : <><Check size={16} /> Save Preferences</>}
+          </button>
         </div>
-        <button
-          className="btn-primary"
-          style={{ marginTop: 20 }}
-          onClick={handleSave}
-          disabled={saving}
-        >
-          {saving ? <><Loader2 size={16} className="spin" /> Saving…</> : <><Check size={16} /> Save Preferences</>}
-        </button>
-      </div>
 
-      {/* ── Account Info ─────────────────────────────────────────────── */}
-      <div className="card profile-section">
-        <h2 className="profile-section-title">
-          <User size={18} /> Account Information
-        </h2>
-        <div className="profile-info-rows">
-          <div className="profile-info-row">
-            <span className="profile-info-label">Email</span>
-            <span className="profile-info-value">{profile?.email || "—"}</span>
-          </div>
-          <div className="profile-info-row">
-            <span className="profile-info-label">User ID</span>
-            <span className="profile-info-value profile-id">{profile?.id || "—"}</span>
-          </div>
-          <div className="profile-info-row">
-            <span className="profile-info-label">Member Since</span>
-            <span className="profile-info-value">{formatDate(profile?.created_at)}</span>
-          </div>
-          <div className="profile-info-row">
-            <span className="profile-info-label">Currency</span>
-            <span className="profile-info-value">{profile?.currency_preference || "INR"}</span>
+        <hr className="settings-divider" />
+
+        <div className="settings-section">
+          <h2 className="settings-title">
+            <User size={18} /> Account Information
+          </h2>
+          <div className="settings-list">
+            <div className="settings-item read-only">
+              <span className="settings-item-label">Email</span>
+              <span className="settings-item-value">{profile?.email || "—"}</span>
+            </div>
+            <div className="settings-item read-only">
+              <span className="settings-item-label">User ID</span>
+              <span className="settings-item-value mono">{profile?.id || "—"}</span>
+            </div>
+            <div className="settings-item read-only">
+              <span className="settings-item-label">Member Since</span>
+              <span className="settings-item-value">{formatDate(profile?.created_at)}</span>
+            </div>
           </div>
         </div>
       </div>
 
       {/* ── Danger Zone ──────────────────────────────────────────────── */}
-      <div className="card profile-section danger-zone">
-        <h2 className="profile-section-title danger-title">
-          <AlertTriangle size={18} /> Sign Out
-        </h2>
-        <p className="danger-desc">
-          You'll be signed out of your account on this device.
-        </p>
-        {!confirmSignOut ? (
-          <button
-            className="btn-danger"
-            onClick={() => setConfirmSignOut(true)}
-          >
-            <LogOut size={16} /> Sign Out
-          </button>
-        ) : (
-          <div className="danger-confirm-row">
-            <span className="danger-confirm-text">Are you sure?</span>
-            <button className="btn-danger" onClick={onSignOut}>
-              Yes, sign out
-            </button>
-            <button className="btn-secondary" onClick={() => setConfirmSignOut(false)}>
-              Cancel
-            </button>
+      <div className="card profile-danger-card">
+        <div className="danger-content">
+          <div className="danger-icon-wrap">
+            <LogOut size={20} className="danger-icon" />
           </div>
-        )}
+          <div className="danger-text">
+            <h2 className="danger-title">Sign Out</h2>
+            <p className="danger-desc">You'll be signed out of your account on this device.</p>
+          </div>
+        </div>
+        
+        <div className="danger-actions">
+          {!confirmSignOut ? (
+            <button className="btn-danger-premium" onClick={() => setConfirmSignOut(true)}>
+              Sign Out
+            </button>
+          ) : (
+            <div className="danger-confirm-row fade-in">
+              <span className="danger-confirm-text">Are you sure?</span>
+              <button className="btn-danger-premium" onClick={onSignOut}>
+                Yes, sign out
+              </button>
+              <button className="btn-secondary" onClick={() => setConfirmSignOut(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

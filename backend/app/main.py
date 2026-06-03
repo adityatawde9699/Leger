@@ -372,6 +372,8 @@ def update_profile(
         raise HTTPException(status_code=404, detail="User not found")
     if payload.display_name is not None:
         db_user.display_name = payload.display_name.strip() or None
+    if payload.avatar_url is not None:
+        db_user.avatar_url = payload.avatar_url
     db_user.currency_preference = payload.currency_preference
     db.commit()
     db.refresh(db_user)

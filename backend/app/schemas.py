@@ -17,6 +17,7 @@ class UserContext(BaseModel):
 
 class UserProfileIn(BaseModel):
     display_name: str | None = Field(default=None, max_length=128)
+    avatar_url: str | None = None
     currency_preference: str = Field(default="INR", pattern="^[A-Z]{3}$")
 
 
@@ -24,6 +25,7 @@ class UserProfileOut(BaseModel):
     id: str
     email: str | None
     display_name: str | None
+    avatar_url: str | None
     currency_preference: str
     created_at: datetime
 
