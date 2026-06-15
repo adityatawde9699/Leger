@@ -85,15 +85,27 @@ function ViewFallback() {
   );
 }
 
+// Honor a `?view=` query param so PWA manifest shortcuts (and deep links)
+// open the right screen. Falls back to the dashboard for unknown values.
+function getInitialView() {
+  const valid = new Set([...ALL_VIEWS.map((v) => v.id), "profile"]);
+  const requested = new URLSearchParams(window.location.search).get("view");
+  return requested && valid.has(requested) ? requested : "dashboard";
+}
+
 export default function App() {
   const toast = useToast();
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState(getInitialView);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [moreDrawerOpen, setMoreDrawerOpen] = useState(false);
   const [session, setSession] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [profileData, setProfileData] = useState(null);
+
+  // Swipe navigation state
+  const [touchStart, setTouchStart] = useState(null);
+  const [touchEnd, setTouchEnd] = useState(null);
 
   // Auth setup
   useEffect(() => {
@@ -175,6 +187,38 @@ export default function App() {
     setSheetOpen(false);
   }
 
+  // Swipe handlers
+  const onTouchStart = (e) => {
+    setTouchEnd(null);
+    setTouchStart(e.targetTouches[0].clientX);
+  };
+
+  const onTouchMove = (e) => {
+    setTouchEnd(e.targetTouches[0].clientX);
+  };
+
+  const onTouchEndHandler = () => {
+    if (!touchStart || !touchEnd) return;
+    const distance = touchStart - touchEnd;
+    const minSwipeDistance = 50;
+    const isLeftSwipe = distance > minSwipeDistance;
+    const isRightSwipe = distance < -minSwipeDistance;
+
+    if (isLeftSwipe || isRightSwipe) {
+      const viewsList = ALL_VIEWS.map(v => v.id).concat(["profile"]);
+      const currentIndex = viewsList.indexOf(view);
+      
+      if (currentIndex !== -1) {
+        if (isLeftSwipe && currentIndex < viewsList.length - 1) {
+          navigateTo(viewsList[currentIndex + 1]);
+        }
+        if (isRightSwipe && currentIndex > 0) {
+          navigateTo(viewsList[currentIndex - 1]);
+        }
+      }
+    }
+  };
+
   if (loadingAuth) {
     return (
       <div className="app-loading">
@@ -191,6 +235,7 @@ export default function App() {
   const initials = getInitials(profileData?.display_name, session?.user?.email || profileData?.email);
   const gradient = pickGradient(profileData?.id || session?.user?.id || "");
   const displayName = profileData?.display_name || session?.user?.email?.split("@")[0] || "User";
+  const avatarUrl = profileData?.avatar_url;
 
   return (
     <div className="app">
@@ -226,8 +271,9 @@ export default function App() {
               background: gradient, display: "flex",
               alignItems: "center", justifyContent: "center",
               fontSize: 10, color: "white", fontWeight: 700, flexShrink: 0,
+              overflow: "hidden",
             }}>
-              {initials}
+              {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
             </div>
             Profile
           </button>
@@ -243,7 +289,12 @@ export default function App() {
       </aside>
 
       {/* ── Main content ── */}
-      <div className="main-wrapper">
+      <div 
+        className="main-wrapper"
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEndHandler}
+      >
         {/* Mobile top header */}
         <header className="app-header glass">
           <div className="app-header-inner">
@@ -260,8 +311,9 @@ export default function App() {
                 width: 36, height: 36, borderRadius: 10, background: gradient,
                 display: "flex", alignItems: "center", justifyContent: "center",
                 color: "white", fontWeight: 700, fontSize: 14,
+                overflow: "hidden",
               }}>
-                {initials}
+                {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
               </div>
             </button>
           </div>
@@ -332,8 +384,9 @@ export default function App() {
             width: 40, height: 40, borderRadius: 12, background: gradient,
             display: "flex", alignItems: "center", justifyContent: "center",
             color: "white", fontWeight: 700, fontSize: 15, flexShrink: 0,
+            overflow: "hidden",
           }}>
-            {initials}
+            {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
           </div>
           <div>
             <div className="drawer-user-name">{displayName}</div>

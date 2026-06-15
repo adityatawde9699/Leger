@@ -61,7 +61,7 @@ and get AI-powered financial insights — all with local-first privacy.
 | **Analytics** | Dashboard KPIs (w/ time filters), category breakdowns, credit health score (300-900), community benchmarks |
 | **Investments** | Portfolio tracking (stocks/MF/crypto/FD/gold), holdings with live P&L |
 | **Compliance** | GST computation (Indian tax), audit logging, webhook integrations, Tally XML export |
-| **Platform** | PWA offline support, command palette (⌘K), data export (CSV/JSON/Tally) |
+| **Platform** | Installable PWA (offline support, app shortcuts, maskable icon), command palette (⌘K), data export (CSV/JSON/Tally) |
 
 ## Quick Start
 
@@ -103,6 +103,15 @@ npm run dev
 ```
 
 App is live at **http://127.0.0.1:5173** — backend API at **http://127.0.0.1:8000/docs**.
+
+The app is an installable PWA — open it in a supporting browser and choose **Install** to add it to your home screen / desktop, with offline support and app shortcuts (Add transaction, Dashboard, Amadeus AI).
+
+**Brand icons** live in `frontend/public/`. The sources of truth are `favicon.svg` (rounded tab/`any` icon) and `maskable-icon.svg` (full-bleed safe-zone icon); every raster artifact (`favicon.ico`, the `pwa-*`, `apple-touch-icon`, and `maskable-*` PNGs) is generated from them:
+
+```bash
+cd frontend
+npm run icons   # regenerate after editing either SVG
+```
 
 ### 4. (Optional) Configure AI Providers
 

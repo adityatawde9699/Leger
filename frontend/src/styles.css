@@ -105,6 +105,7 @@ button, input, select, textarea { font: inherit; outline: none; background: tran
   flex-direction: column;
   gap: 8px;
   flex: 1;
+  overflow-y: auto;
 }
 
 .sidebar-item {
@@ -158,7 +159,9 @@ button, input, select, textarea { font: inherit; outline: none; background: tran
   position: sticky;
   top: 0;
   z-index: 100;
-  height: 64px;
+  /* Grow under the status bar / notch when installed as a standalone PWA */
+  height: calc(64px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
   width: 100%;
 }
 
@@ -349,7 +352,7 @@ input:focus, select:focus {
   background: var(--glass);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  padding: 12px max(16px, env(safe-area-inset-left)) calc(12px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right));
   grid-template-columns: repeat(5, 1fr);
   z-index: 1000;
 }

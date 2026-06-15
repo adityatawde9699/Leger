@@ -178,7 +178,7 @@ if settings.run_db_bootstrap:
 limiter = Limiter(key_func=get_remote_address)
 
 # ── App ───────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Ledger API", version="1.3.0", docs_url="/docs")
+app = FastAPI(title="Ledger API", version="1.4.0", docs_url="/docs")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -364,7 +364,7 @@ def ping():
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.0"}
+    return {"ok": True, "version": "1.4.0"}
 
 
 # ── Profile ───────────────────────────────────────────────────────────────────

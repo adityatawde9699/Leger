@@ -8,31 +8,56 @@ export default defineConfig({
     splitVendorChunkPlugin(), // Split recharts/lucide into separate vendor chunks
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["pwa-192x192.png", "pwa-512x512.png"],
+      includeAssets: [
+        "favicon.ico",
+        "favicon.svg",
+        "favicon-32x32.png",
+        "favicon-16x16.png",
+        "apple-touch-icon.png",
+      ],
       manifest: {
         name: "Ledger — AI Finance Platform",
         short_name: "Ledger",
         description: "Manage your personal finances with AI-powered insights",
-        theme_color: "#4f46e5",
-        background_color: "#f8fafc",
+        // Match the dark dual-palette brand (near-black surface, neon-lime accent)
+        // so the install splash screen and OS chrome stay on-brand.
+        theme_color: "#0A0A0B",
+        background_color: "#0A0A0B",
         display: "standalone",
         orientation: "portrait",
         start_url: "/",
         scope: "/",
+        categories: ["finance", "productivity", "business"],
         icons: [
+          { src: "pwa-192x192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "pwa-512x512.png", sizes: "512x512", type: "image/png", purpose: "any" },
           {
-            src: "pwa-192x192.png",
-            sizes: "192x192",
-            type: "image/png",
-            purpose: "any"
-          },
-          {
-            src: "pwa-512x512.png",
+            src: "maskable-icon-512x512.png",
             sizes: "512x512",
             type: "image/png",
-            purpose: "any maskable"
-          }
-        ]
+            purpose: "maskable",
+          },
+        ],
+        shortcuts: [
+          {
+            name: "Add transaction",
+            short_name: "Add",
+            url: "/?view=transactions",
+            description: "Quickly record a new transaction",
+          },
+          {
+            name: "Dashboard",
+            short_name: "Dashboard",
+            url: "/?view=dashboard",
+            description: "Open your financial overview",
+          },
+          {
+            name: "Amadeus AI",
+            short_name: "Advisor",
+            url: "/?view=advisor",
+            description: "Chat with your AI financial advisor",
+          },
+        ],
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],

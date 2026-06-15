@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-06-16
+
+### Added
+- Proper brand **favicon** set generated from the in-app Ledger mark (lime squircle, dark "L" monogram + ascending bars, crimson tall bar): `favicon.svg`, multi-resolution `favicon.ico` (16/32/48), 16/32px PNGs, and a 180px `apple-touch-icon`.
+- **Installable PWA** polish: dedicated `maskable` icon (mark kept within the 80% safe zone so OS shape masks never clip it) and home-screen **app shortcuts** — Add transaction, Dashboard, and Amadeus AI.
+- Deep-linking via a `?view=` query param so manifest shortcuts open the right screen.
+- `frontend/public/maskable-icon.svg` source and a reproducible `npm run icons` generator (`scripts/generate-icons.mjs`, powered by `sharp`).
+
+### Changed
+- PWA manifest `theme_color`/`background_color` now match the dark dual-palette brand (`#0A0A0B`) instead of the legacy indigo/light values, so the install splash screen and OS chrome stay on-brand. Added `categories` metadata.
+
+### Fixed
+- `env(safe-area-inset-*)` rules now actually apply: added `viewport-fit=cover` to the viewport meta (previously the insets resolved to 0 on iOS), and the mobile header now extends under the status bar / notch in standalone mode. Bottom nav respects left/right insets in landscape.
+- Replaced the home-screen/tab icon, which pointed at a 398 KB JPEG mislabeled as `pwa-512x512.png`, with correctly sized, lightweight PNGs (512px icon: 398 KB → ~16 KB).
+
 ## [1.3.0] - 2026-06-13
 
 ### Added
