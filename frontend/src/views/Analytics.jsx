@@ -332,9 +332,9 @@ export default function Analytics() {
                 tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0)+"k" : v}`} />
               <Tooltip content={<ChartTooltip />} />
               <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Current"     fill="var(--border)" radius={[4,4,0,0]} />
+              <Bar dataKey="Current"     fill="var(--text-muted)" radius={[4,4,0,0]} />
               <Bar dataKey="30-Day Proj" fill="var(--info)" radius={[4,4,0,0]} />
-              <Bar dataKey="90-Day Proj" fill="var(--info)" radius={[4,4,0,0]} />
+              <Bar dataKey="90-Day Proj" fill="#C084FC" radius={[4,4,0,0]} />
             </BarChart>
           </ResponsiveContainer>
           {/* Trend indicators */}

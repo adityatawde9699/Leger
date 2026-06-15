@@ -149,6 +149,9 @@ export default function Advisor() {
   return (
     <div className="view-advisor">
       <div className="advisor-layout">
+        {/* Backdrop for the mobile conversation sheet */}
+        {showConvs && <div className="advisor-backdrop" onClick={() => setShowConvs(false)} aria-hidden="true" />}
+
         {/* Sidebar */}
         <aside className={`advisor-sidebar${showConvs ? " open" : ""}`}>
           <div className="advisor-sidebar-header">
