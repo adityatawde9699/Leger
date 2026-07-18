@@ -3,8 +3,9 @@ import { z } from "zod";
 const envSchema = z.object({
   DATABASE_URL: z.string().default("postgresql://ledger:ledger@localhost:5432/ledger"),
 
-  AUTH_PROVIDER: z.enum(["dev", "supabase", "firebase"]).default("dev"),
+  AUTH_PROVIDER: z.enum(["dev", "supabase", "firebase", "google"]).default("dev"),
   SUPABASE_JWKS_URL: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
   FIREBASE_PROJECT_ID: z.string().optional(),
 
   GROQ_API_KEY: z.string().optional(),
@@ -60,7 +61,7 @@ function validateForProduction() {
     if (config.AUTH_PROVIDER === "dev") {
       // eslint-disable-next-line no-console
       console.error(
-        "FATAL: AUTH_PROVIDER=dev is not allowed in production. Set AUTH_PROVIDER=supabase or AUTH_PROVIDER=firebase."
+        "FATAL: AUTH_PROVIDER=dev is not allowed in production. Set AUTH_PROVIDER=google, supabase, or firebase."
       );
       process.exit(1);
     }

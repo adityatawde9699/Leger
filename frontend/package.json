@@ -6,7 +6,7 @@
     "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.47.10",
+    "@react-oauth/google": "^0.13.5",
     "@tanstack/react-query": "^5.101.2",
     "@vitejs/plugin-react": "^4.3.4",
     "firebase": "^11.1.0",

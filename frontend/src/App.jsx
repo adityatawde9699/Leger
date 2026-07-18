@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
+import React, { useState, useEffect, lazy, Suspense } from "react";
 import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "./supabase";
+import { loadPersistedCredential, clearCredential, onAuthChange, parseIdToken } from "./google-auth";
 import { apiFetch, API_BASE, EXPENSE_CATEGORIES, setAuthToken, today, KEYS } from "./lib";
 import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
 import Auth from "./views/Auth";
@@ -73,12 +73,6 @@ function pickGradient(str = "") {
   return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
 }
 
-function clearSupabaseStorage() {
-  if (typeof window === "undefined") return;
-  Object.keys(window.localStorage)
-    .filter((k) => k.startsWith("sb-") || k.includes("supabase"))
-    .forEach((k) => window.localStorage.removeItem(k));
-}
 
 function ViewFallback() {
   return (
@@ -116,37 +110,25 @@ export default function App() {
   const [touchStart, setTouchStart] = useState(null);
   const [touchEnd, setTouchEnd] = useState(null);
 
-  // Auth setup
+  // Auth setup — Google credential as session token
   useEffect(() => {
-    if (import.meta.env.VITE_AUTH_PROVIDER === "dev") {
-      const saved = localStorage.getItem("dev-session");
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          setSession(parsed);
-          setAuthToken(parsed.access_token);
-        } catch { localStorage.removeItem("dev-session"); }
-      }
-      setLoadingAuth(false);
-      return;
+    const credential = loadPersistedCredential();
+    if (credential) {
+      setSession({ credential });
+      setAuthToken(credential);
     }
+    setLoadingAuth(false);
 
-    supabase.auth.getSession()
-      .then(({ data: { session } }) => {
-        setSession(session);
-        setAuthToken(session?.access_token || null);
-      })
-      .catch(() => { clearSupabaseStorage(); setSession(null); setAuthToken(null); })
-      .finally(() => setLoadingAuth(false));
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "TOKEN_REFRESH_FAILED") {
-        clearSupabaseStorage(); setSession(null); setAuthToken(null); return;
+    const unsubscribe = onAuthChange((credential) => {
+      if (credential) {
+        setSession({ credential });
+        setAuthToken(credential);
+      } else {
+        setSession(null);
+        setAuthToken(null);
       }
-      setSession(session);
-      setAuthToken(session?.access_token || null);
     });
-    return () => subscription.unsubscribe();
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -175,12 +157,9 @@ export default function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  const handleSignOut = async () => {
+  const handleSignOut = () => {
     stopKeepAlive();
-    if (import.meta.env.VITE_AUTH_PROVIDER === "dev") {
-      localStorage.removeItem("dev-session"); setSession(null); setAuthToken(null); return;
-    }
-    await supabase.auth.signOut();
+    clearCredential();
   };
 
   function navigateTo(id) {
@@ -235,10 +214,13 @@ export default function App() {
 
   if (!session) return (<><ColdStart /><Auth /></>);
 
-  const initials = getInitials(profileData?.display_name, session?.user?.email || profileData?.email);
-  const gradient = pickGradient(profileData?.id || session?.user?.id || "");
-  const displayName = profileData?.display_name || session?.user?.email?.split("@")[0] || "User";
-  const avatarUrl = profileData?.avatar_url;
+  const googleUser = session?.credential ? parseIdToken(session.credential) : null;
+  const userEmail = profileData?.email || googleUser?.email || null;
+  const userId = profileData?.id || googleUser?.sub || "";
+  const initials = getInitials(profileData?.display_name, userEmail);
+  const gradient = pickGradient(userId);
+  const displayName = profileData?.display_name || googleUser?.name || userEmail?.split("@")[0] || "User";
+  const avatarUrl = profileData?.avatar_url || googleUser?.picture;
 
   return (
     <div className="app">
@@ -407,7 +389,7 @@ export default function App() {
           </div>
           <div>
             <div className="drawer-user-name">{displayName}</div>
-            <div className="drawer-user-email">{session?.user?.email || profileData?.email}</div>
+            <div className="drawer-user-email">{userEmail}</div>
           </div>
         </div>
         <div className="form-section-title" style={{ marginBottom: 16 }}>All Features</div>

@@ -14,9 +14,16 @@ function getJwks() {
   if (!config.SUPABASE_JWKS_URL) {
     throw new HttpError(500, "SUPABASE_JWKS_URL not configured");
   }
-  // createRemoteJWKSet caches keys internally (equivalent to Python's lru_cache).
   if (!jwks) jwks = createRemoteJWKSet(new URL(config.SUPABASE_JWKS_URL));
   return jwks;
+}
+
+// Google's public JWKS for verifying access tokens / id_tokens
+const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
+let googleJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+function getGoogleJwks() {
+  if (!googleJwks) googleJwks = createRemoteJWKSet(new URL(GOOGLE_JWKS_URL));
+  return googleJwks;
 }
 
 let firebaseAuthPromise: Promise<import("firebase-admin").auth.Auth> | null = null;
@@ -65,6 +72,27 @@ async function verifyToken(token: string): Promise<UserContext> {
       return { id: payload.sub, email: (payload.email as string) ?? null };
     } catch (e) {
       throw new HttpError(401, `Token invalid: ${(e as Error).message}`);
+    }
+  }
+
+  if (provider === "google") {
+    try {
+      // Google access tokens can be verified via the tokeninfo endpoint.
+      // This is simpler and more reliable than JWKS for access_tokens.
+      const res = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`
+      );
+      if (!res.ok) throw new Error("Token rejected by Google");
+      const info = await res.json() as { sub: string; email?: string; aud?: string; error_description?: string };
+      if (info.error_description) throw new Error(info.error_description);
+      if (!info.sub) throw new Error("Token missing sub");
+      // Optionally validate audience matches our client ID
+      if (config.GOOGLE_CLIENT_ID && info.aud !== config.GOOGLE_CLIENT_ID) {
+        throw new Error("Token audience mismatch");
+      }
+      return { id: info.sub, email: info.email ?? null };
+    } catch (e) {
+      throw new HttpError(401, `Google auth failed: ${(e as Error).message}`);
     }
   }
 
