@@ -1,5 +1,6 @@
 import React from "react";
-import { apiFetch, money } from "../lib";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch, money, KEYS } from "../lib";
 import { useToast } from "../components/ui";
 import {
   Briefcase, TrendingUp, TrendingDown, Plus, Trash2,
@@ -20,38 +21,34 @@ const TYPE_META = {
 
 export default function Investments() {
   const toast = useToast();
-  const [portfolios,  setPortfolios]  = React.useState([]);
-  const [summary,     setSummary]     = React.useState(null);
-  const [analytics,   setAnalytics]   = React.useState(null);
-  const [loading,     setLoading]     = React.useState(true);
+  const queryClient = useQueryClient();
   const [showForm,    setShowForm]    = React.useState(false);
   const [form,        setForm]        = React.useState({ name: "", portfolio_type: "stocks" });
   const [selected,    setSelected]    = React.useState(null);
-  const [holdings,    setHoldings]    = React.useState([]);
   const [holdingForm, setHoldingForm] = React.useState(null);
   const [saving,      setSaving]      = React.useState(false);
 
+  const portfoliosQuery = useQuery({ queryKey: KEYS.portfolios(), queryFn: () => apiFetch("/portfolios") });
+  const { data: summary } = useQuery({ queryKey: KEYS.portfolioSummary(), queryFn: () => apiFetch("/portfolios/summary") });
+  const { data: analytics } = useQuery({ queryKey: KEYS.portfolioAnalytics(), queryFn: () => apiFetch("/portfolios/analytics") });
+  const { data: holdingsData } = useQuery({
+    queryKey: KEYS.holdings(selected?.id),
+    queryFn: () => apiFetch(`/portfolios/${selected.id}/holdings`),
+    enabled: !!selected,
+  });
 
-  async function load() {
-    try {
-      const [p, s, a] = await Promise.all([
-        apiFetch("/portfolios"),
-        apiFetch("/portfolios/summary"),
-        apiFetch("/portfolios/analytics").catch(() => null),
-      ]);
-      setPortfolios(p);
-      setSummary(s);
-      setAnalytics(a);
-    } catch (e) { toast(e.message, "error"); }
-    finally { setLoading(false); }
+  const portfolios = portfoliosQuery.data || [];
+  const loading = portfoliosQuery.isLoading;
+  const holdings = holdingsData || [];
+
+  function invalidatePortfolios() {
+    queryClient.invalidateQueries({ queryKey: KEYS.portfolios() });
+    queryClient.invalidateQueries({ queryKey: KEYS.portfolioSummary() });
+    queryClient.invalidateQueries({ queryKey: KEYS.portfolioAnalytics() });
   }
 
-  React.useEffect(() => { load(); }, []);
-
-  async function selectPortfolio(p) {
+  function selectPortfolio(p) {
     setSelected(p);
-    try { setHoldings(await apiFetch(`/portfolios/${p.id}/holdings`)); }
-    catch (e) { toast(e.message, "error"); }
   }
 
   async function createPortfolio(e) {
@@ -61,7 +58,7 @@ export default function Investments() {
       await apiFetch("/portfolios", { method: "POST", body: JSON.stringify(form) });
       setForm({ name: "", portfolio_type: "stocks" });
       setShowForm(false);
-      await load();
+      invalidatePortfolios();
       toast("Portfolio created", "success");
     } catch (e) { toast(e.message, "error"); }
     finally { setSaving(false); }
@@ -70,9 +67,8 @@ export default function Investments() {
   async function deletePortfolio(id) {
     try {
       await apiFetch(`/portfolios/${id}`, { method: "DELETE" });
-      setPortfolios(p => p.filter(x => x.id !== id));
-      if (selected?.id === id) { setSelected(null); setHoldings([]); }
-      await load();
+      if (selected?.id === id) setSelected(null);
+      invalidatePortfolios();
       toast("Portfolio deleted", "success");
     } catch (e) { toast(e.message, "error"); }
   }
@@ -91,8 +87,8 @@ export default function Investments() {
         }),
       });
       setHoldingForm(null);
-      setHoldings(await apiFetch(`/portfolios/${selected.id}/holdings`));
-      await load();
+      queryClient.invalidateQueries({ queryKey: KEYS.holdings(selected.id) });
+      invalidatePortfolios();
       toast("Holding added", "success");
     } catch (e) { toast(e.message, "error"); }
     finally { setSaving(false); }
@@ -101,8 +97,8 @@ export default function Investments() {
   async function deleteHolding(id) {
     try {
       await apiFetch(`/holdings/${id}`, { method: "DELETE" });
-      setHoldings(h => h.filter(x => x.id !== id));
-      await load();
+      queryClient.invalidateQueries({ queryKey: KEYS.holdings(selected.id) });
+      invalidatePortfolios();
       toast("Holding removed", "success");
     } catch (e) { toast(e.message, "error"); }
   }

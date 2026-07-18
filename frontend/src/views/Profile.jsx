@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { apiFetch, money } from "../lib";
+import React, { useState, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch, money, KEYS } from "../lib";
 import { useToast } from "../components/ui";
 import {
   User, Mail, Calendar, TrendingUp, TrendingDown,
@@ -40,34 +41,29 @@ function formatDate(isoStr) {
 // ── Main Profile component ────────────────────────────────────────────────────
 export default function Profile({ onSignOut }) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const fileInputRef = useRef(null);
-  const [profile, setProfile] = useState(null);
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [form, setForm] = useState({ display_name: "", currency_preference: "INR" });
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  const loadProfile = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [p, s] = await Promise.all([
-        apiFetch("/profile"),
-        apiFetch("/profile/stats"),
-      ]);
-      setProfile(p);
-      setStats(s);
-      setForm({ display_name: p.display_name || "", currency_preference: p.currency_preference || "INR" });
-    } catch (e) {
-      toast(e.message, "error");
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
+  const profileQuery = useQuery({ queryKey: KEYS.profile(), queryFn: () => apiFetch("/profile") });
+  const statsQuery = useQuery({ queryKey: KEYS.profileStats(), queryFn: () => apiFetch("/profile/stats") });
+  const profile = profileQuery.data;
+  const stats = statsQuery.data;
+  const loading = profileQuery.isLoading || statsQuery.isLoading;
 
-  useEffect(() => { loadProfile(); }, [loadProfile]);
+  React.useEffect(() => {
+    if (!profile) return;
+    setForm({ display_name: profile.display_name || "", currency_preference: profile.currency_preference || "INR" });
+  }, [profile]);
+
+  function loadProfile() {
+    profileQuery.refetch();
+    statsQuery.refetch();
+  }
 
   const handleSave = async () => {
     setSaving(true);
@@ -79,7 +75,7 @@ export default function Profile({ onSignOut }) {
           currency_preference: form.currency_preference,
         }),
       });
-      setProfile(updated);
+      queryClient.setQueryData(KEYS.profile(), updated);
       setEditing(false);
       toast("Profile updated", "success");
     } catch (e) {
@@ -126,7 +122,7 @@ export default function Profile({ onSignOut }) {
             avatar_url: base64Str,
           }),
         });
-        setProfile(updated);
+        queryClient.setQueryData(KEYS.profile(), updated);
         toast("Profile photo updated", "success");
         setUploadingAvatar(false);
       };

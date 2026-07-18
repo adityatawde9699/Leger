@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "./supabase";
-import { apiFetch, API_BASE, EXPENSE_CATEGORIES, setAuthToken, today } from "./lib";
+import { apiFetch, API_BASE, EXPENSE_CATEGORIES, setAuthToken, today, KEYS } from "./lib";
 import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
 import Auth from "./views/Auth";
 import CommandPalette from "./components/CommandPalette";
+import ColdStart from "./components/ColdStart";
 
 const Dashboard     = lazy(() => import("./views/Dashboard"));
 const Transactions  = lazy(() => import("./views/Transactions"));
@@ -85,23 +88,29 @@ function ViewFallback() {
   );
 }
 
-// Honor a `?view=` query param so PWA manifest shortcuts (and deep links)
-// open the right screen. Falls back to the dashboard for unknown values.
-function getInitialView() {
-  const valid = new Set([...ALL_VIEWS.map((v) => v.id), "profile"]);
+const VIEW_IDS = new Set([...ALL_VIEWS.map((v) => v.id), "profile"]);
+const viewPath = (id) => (id === "dashboard" ? "/" : `/${id}`);
+
+// Legacy PWA manifest shortcuts / deep links used `/?view=X`. Redirect them
+// to the real route so refresh and back/forward work the same everywhere.
+function LegacyViewRedirect() {
   const requested = new URLSearchParams(window.location.search).get("view");
-  return requested && valid.has(requested) ? requested : "dashboard";
+  if (requested && VIEW_IDS.has(requested)) {
+    return <Navigate to={viewPath(requested)} replace />;
+  }
+  return <Dashboard />;
 }
 
 export default function App() {
   const toast = useToast();
-  const [view, setView] = useState(getInitialView);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const view = location.pathname === "/" ? "dashboard" : location.pathname.slice(1).split("/")[0];
   const [cmdOpen, setCmdOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [moreDrawerOpen, setMoreDrawerOpen] = useState(false);
   const [session, setSession] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
-  const [profileData, setProfileData] = useState(null);
 
   // Swipe navigation state
   const [touchStart, setTouchStart] = useState(null);
@@ -142,8 +151,18 @@ export default function App() {
 
   useEffect(() => {
     if (!session) return;
-    apiFetch("/profile").then(p => setProfileData(p)).catch(() => {});
+    // Fire a warm-up ping immediately so the free-tier backend starts waking
+    // before the first real (data-bearing) request needs it.
+    fetch(`${API_BASE}/ping`).catch(() => {});
   }, [session]);
+
+  // Shared with the Profile view's own useQuery(KEYS.profile()) call — same
+  // cache entry, so switching to Profile shows data instantly.
+  const { data: profileData } = useQuery({
+    queryKey: KEYS.profile(),
+    queryFn: () => apiFetch("/profile"),
+    enabled: !!session,
+  });
 
   useEffect(() => {
     if (session) startKeepAlive(); else stopKeepAlive();
@@ -164,25 +183,8 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  const renderView = () => {
-    switch (view) {
-      case "dashboard":    return <Dashboard />;
-      case "transactions": return <Transactions />;
-      case "budgets":      return <Budgets />;
-      case "analytics":    return <Analytics />;
-      case "accounts":     return <Accounts />;
-      case "investments":  return <Investments />;
-      case "credit":       return <CreditBenchmarks />;
-      case "export":       return <ExportGST />;
-      case "audit":        return <AuditWebhooks />;
-      case "advisor":      return <Advisor />;
-      case "profile":      return <Profile onSignOut={handleSignOut} />;
-      default:             return <Dashboard />;
-    }
-  };
-
   function navigateTo(id) {
-    setView(id);
+    navigate(viewPath(id));
     setMoreDrawerOpen(false);
     setSheetOpen(false);
   }
@@ -222,6 +224,7 @@ export default function App() {
   if (loadingAuth) {
     return (
       <div className="app-loading">
+        <ColdStart />
         <div className="app-loading-inner">
           <LedgerLogo size={64} />
           <Loader2 size={24} className="spin" style={{ color: "var(--primary)" }} />
@@ -230,7 +233,7 @@ export default function App() {
     );
   }
 
-  if (!session) return <Auth />;
+  if (!session) return (<><ColdStart /><Auth /></>);
 
   const initials = getInitials(profileData?.display_name, session?.user?.email || profileData?.email);
   const gradient = pickGradient(profileData?.id || session?.user?.id || "");
@@ -239,6 +242,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <ColdStart />
       {/* ── Sidebar (Desktop only) ── */}
       <aside className="sidebar">
         <div className="sidebar-logo">
@@ -321,7 +325,20 @@ export default function App() {
 
         <main className="page-content fade-in" id="main-content">
           <Suspense fallback={<ViewFallback />}>
-            {renderView()}
+            <Routes>
+              <Route path="/" element={<LegacyViewRedirect />} />
+              <Route path="/transactions" element={<Transactions />} />
+              <Route path="/budgets" element={<Budgets />} />
+              <Route path="/analytics" element={<Analytics />} />
+              <Route path="/accounts" element={<Accounts />} />
+              <Route path="/investments" element={<Investments />} />
+              <Route path="/credit" element={<CreditBenchmarks />} />
+              <Route path="/export" element={<ExportGST />} />
+              <Route path="/audit" element={<AuditWebhooks />} />
+              <Route path="/advisor" element={<Advisor />} />
+              <Route path="/profile" element={<Profile onSignOut={handleSignOut} />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
           </Suspense>
         </main>
       </div>

@@ -1,3 +1,0 @@
-"""
-Ledger Backend — Test Suite
-"""

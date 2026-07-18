@@ -1,6 +1,6 @@
 import React from "react";
-import { apiFetch, money } from "../lib";
-import { useToast } from "../components/ui";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch, money, KEYS } from "../lib";
 import {
   BarChart3, Users, ArrowUp, Gauge, Heart, Shield, Zap, Lightbulb, DollarSign, TrendingUp,
 } from "lucide-react";
@@ -42,18 +42,16 @@ function CreditGauge({ score, grade, color }) {
 }
 
 export default function CreditBenchmarks() {
-  const toast = useToast();
-  const [tab, setTab]           = React.useState("credit");
-  const [credit, setCredit]     = React.useState(null);
-  const [benchmarks, setBenchmarks] = React.useState(null);
-  const [loading, setLoading]   = React.useState(true);
-
-  React.useEffect(() => {
-    Promise.all([
-      apiFetch("/credit-health").then(setCredit).catch(() => {}),
-      apiFetch("/benchmarks").then(setBenchmarks).catch(() => {}),
-    ]).finally(() => setLoading(false));
-  }, []);
+  const [tab, setTab] = React.useState("credit");
+  const { data: credit, isLoading: creditLoading } = useQuery({
+    queryKey: KEYS.creditHealth(),
+    queryFn: () => apiFetch("/credit-health"),
+  });
+  const { data: benchmarks, isLoading: benchmarksLoading } = useQuery({
+    queryKey: KEYS.benchmarks(),
+    queryFn: () => apiFetch("/benchmarks"),
+  });
+  const loading = creditLoading || benchmarksLoading;
 
   const FACTOR_ICONS = {
     savings:           Heart,

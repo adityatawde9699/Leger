@@ -1,4 +1,5 @@
 import React from "react";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, KEYS, money, today, EXPENSE_CATEGORIES, INCOME_CATEGORIES, CATEGORY_COLORS } from "../lib";
 import { useToast } from "../components/ui";
 import {
@@ -267,12 +268,9 @@ function ReceiptUploadModal({ onClose, onImport, toast }) {
 
 export default function Transactions() {
   const toast = useToast();
-  const [transactions, setTransactions] = React.useState([]);
-  const [loading,      setLoading]      = React.useState(true);
+  const queryClient = useQueryClient();
   const [submitting,   setSubmitting]   = React.useState(false);
   const [importing,    setImporting]    = React.useState(false);
-  const [nextCursor,   setNextCursor]   = React.useState(null);
-  const [hasMore,      setHasMore]      = React.useState(false);
   const [search,       setSearch]       = React.useState("");
   const [filterCat,    setFilterCat]    = React.useState("");
   const [filterType,   setFilterType]   = React.useState("");
@@ -280,7 +278,6 @@ export default function Transactions() {
   const [importStatus, setImportStatus] = React.useState(null);
   const [activeTab,    setActiveTab]    = React.useState("manual");
   const [showReceipt,  setShowReceipt]  = React.useState(false);
-  const [anomalyIds,   setAnomalyIds]   = React.useState(new Set());
 
   const [selectedIds,  setSelectedIds]  = React.useState(new Set());
   const [deletingIds,  setDeletingIds]  = React.useState(new Set());
@@ -292,50 +289,85 @@ export default function Transactions() {
     description: "", date: today(), source: "cash",
   });
 
-  // Load anomalies to flag unusual transactions
-  React.useEffect(() => {
-    apiFetch("/analytics/anomalies?range=3m")
-      .then((data) => setAnomalyIds(new Set((data || []).map(a => a.transaction_id))))
-      .catch(() => {});
-  }, []);
-
-  const loadTransactions = React.useCallback(async (reset = true) => {
-    setLoading(true);
-    try {
+  const txQueryKey = KEYS.transactions({ search, category: filterCat, type: filterType });
+  const txQuery = useInfiniteQuery({
+    queryKey: txQueryKey,
+    queryFn: ({ pageParam }) => {
       const params = new URLSearchParams({ limit: PAGE });
       if (search)     params.set("search",   search);
       if (filterCat)  params.set("category", filterCat);
       if (filterType) params.set("type",     filterType);
-      if (!reset && nextCursor) params.set("cursor", nextCursor);
-      const data = await apiFetch(`/transactions?${params}`);
-      setTransactions((prev) => reset ? data.items : [...prev, ...data.items]);
-      setNextCursor(data.next_cursor);
-      setHasMore(data.has_more);
-    } catch (e) {
-      toast(e.message, "error");
-    } finally {
-      setLoading(false);
-    }
-  }, [search, filterCat, filterType, nextCursor]);
+      if (pageParam)  params.set("cursor",   pageParam);
+      return apiFetch(`/transactions?${params}`);
+    },
+    initialPageParam: null,
+    getNextPageParam: (last) => (last.has_more ? last.next_cursor : undefined),
+  });
+  const transactions = React.useMemo(
+    () => (txQuery.data?.pages || []).flatMap((p) => p.items),
+    [txQuery.data]
+  );
+  const loading = txQuery.isLoading;
+  const hasMore = txQuery.hasNextPage;
 
-  React.useEffect(() => { loadTransactions(true); }, [search, filterCat, filterType]);
+  // Anomalies flag unusual transactions; shares its cache entry with Dashboard/Analytics.
+  const { data: anomaliesData } = useQuery({
+    queryKey: KEYS.anomalies("3m"),
+    queryFn: () => apiFetch("/analytics/anomalies?range=3m"),
+  });
+  const anomalyIds = React.useMemo(
+    () => new Set((anomaliesData || []).map((a) => a.transaction_id)),
+    [anomaliesData]
+  );
+
+  // Writes elsewhere (summary, anomalies, forecast, profile stats) are derived
+  // from transaction history, so any mutation here busts all of them.
+  function invalidateAfterWrite() {
+    queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    queryClient.invalidateQueries({ queryKey: ["summary"] });
+    queryClient.invalidateQueries({ queryKey: KEYS.profileStats() });
+    queryClient.invalidateQueries({ queryKey: ["anomalies"] });
+    queryClient.invalidateQueries({ queryKey: KEYS.forecast() });
+  }
+
+  function patchTransactionInCache(id, patch) {
+    queryClient.setQueryData(txQueryKey, (old) => old && {
+      ...old,
+      pages: old.pages.map((page) => ({
+        ...page,
+        items: page.items.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+      })),
+    });
+  }
+
+  function removeTransactionsFromCache(ids) {
+    const idSet = new Set(ids);
+    queryClient.setQueryData(txQueryKey, (old) => old && {
+      ...old,
+      pages: old.pages.map((page) => ({
+        ...page,
+        items: page.items.filter((t) => !idSet.has(t.id)),
+      })),
+    });
+  }
 
   const handleCategoryCorrection = (txId, newCat) => {
-    setTransactions(prev => prev.map(t => t.id === txId ? { ...t, category: newCat, confidence: 1.0 } : t));
+    patchTransactionInCache(txId, { category: newCat, confidence: 1.0 });
     toast(`Category updated to ${newCat}`, "success");
   };
 
   async function remove(id) {
     setDeletingIds((s) => new Set([...s, id]));
     await new Promise((r) => setTimeout(r, 280));
-    const prev = [...transactions];
-    setTransactions((t) => t.filter((x) => x.id !== id));
+    const snapshot = queryClient.getQueryData(txQueryKey);
+    removeTransactionsFromCache([id]);
     setDeletingIds((s) => { const n = new Set(s); n.delete(id); return n; });
     try {
       await apiFetch(`/transactions/${id}`, { method: "DELETE" });
       toast("Transaction deleted", "success");
+      invalidateAfterWrite();
     } catch (e) {
-      setTransactions(prev);
+      queryClient.setQueryData(txQueryKey, snapshot);
       toast(e.message, "error");
     }
   }
@@ -351,9 +383,9 @@ export default function Transactions() {
   function requestBulkDelete() {
     if (selectedIds.size === 0) return;
     const ids = [...selectedIds];
-    const snapshot = [...transactions];
+    const snapshot = queryClient.getQueryData(txQueryKey);
     setDeletingIds(new Set(ids));
-    setTimeout(() => { setTransactions(t => t.filter(x => !ids.includes(x.id))); setDeletingIds(new Set()); }, 300);
+    setTimeout(() => { removeTransactionsFromCache(ids); setDeletingIds(new Set()); }, 300);
     setSelectedIds(new Set());
     let remaining = Math.ceil(UNDO_DELAY / 1000);
     const undoTimer = setTimeout(() => executeBulkDelete(ids), UNDO_DELAY);
@@ -371,16 +403,18 @@ export default function Transactions() {
     try {
       await apiFetch("/transactions/bulk-delete", { method: "POST", body: JSON.stringify({ transaction_ids: ids }) });
       toast(`${ids.length} transaction${ids.length > 1 ? "s" : ""} deleted`, "success");
+      invalidateAfterWrite();
     } catch (e) {
       toast(e.message, "error");
-      await loadTransactions(true);
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
     }
   }
 
   function undoBulkDelete() {
     if (!undoState) return;
     clearTimeout(undoState.timer); clearInterval(undoCountRef.current);
-    setTransactions(undoState.snapshot); setUndoState(null);
+    queryClient.setQueryData(txQueryKey, undoState.snapshot);
+    setUndoState(null);
     toast("Deletion undone ✓", "success");
   }
 
@@ -393,7 +427,7 @@ export default function Transactions() {
     try {
       await apiFetch("/transactions", { method: "POST", body: JSON.stringify({ ...form, amount: Number(form.amount) }) });
       setForm({ type: "expense", amount: "", category: "Groceries", description: "", date: today(), source: "cash" });
-      await loadTransactions(true);
+      invalidateAfterWrite();
       toast("Transaction added", "success");
     } catch (e) { toast(e.message, "error"); }
     finally { setSubmitting(false); }
@@ -405,7 +439,7 @@ export default function Transactions() {
     setImporting(true);
     try {
       const saved = await apiFetch("/imports/sms", { method: "POST", body: JSON.stringify({ messages }) });
-      setSmsText(""); await loadTransactions(true);
+      setSmsText(""); invalidateAfterWrite();
       toast(`Imported ${saved.length} transactions from SMS`, "success");
     } catch (e) { toast(e.message, "error"); }
     finally { setImporting(false); }
@@ -422,7 +456,7 @@ export default function Transactions() {
         try {
           const j = await apiFetch(`/imports/jobs/${job.id}`);
           setImportStatus(j.status);
-          if (j.status === "done") { clearInterval(poll); toast(`Import complete — ${j.row_count} transactions added`, "success"); await loadTransactions(true); }
+          if (j.status === "done") { clearInterval(poll); toast(`Import complete — ${j.row_count} transactions added`, "success"); invalidateAfterWrite(); }
           else if (j.status === "failed") { clearInterval(poll); toast(`Import failed: ${j.error_message}`, "error"); }
         } catch { clearInterval(poll); }
       }, 1500);
@@ -603,8 +637,19 @@ export default function Transactions() {
           </div>
         ))}
 
+        {/* Error state */}
+        {!loading && txQuery.isError && transactions.length === 0 && (
+          <div style={{ textAlign: "center", padding: "56px 24px" }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>
+              Couldn't load transactions
+            </div>
+            <div style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 16 }}>{txQuery.error.message}</div>
+            <button className="btn-secondary" onClick={() => txQuery.refetch()}>Retry</button>
+          </div>
+        )}
+
         {/* Empty state */}
-        {!loading && transactions.length === 0 && (
+        {!loading && !txQuery.isError && transactions.length === 0 && (
           <div style={{ textAlign: "center", padding: "56px 24px" }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
             <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No transactions found</div>
@@ -676,8 +721,13 @@ export default function Transactions() {
         {/* Load more */}
         {hasMore && (
           <div style={{ padding: "16px 20px", borderTop: "1px solid var(--border)" }}>
-            <button className="btn-secondary" onClick={() => loadTransactions(false)} style={{ fontSize: 14 }}>
-              Load more
+            <button
+              className="btn-secondary"
+              onClick={() => txQuery.fetchNextPage()}
+              disabled={txQuery.isFetchingNextPage}
+              style={{ fontSize: 14 }}
+            >
+              {txQuery.isFetchingNextPage ? "Loading…" : "Load more"}
             </button>
           </div>
         )}
@@ -687,7 +737,7 @@ export default function Transactions() {
       {showReceipt && (
         <ReceiptUploadModal
           onClose={() => { setShowReceipt(false); setActiveTab("manual"); }}
-          onImport={() => loadTransactions(true)}
+          onImport={invalidateAfterWrite}
           toast={toast}
         />
       )}

@@ -1,5 +1,6 @@
 import React from "react";
-import { apiFetch, money } from "../lib";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch, money, KEYS } from "../lib";
 import { useToast } from "../components/ui";
 import { Plus, CreditCard, Wallet, Building2, PiggyBank, Trash2, ChevronRight } from "lucide-react";
 
@@ -29,25 +30,16 @@ const BG_COLORS = {
 
 export default function Accounts() {
   const toast = useToast();
-  const [accounts, setAccounts] = React.useState([]);
-  const [loading,  setLoading]  = React.useState(true);
+  const queryClient = useQueryClient();
   const [showForm, setShowForm] = React.useState(false);
   const [form, setForm] = React.useState({
     name: "", account_type: "savings", institution: "", balance: "", currency: "INR",
   });
   const [saving, setSaving] = React.useState(false);
 
-  async function load() {
-    try {
-      setAccounts(await apiFetch("/accounts"));
-    } catch (e) {
-      toast(e.message, "error");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  React.useEffect(() => { load(); }, []);
+  const accountsQuery = useQuery({ queryKey: KEYS.accounts(), queryFn: () => apiFetch("/accounts") });
+  const accounts = accountsQuery.data || [];
+  const loading = accountsQuery.isLoading;
 
   async function create(e) {
     e.preventDefault();
@@ -59,7 +51,7 @@ export default function Accounts() {
       });
       setForm({ name: "", account_type: "savings", institution: "", balance: "", currency: "INR" });
       setShowForm(false);
-      await load();
+      queryClient.invalidateQueries({ queryKey: KEYS.accounts() });
       toast("Account added", "success");
     } catch (e) {
       toast(e.message, "error");
@@ -71,7 +63,7 @@ export default function Accounts() {
   async function remove(id) {
     try {
       await apiFetch(`/accounts/${id}`, { method: "DELETE" });
-      setAccounts((a) => a.filter((x) => x.id !== id));
+      queryClient.invalidateQueries({ queryKey: KEYS.accounts() });
       toast("Account removed", "success");
     } catch (e) {
       toast(e.message, "error");

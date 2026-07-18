@@ -1,5 +1,6 @@
 import React from "react";
-import { API_BASE, apiFetch, authHeaders, money } from "../lib";
+import { useQuery } from "@tanstack/react-query";
+import { API_BASE, apiFetch, authHeaders, money, KEYS } from "../lib";
 import { useToast } from "../components/ui";
 import {
   Download, FileText, FileJson, FileSpreadsheet,
@@ -8,16 +9,12 @@ import {
 
 export default function ExportGST() {
   const toast = useToast();
-  const [gstReport, setGstReport] = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
   const [exporting, setExporting] = React.useState(null);
 
-  React.useEffect(() => {
-    apiFetch("/gst/report")
-      .then(setGstReport)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const { data: gstReport, isLoading: loading } = useQuery({
+    queryKey: KEYS.gstReport(),
+    queryFn: () => apiFetch("/gst/report"),
+  });
 
   async function handleExport(fmt) {
     setExporting(fmt);

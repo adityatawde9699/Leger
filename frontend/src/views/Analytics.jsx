@@ -1,6 +1,7 @@
 import React from "react";
-import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS, paletteColor } from "../lib";
-import { useToast } from "../components/ui";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS, paletteColor, KEYS } from "../lib";
+import { QueryGate } from "../components/ui";
 import { AlertTriangle, TrendingUp, TrendingDown, BarChart3, Activity, Zap } from "lucide-react";
 import {
   BarChart, Bar, Cell, AreaChart, Area, LineChart, Line,
@@ -31,38 +32,44 @@ function ChartTooltip({ active, payload, label }) {
 }
 
 export default function Analytics() {
-  const toast = useToast();
   const [timeRange,  setTimeRange]  = React.useState("3m");
-  const [summary,    setSummary]    = React.useState(null);
-  const [anomalies,  setAnomalies]  = React.useState([]);
-  const [forecast,   setForecast]   = React.useState(null);
-  const [loading,    setLoading]    = React.useState(true);
 
-  React.useEffect(() => {
-    setLoading(true);
-    Promise.all([
-      apiFetch(`/summary?range=${timeRange}`),
-      apiFetch(`/analytics/anomalies?range=${timeRange}`).catch(() => []),
-      apiFetch(`/analytics/forecast`).catch(() => null),
-    ]).then(([s, a, f]) => {
-      setSummary(s);
-      setAnomalies(Array.isArray(a) ? a : []);
-      setForecast(f);
-    }).catch(e => toast(e.message, "error"))
-      .finally(() => setLoading(false));
-  }, [timeRange]);
+  const summaryQuery = useQuery({
+    queryKey: KEYS.summary(timeRange),
+    queryFn: () => apiFetch(`/summary?range=${timeRange}`),
+  });
+  const { data: anomaliesData } = useQuery({
+    queryKey: KEYS.anomalies(timeRange),
+    queryFn: () => apiFetch(`/analytics/anomalies?range=${timeRange}`),
+  });
+  const { data: forecast } = useQuery({
+    queryKey: KEYS.forecast(),
+    queryFn: () => apiFetch(`/analytics/forecast`),
+  });
 
-  if (loading) {
-    return (
-      <div style={{ padding: "32px 0" }}>
-        <h1 className="page-title" style={{ marginBottom: 6 }}>Analytics</h1>
-        <p className="page-subtitle">Loading analytics data…</p>
-        <div className="charts-grid" style={{ marginTop: 24 }}>
-          {[1,2,3,4].map(i => (
-            <div key={i} className="card skeleton" style={{ height: 240 }} />
-          ))}
-        </div>
+  const summary = summaryQuery.data;
+  const anomalies = Array.isArray(anomaliesData) ? anomaliesData : [];
+
+  const skeleton = (
+    <div style={{ padding: "32px 0" }}>
+      <h1 className="page-title" style={{ marginBottom: 6 }}>Analytics</h1>
+      <p className="page-subtitle">Loading analytics data…</p>
+      <div className="charts-grid" style={{ marginTop: 24 }}>
+        {[1,2,3,4].map(i => (
+          <div key={i} className="card skeleton" style={{ height: 240 }} />
+        ))}
       </div>
+    </div>
+  );
+
+  if (summaryQuery.isLoading || summaryQuery.isError) {
+    return (
+      <QueryGate
+        loading={summaryQuery.isLoading}
+        error={summaryQuery.error}
+        onRetry={summaryQuery.refetch}
+        skeleton={skeleton}
+      />
     );
   }
 

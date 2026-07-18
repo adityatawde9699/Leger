@@ -450,6 +450,34 @@ input:focus, select:focus {
   to { transform: translateX(0); opacity: 1; }
 }
 
+/* ── Cold-start banner (Render free tier waking up) ── */
+.coldstart-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-radius: 999px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  animation: coldstartDrop 0.35s ease;
+  max-width: calc(100vw - 32px);
+}
+.coldstart-banner .spin { color: var(--primary); flex-shrink: 0; }
+
+@keyframes coldstartDrop {
+  from { transform: translate(-50%, -150%); opacity: 0; }
+  to { transform: translate(-50%, 0); opacity: 1; }
+}
+
 /* Glassmorphism Classes */
 .glass {
   background: var(--glass);

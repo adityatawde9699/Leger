@@ -42,37 +42,29 @@ export default defineConfig({
           {
             name: "Add transaction",
             short_name: "Add",
-            url: "/?view=transactions",
+            url: "/transactions",
             description: "Quickly record a new transaction",
           },
           {
             name: "Dashboard",
             short_name: "Dashboard",
-            url: "/?view=dashboard",
+            url: "/",
             description: "Open your financial overview",
           },
           {
             name: "Amadeus AI",
             short_name: "Advisor",
-            url: "/?view=advisor",
+            url: "/advisor",
             description: "Chat with your AI financial advisor",
           },
         ],
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        // Don't cache API calls – let the app handle freshness
+        // API responses are never precached/runtime-cached — TanStack Query
+        // owns freshness/staleness in-app, and stale API data cached by the
+        // service worker would be actively misleading for a finance app.
         runtimeCaching: [
-          {
-            urlPattern: ({ url }) =>
-              url.pathname.startsWith("/api") || url.port === "8000",
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "api-cache",
-              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
-              networkTimeoutSeconds: 10,
-            },
-          },
           {
             // Cache Google Fonts
             urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,

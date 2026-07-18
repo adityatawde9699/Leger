@@ -1,36 +1,26 @@
 import React from "react";
-import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS } from "../lib";
-import { useToast, CardSkeleton } from "../components/ui";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS, KEYS } from "../lib";
+import { useToast, CardSkeleton, QueryGate } from "../components/ui";
 import { Target, AlertCircle, Sparkles, CheckCircle } from "lucide-react";
 
 export default function Budgets() {
   const toast = useToast();
-  const [budgets, setBudgets]   = React.useState([]);
-  const [summary, setSummary]   = React.useState(null);
+  const queryClient = useQueryClient();
   const [draft, setDraft]       = React.useState({});
-  const [loading, setLoading]   = React.useState(true);
   const [saving, setSaving]     = React.useState(false);
 
-  async function load() {
-    setLoading(true);
-    try {
-      const [bud, sum] = await Promise.all([
-        apiFetch("/budgets"),
-        apiFetch("/summary?range=this_month"),
-      ]);
-      setBudgets(bud);
-      setSummary(sum);
-      setDraft(Object.fromEntries(bud.map((b) => [b.category, Number(b.monthly_limit)])));
-    } catch (e) {
-      toast(e.message, "error");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const budgetsQuery = useQuery({ queryKey: KEYS.budgets(), queryFn: () => apiFetch("/budgets") });
+  const summaryQuery = useQuery({ queryKey: KEYS.summary("this_month"), queryFn: () => apiFetch("/summary?range=this_month") });
 
-  React.useEffect(() => { load(); }, []);
+  // Re-sync the editable draft whenever the server's budget list changes
+  // (initial load, or after saving/applying suggestions).
+  React.useEffect(() => {
+    if (!budgetsQuery.data) return;
+    setDraft(Object.fromEntries(budgetsQuery.data.map((b) => [b.category, Number(b.monthly_limit)])));
+  }, [budgetsQuery.data]);
 
-  const byCategory = summary?.by_category || {};
+  const byCategory = summaryQuery.data?.by_category || {};
 
   async function saveBudgets() {
     setSaving(true);
@@ -40,8 +30,9 @@ export default function Budgets() {
         monthly_limit: Number(draft[cat] || 0),
         strategy: "manual",
       }));
-      const saved = await apiFetch("/budgets", { method: "PUT", body: JSON.stringify(payload) });
-      setBudgets(saved);
+      await apiFetch("/budgets", { method: "PUT", body: JSON.stringify(payload) });
+      queryClient.invalidateQueries({ queryKey: KEYS.budgets() });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
       toast("Budgets saved", "success");
     } catch (e) {
       toast(e.message, "error");
@@ -53,24 +44,33 @@ export default function Budgets() {
   async function applyDynamic() {
     try {
       const suggestions = await apiFetch("/budgets/suggestions");
-      const saved = await apiFetch("/budgets", { method: "PUT", body: JSON.stringify(suggestions) });
-      setBudgets(saved);
-      setDraft(Object.fromEntries(saved.map((b) => [b.category, Number(b.monthly_limit)])));
+      await apiFetch("/budgets", { method: "PUT", body: JSON.stringify(suggestions) });
+      queryClient.invalidateQueries({ queryKey: KEYS.budgets() });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
       toast("Dynamic budgets applied", "success");
     } catch (e) {
       toast(e.message, "error");
     }
   }
 
-  if (loading) {
-    return (
-      <div className="view-budgets">
-        <h1 className="page-title">Goals & Budgets</h1>
-        <p className="page-subtitle">Loading your budgets…</p>
-        <div className="budget-grid">
-          {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
-        </div>
+  const skeleton = (
+    <div className="view-budgets">
+      <h1 className="page-title">Goals & Budgets</h1>
+      <p className="page-subtitle">Loading your budgets…</p>
+      <div className="budget-grid">
+        {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
       </div>
+    </div>
+  );
+
+  if (budgetsQuery.isLoading || summaryQuery.isLoading || budgetsQuery.isError || summaryQuery.isError) {
+    return (
+      <QueryGate
+        loading={budgetsQuery.isLoading || summaryQuery.isLoading}
+        error={budgetsQuery.error || summaryQuery.error}
+        onRetry={() => { budgetsQuery.refetch(); summaryQuery.refetch(); }}
+        skeleton={skeleton}
+      />
     );
   }
 

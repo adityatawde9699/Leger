@@ -111,6 +111,26 @@ export function ErrorMsg({ message }) {
   );
 }
 
+// ── Query gate ─────────────────────────────────────────────────────────────────
+// Wraps a TanStack Query result: shows the skeleton while loading, an error
+// message with a retry button on failure, or the children once data is ready.
+export function QueryGate({ loading, error, onRetry, skeleton, children }) {
+  if (loading) return skeleton ?? <CardSkeleton />;
+  if (error) {
+    return (
+      <div style={{ textAlign: "center", padding: "48px 24px" }}>
+        <ErrorMsg message={error.message || "Something went wrong."} />
+        {onRetry && (
+          <button className="btn-secondary" style={{ marginTop: 12 }} onClick={onRetry}>
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+  return children;
+}
+
 export function LedgerLogo({ size = 38, className = "" }) {
   // Ledger mark: a bold "L" monogram beside an ascending 3-bar chart (growth /
   // ledger entries). The tallest bar is crimson — the lime + crimson identity.

@@ -5,8 +5,8 @@ services:
   - type: web
     name: ledger-api
     runtime: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
+    dockerfilePath: ./backend-node/Dockerfile
+    dockerContext: ./backend-node
     plan: free          # upgrade to starter for persistent disk
     region: singapore   # closest to India; change to ohio for US users
     healthCheckPath: /ping

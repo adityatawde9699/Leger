@@ -1,7 +1,7 @@
 import React from "react";
-import { apiFetch, money, CATEGORY_COLORS, paletteColor } from "../lib";
-import { CardSkeleton } from "../components/ui";
-import { useToast } from "../components/ui";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch, money, CATEGORY_COLORS, paletteColor, KEYS } from "../lib";
+import { CardSkeleton, QueryGate } from "../components/ui";
 import ProactiveInsights from "../components/ProactiveInsights";
 import {
   TrendingUp, TrendingDown, DollarSign, PiggyBank, Calendar, AlertCircle,
@@ -24,31 +24,28 @@ const SEVERITY_COLOR = { high: "var(--accent)", medium: "var(--warning)", low: "
 const SEVERITY_BG    = { high: "rgba(255, 59, 59, 0.1)", medium: "rgba(250, 204, 21, 0.1)", low: "rgba(56, 189, 248, 0.1)" };
 
 export default function Dashboard({ analyticsOnly = false }) {
-  const toast = useToast();
-  const [summary,   setSummary]   = React.useState(null);
-  const [loading,   setLoading]   = React.useState(true);
   const [timeRange, setTimeRange] = React.useState("30d");
-  const [anomalies, setAnomalies] = React.useState([]);
-  const [forecast,  setForecast]  = React.useState(null);
   const [showAllAnomalies, setShowAllAnomalies] = React.useState(false);
   const [dismissedAnomalies, setDismissedAnomalies] = React.useState(() => {
     try { return JSON.parse(localStorage.getItem("dismissed_anomalies") || "[]"); }
     catch { return []; }
   });
 
-  React.useEffect(() => {
-    setLoading(true);
-    Promise.all([
-      apiFetch(`/summary?range=${timeRange}`),
-      apiFetch(`/analytics/anomalies?range=${timeRange}`).catch(() => []),
-      apiFetch(`/analytics/forecast`).catch(() => null),
-    ]).then(([s, a, f]) => {
-      setSummary(s);
-      setAnomalies(Array.isArray(a) ? a : []);
-      setForecast(f);
-    }).catch((e) => toast(e.message, "error"))
-      .finally(() => setLoading(false));
-  }, [timeRange]);
+  const summaryQuery = useQuery({
+    queryKey: KEYS.summary(timeRange),
+    queryFn: () => apiFetch(`/summary?range=${timeRange}`),
+  });
+  const { data: anomaliesData } = useQuery({
+    queryKey: KEYS.anomalies(timeRange),
+    queryFn: () => apiFetch(`/analytics/anomalies?range=${timeRange}`),
+  });
+  const { data: forecast } = useQuery({
+    queryKey: KEYS.forecast(),
+    queryFn: () => apiFetch(`/analytics/forecast`),
+  });
+
+  const summary = summaryQuery.data;
+  const anomalies = Array.isArray(anomaliesData) ? anomaliesData : [];
 
   const dismissAnomaly = (txId) => {
     const next = [...dismissedAnomalies, txId];
@@ -56,20 +53,29 @@ export default function Dashboard({ analyticsOnly = false }) {
     localStorage.setItem("dismissed_anomalies", JSON.stringify(next));
   };
 
-  if (loading) {
-    return (
-      <div className="view-dashboard">
-        <div className="page-title-block">
-          <h1 className="page-title">{analyticsOnly ? "Analytics" : "Dashboard"}</h1>
-          <p className="page-subtitle">Loading your financial data…</p>
-        </div>
-        <div className="account-grid">
-          {Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)}
-        </div>
-        <div className="charts-grid">
-          <CardSkeleton /><CardSkeleton />
-        </div>
+  const skeleton = (
+    <div className="view-dashboard">
+      <div className="page-title-block">
+        <h1 className="page-title">{analyticsOnly ? "Analytics" : "Dashboard"}</h1>
+        <p className="page-subtitle">Loading your financial data…</p>
       </div>
+      <div className="account-grid">
+        {Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)}
+      </div>
+      <div className="charts-grid">
+        <CardSkeleton /><CardSkeleton />
+      </div>
+    </div>
+  );
+
+  if (summaryQuery.isLoading || summaryQuery.isError) {
+    return (
+      <QueryGate
+        loading={summaryQuery.isLoading}
+        error={summaryQuery.error}
+        onRetry={summaryQuery.refetch}
+        skeleton={skeleton}
+      />
     );
   }
 
