@@ -28,14 +28,14 @@
     "postgres": "^3.4.7",
     "unpdf": "^1.1.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
-    "zod": "^4.1.13"
-  },
-  "devDependencies": {
+    "zod": "^4.1.13",
     "@types/node": "^24.9.2",
     "@types/papaparse": "^5.3.16",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
     "drizzle-kit": "^0.31.6",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   },
   "overrides": {
