@@ -27,7 +27,7 @@ export default function ProactiveInsights({ onNavigate }) {
   });
 
   React.useEffect(() => {
-    apiFetch("/insights/proactive")
+    apiFetch("/summary/proactive")
       .then((data) => {
         // Sort by priority descending
         const sorted = [...(data || [])].sort((a, b) => (b.priority || 0) - (a.priority || 0));

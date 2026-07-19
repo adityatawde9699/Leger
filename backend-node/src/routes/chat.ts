@@ -18,48 +18,63 @@ chatRoutes.post("/advisor/stream", async (c) => {
   
   const safeQuestion = sanitizeUserInput(question);
   
-  // Fetch user data for context
-  const txs = await db.select().from(schema.transactions)
-    .where(eq(schema.transactions.userId, user.id))
-    .orderBy(desc(schema.transactions.date))
-    .limit(300);
-    
-  const budgets = await db.select().from(schema.budgets)
-    .where(eq(schema.budgets.userId, user.id));
-    
+  let txs: any[] = [];
+  let budgets: any[] = [];
+
+  try {
+    txs = await db.select().from(schema.transactions)
+      .where(eq(schema.transactions.userId, user.id))
+      .orderBy(desc(schema.transactions.date))
+      .limit(300);
+  } catch (err) {
+    console.warn("Advisor context transaction loads failed:", err);
+  }
+
+  try {
+    budgets = await db.select().from(schema.budgets)
+      .where(eq(schema.budgets.userId, user.id));
+  } catch (err) {
+    console.warn("Advisor context budget loads failed:", err);
+  }
+
   const contextText = buildAdvisorContext(txs, budgets);
   
   let history: { role: string; content: string }[] = [];
   let convId = conversation_id;
   
-  if (convId) {
-    const conv = await db.select().from(schema.aiConversations)
-      .where(and(eq(schema.aiConversations.id, convId), eq(schema.aiConversations.userId, user.id)))
-      .limit(1);
-      
-    if (conv.length) {
-      const msgs = await db.select().from(schema.aiMessages)
-        .where(eq(schema.aiMessages.conversationId, convId))
-        .orderBy(schema.aiMessages.createdAt);
-      history = msgs.map((m) => ({ role: m.role, content: m.content }));
-    } else {
-      convId = null;
+  try {
+    if (convId) {
+      const conv = await db.select().from(schema.aiConversations)
+        .where(and(eq(schema.aiConversations.id, convId), eq(schema.aiConversations.userId, user.id)))
+        .limit(1);
+        
+      if (conv.length) {
+        const msgs = await db.select().from(schema.aiMessages)
+          .where(eq(schema.aiMessages.conversationId, convId))
+          .orderBy(schema.aiMessages.createdAt);
+        history = msgs.map((m) => ({ role: m.role, content: m.content }));
+      } else {
+        convId = null;
+      }
     }
+    
+    if (!convId) {
+      const [newConv] = await db.insert(schema.aiConversations).values({
+        userId: user.id,
+        title: question.substring(0, 80),
+      }).returning();
+      convId = newConv.id;
+    }
+    
+    await db.insert(schema.aiMessages).values({
+      conversationId: convId,
+      role: "user",
+      content: question,
+    });
+  } catch (err) {
+    console.warn("Advisor conversation persistence failed:", err);
+    convId = convId || "local";
   }
-  
-  if (!convId) {
-    const [newConv] = await db.insert(schema.aiConversations).values({
-      userId: user.id,
-      title: question.substring(0, 80),
-    }).returning();
-    convId = newConv.id;
-  }
-  
-  await db.insert(schema.aiMessages).values({
-    conversationId: convId,
-    role: "user",
-    content: question, // save the original question
-  });
 
   const messages = buildSafeMessages(SYSTEM_PROMPT, contextText, safeQuestion, history);
   
@@ -79,15 +94,19 @@ chatRoutes.post("/advisor/stream", async (c) => {
       await stream.write(`\n[Error: ${e.message}]`);
     } finally {
       if (fullReply) {
-        await db.insert(schema.aiMessages).values({
-          conversationId: convId,
-          role: "assistant",
-          content: fullReply,
-        });
-        
-        await db.update(schema.aiConversations)
-          .set({ updatedAt: new Date() })
-          .where(eq(schema.aiConversations.id, convId));
+        try {
+          await db.insert(schema.aiMessages).values({
+            conversationId: convId,
+            role: "assistant",
+            content: fullReply,
+          });
+          
+          await db.update(schema.aiConversations)
+            .set({ updatedAt: new Date() })
+            .where(eq(schema.aiConversations.id, convId));
+        } catch (err) {
+          console.warn("Advisor conversation update failed:", err);
+        }
       }
     }
   });

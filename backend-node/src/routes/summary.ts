@@ -67,18 +67,41 @@ summaryRoutes.get("/summary/credit-health", async (c) => {
   return c.json(health);
 });
 
-summaryRoutes.get("/summary/proactive", async (c) => {
+async function getProactiveInsights(c: any) {
   const user = getUser(c);
-  
-  const txs = await db.select().from(schema.transactions)
-    .where(eq(schema.transactions.userId, user.id))
-    .orderBy(desc(schema.transactions.date));
-    
-  const budgets = await db.select().from(schema.budgets)
-    .where(eq(schema.budgets.userId, user.id));
-    
-  const insights = await generateProactiveInsights(txs, budgets, [], {});
-  return c.json(insights);
+
+  let txs: any[] = [];
+  let budgets: any[] = [];
+
+  try {
+    txs = await db.select().from(schema.transactions)
+      .where(eq(schema.transactions.userId, user.id))
+      .orderBy(desc(schema.transactions.date));
+  } catch (err) {
+    console.warn("Failed to load transactions for proactive insights:", err);
+  }
+
+  try {
+    budgets = await db.select().from(schema.budgets)
+      .where(eq(schema.budgets.userId, user.id));
+  } catch (err) {
+    console.warn("Failed to load budgets for proactive insights:", err);
+  }
+
+  try {
+    return await generateProactiveInsights(txs, budgets, [], {});
+  } catch (err) {
+    console.warn("Failed to generate proactive insights:", err);
+    return [];
+  }
+}
+
+summaryRoutes.get("/summary/proactive", async (c) => {
+  return c.json(await getProactiveInsights(c));
+});
+
+summaryRoutes.get("/insights/proactive", async (c) => {
+  return c.json(await getProactiveInsights(c));
 });
 
 summaryRoutes.get("/summary/benchmarks", async (c) => {
