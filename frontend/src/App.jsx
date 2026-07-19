@@ -2,7 +2,7 @@ import React, { useState, useEffect, lazy, Suspense } from "react";
 import { Routes, Route, Navigate, useLocation, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { loadPersistedCredential, clearCredential, onAuthChange, getUserInfo } from "./google-auth";
-import { apiFetch, API_BASE, EXPENSE_CATEGORIES, setAuthToken, today, KEYS } from "./lib";
+import { apiFetch, EXPENSE_CATEGORIES, setAuthToken, today, KEYS, buildApiUrl } from "./lib";
 import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
 import Auth from "./views/Auth";
 import CommandPalette from "./components/CommandPalette";
@@ -49,7 +49,7 @@ let _pingInterval = null;
 function startKeepAlive() {
   if (_pingInterval) return;
   _pingInterval = setInterval(async () => {
-    try { await fetch(`${API_BASE}/ping`); } catch { /* noop */ }
+    try { await fetch(buildApiUrl("/ping")); } catch { /* noop */ }
   }, 13 * 60 * 1000);
 }
 function stopKeepAlive() {
@@ -137,7 +137,7 @@ export default function App() {
     if (!session) return;
     // Fire a warm-up ping immediately so the free-tier backend starts waking
     // before the first real (data-bearing) request needs it.
-    fetch(`${API_BASE}/ping`).catch(() => {});
+    fetch(buildApiUrl("/ping")).catch(() => {});
   }, [session]);
 
   // Shared with the Profile view's own useQuery(KEYS.profile()) call — same

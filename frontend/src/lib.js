@@ -1,8 +1,11 @@
 // ── API Base & helpers ────────────────────────────────────────────────────────
 import { getCredential } from "./google-auth";
+import { buildApiUrl, normalizeApiBase } from "./api-url.mjs";
 
-export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+export const API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE || "http://localhost:8000");
 let currentToken = "";
+
+export { buildApiUrl };
 
 export function setAuthToken(token) {
   currentToken = token || "";
@@ -79,7 +82,7 @@ async function attemptFetch(path, opts, isFormData, timeoutMs) {
     ? setTimeout(() => controller.abort(new DOMException("timeout", "TimeoutError")), timeoutMs)
     : null;
   try {
-    return await fetch(`${API_BASE}${path}`, {
+    return await fetch(buildApiUrl(path, API_BASE), {
       ...opts,
       signal: controller ? controller.signal : opts.signal,
       headers: {

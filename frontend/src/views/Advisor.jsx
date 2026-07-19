@@ -1,5 +1,5 @@
 import React from "react";
-import { API_BASE, apiFetch, authHeaders } from "../lib";
+import { apiFetch, authHeaders, buildApiUrl } from "../lib";
 import { useToast } from "../components/ui";
 import { Sparkles, Send, Trash2, Plus, MessageSquare } from "lucide-react";
 
@@ -63,7 +63,7 @@ export default function Advisor() {
 
     try {
       const body = JSON.stringify({ question: q, conversation_id: activeId || undefined });
-      const res  = await fetch(`${API_BASE}/advisor/stream`, {
+      const res  = await fetch(buildApiUrl("/advisor/stream"), {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body,

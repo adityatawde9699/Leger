@@ -1,6 +1,6 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { API_BASE, apiFetch, authHeaders, money, KEYS } from "../lib";
+import { apiFetch, authHeaders, money, KEYS, buildApiUrl } from "../lib";
 import { useToast } from "../components/ui";
 import {
   Download, FileText, FileJson, FileSpreadsheet,
@@ -19,7 +19,7 @@ export default function ExportGST() {
   async function handleExport(fmt) {
     setExporting(fmt);
     try {
-      const res = await fetch(`${API_BASE}/export/${fmt}`, {
+      const res = await fetch(buildApiUrl(`/export/${fmt}`), {
         headers: authHeaders(),
       });
       if (!res.ok) {
