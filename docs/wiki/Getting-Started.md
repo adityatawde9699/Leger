@@ -66,7 +66,7 @@ The app is available at **http://127.0.0.1:5173**.
 ## Step 5: Verify
 
 1. Open http://127.0.0.1:5173 in your browser
-2. The app will use `AUTH_PROVIDER=dev` by default (accepts any Bearer token)
+2. Sign in with Google to authenticate with the app
 3. Try adding a transaction, setting a budget, or asking the Amadeus AI
 
 ## Optional: Local AI with llama-cpp-python

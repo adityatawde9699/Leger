@@ -3,10 +3,8 @@ import { z } from "zod";
 const envSchema = z.object({
   DATABASE_URL: z.string().default("postgresql://ledger:ledger@localhost:5432/ledger"),
 
-  AUTH_PROVIDER: z.enum(["dev", "supabase", "firebase", "google"]).default("dev"),
-  SUPABASE_JWKS_URL: z.string().optional(),
+  AUTH_PROVIDER: z.literal("google").default("google"),
   GOOGLE_CLIENT_ID: z.string().optional(),
-  FIREBASE_PROJECT_ID: z.string().optional(),
 
   GROQ_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
@@ -58,13 +56,6 @@ export const config = {
 
 function validateForProduction() {
   if (config.ENVIRONMENT === "production") {
-    if (config.AUTH_PROVIDER === "dev") {
-      // eslint-disable-next-line no-console
-      console.error(
-        "FATAL: AUTH_PROVIDER=dev is not allowed in production. Set AUTH_PROVIDER=google, supabase, or firebase."
-      );
-      process.exit(1);
-    }
     if (
       !config.GROQ_API_KEY &&
       !config.CEREBRAS_API_KEY &&
@@ -74,10 +65,6 @@ function validateForProduction() {
     ) {
       console.warn("WARNING: No AI backend configured. Set at least one provider API key.");
     }
-  } else if (config.AUTH_PROVIDER === "dev") {
-    console.warn(
-      "WARNING: Running with AUTH_PROVIDER=dev. Any Bearer token is accepted as a user ID. Never use this in production."
-    );
   }
 }
 

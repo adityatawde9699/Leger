@@ -16,9 +16,7 @@ services:
       - key: DATABASE_URL
         sync: false     # set in Render dashboard → secret
       - key: AUTH_PROVIDER
-        sync: false     # supabase | firebase
-      - key: SUPABASE_JWKS_URL
-        sync: false
+        value: google
       - key: CORS_ORIGINS
         sync: false     # comma-separated, e.g. https://your-app.vercel.app
       # AI Providers — set at least one

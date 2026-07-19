@@ -1,9 +1,9 @@
 // ── API Base & helpers ────────────────────────────────────────────────────────
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
-let currentToken = import.meta.env.VITE_DEV_AUTH_TOKEN || "dev-user";
+let currentToken = "";
 
 export function setAuthToken(token) {
-  currentToken = token;
+  currentToken = token || "";
 }
 
 function getToken() {
@@ -11,10 +11,10 @@ function getToken() {
 }
 
 export function authHeaders(extra = {}) {
-  return {
-    Authorization: `Bearer ${getToken()}`,
-    ...extra,
-  };
+  const token = getToken();
+  return token
+    ? { Authorization: `Bearer ${token}`, ...extra }
+    : { ...extra };
 }
 
 export class ApiError extends Error {

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { LedgerLogo } from '../components/ui';
-import { persistCredential, setCredential } from '../google-auth';
+import { persistCredential } from '../google-auth';
 
 function GoogleIcon() {
   return (
@@ -45,20 +45,9 @@ export default function Auth() {
     },
   });
 
-  const handleDevSignIn = () => {
-    setCredential('dev-user');
-    sessionStorage.setItem('g_credential', 'dev-user');
-  };
-
   const handleClick = () => {
     setError(null);
     setLoading(true);
-
-    if (import.meta.env.VITE_AUTH_PROVIDER === 'dev') {
-      handleDevSignIn();
-      return;
-    }
-
     login();
     // loading is reset in onError; onSuccess navigates away via credential change
   };

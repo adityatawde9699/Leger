@@ -128,19 +128,17 @@ CEREBRAS_API_KEY="your_cerebras_key"
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | Yes | `sqlite:///./ledger_dev.db` | PostgreSQL or SQLite connection string |
-| `AUTH_PROVIDER` | Yes | `dev` | Auth mode: `dev`, `supabase`, or `firebase` |
+| `AUTH_PROVIDER` | Yes | `google` | Auth provider. Only `google` is supported. |
 | `ENVIRONMENT` | No | `development` | `development`, `staging`, or `production` |
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Comma-separated allowed origins |
 | `GROQ_API_KEY` | No | — | Groq API key (primary) |
 | `GEMINI_API_KEY` | No | — | Gemini API key (multimodal extraction) |
 | `CEREBRAS_API_KEY` | No | — | Cerebras API key (high speed fallback) |
-| `SUPABASE_JWKS_URL` | If Supabase | — | Supabase JWKS URL for JWT verification |
-| `FIREBASE_PROJECT_ID` | If Firebase | — | Firebase project ID for JWT verification |
 | `REDIS_URL` | No | `redis://localhost:6379/0` | Redis URL for caching |
 | `ADVISOR_RATE_LIMIT` | No | `10/minute` | Rate limit for Amadeus AI endpoint |
 | `DEBUG` | No | `false` | Enable debug logging |
 
-> ⚠️ **Production:** `AUTH_PROVIDER=dev` is **blocked** in `ENVIRONMENT=production`. The app will refuse to start.
+> ⚠️ **Production:** Google OAuth must be configured before starting the app in production.
 
 ## API Endpoints
 

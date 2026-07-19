@@ -5,15 +5,15 @@
 ### Environment
 ```bash
 ENVIRONMENT=production
-AUTH_PROVIDER=supabase     # NEVER dev in production
+AUTH_PROVIDER=google
 DATABASE_URL=postgresql+psycopg://user:pass@host:5432/ledger?sslmode=require
 CORS_ORIGINS=https://your-domain.com
 ```
 
-> ⚠️ App refuses to start with `AUTH_PROVIDER=dev` in production.
+> ⚠️ Google OAuth must be configured before deploying the app in production.
 
 ### Security Checks
-- [ ] Auth provider is NOT `dev`
+- [ ] Auth provider is `google`
 - [ ] Database uses SSL
 - [ ] CORS restricted to your domain(s)
 - [ ] API keys via secrets manager
