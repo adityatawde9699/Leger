@@ -1,4 +1,6 @@
 // ── API Base & helpers ────────────────────────────────────────────────────────
+import { getCredential } from "./google-auth";
+
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 let currentToken = "";
 
@@ -7,7 +9,15 @@ export function setAuthToken(token) {
 }
 
 function getToken() {
-  return currentToken;
+  if (currentToken) return currentToken;
+  const saved = typeof window !== "undefined"
+    ? window.sessionStorage.getItem("g_credential")
+    : null;
+  if (saved) {
+    currentToken = saved;
+    return saved;
+  }
+  return getCredential() || "";
 }
 
 export function authHeaders(extra = {}) {

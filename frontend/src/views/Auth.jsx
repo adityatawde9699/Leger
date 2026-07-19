@@ -3,6 +3,7 @@ import { useGoogleLogin } from '@react-oauth/google';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { LedgerLogo } from '../components/ui';
 import { persistCredential } from '../google-auth';
+import { setAuthToken } from '../lib';
 
 function GoogleIcon() {
   return (
@@ -34,6 +35,7 @@ export default function Auth() {
         if (!res.ok) throw new Error('Failed to fetch user info from Google');
         const userInfo = await res.json(); // { sub, email, name, picture }
         persistCredential(tokenResponse.access_token, userInfo);
+        setAuthToken(tokenResponse.access_token);
       } catch (err) {
         setError(err.message);
         setLoading(false);
