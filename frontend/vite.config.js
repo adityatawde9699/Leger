@@ -2,9 +2,38 @@ import { defineConfig, splitVendorChunkPlugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
+function spaFallbackPlugin() {
+  return {
+    name: "spa-fallback",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.method !== "GET") return next();
+        const url = req.url || "/";
+        if (url.startsWith("/api") || url.startsWith("/@") || url.startsWith("/src") || url.includes(".")) {
+          return next();
+        }
+        req.url = "/index.html";
+        return next();
+      });
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.method !== "GET") return next();
+        const url = req.url || "/";
+        if (url.startsWith("/api") || url.startsWith("/@") || url.startsWith("/src") || url.includes(".")) {
+          return next();
+        }
+        req.url = "/index.html";
+        return next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     react(),
+    spaFallbackPlugin(),
     splitVendorChunkPlugin(), // Split recharts/lucide into separate vendor chunks
     VitePWA({
       registerType: "autoUpdate",
