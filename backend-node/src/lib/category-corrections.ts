@@ -1,6 +1,7 @@
+import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/client.js";
+import { embeddingCache } from "../services/embedding-cache.js";
 
 // Port of backend/app/services/categorization_learner.py record_correction.
 // SHA-256 of the normalized description keeps raw merchant names (PII) out
@@ -39,6 +40,8 @@ export async function recordCorrection(userId: string, description: string, newC
         correctionCount: 1,
       });
     }
+
+    embeddingCache.put(description, newCategory, 1.0, null);
   } catch (e) {
     // Never let a learner failure interrupt the caller's main flow.
     console.error("recordCorrection failed", e);

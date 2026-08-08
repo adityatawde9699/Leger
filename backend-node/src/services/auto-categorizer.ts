@@ -1,8 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { config } from "../config.js";
-import { CATEGORIES, EXPENSE_CATEGORIES, ruleCategorize, extractUpiMerchant } from "./categorizer.js";
+import { CATEGORIES, EXPENSE_CATEGORIES, extractUpiMerchant, ruleCategorize } from "./categorizer.js";
+import { embeddingCache } from "./embedding-cache.js";
 
 const RULES_CONFIDENCE = 0.95;
+const CACHE_CONFIDENCE = 0.9;
 
 const CATEGORIZE_SYSTEM = `You are a financial transaction categorizer for an Indian personal finance app.
 Given a transaction description, classify it into EXACTLY one of these categories:
@@ -39,7 +41,7 @@ function extractJson(raw: string): any {
   if (!raw) return null;
   let text = raw.replace(/^\\s*\\x60\\x60\\x60(json)?/m, "").replace(/\\x60\\x60\\x60\\s*$/m, "").trim();
   try { return JSON.parse(text); } catch { }
-  
+
   const m = text.match(/(\\{[\\s\\S]*\\}|\\[[\\s\\S]*\\])/);
   if (m) {
     try { return JSON.parse(m[1]); } catch { }
@@ -66,12 +68,24 @@ export async function categorizeSingle(description: string, txType: string = "ex
   // 2. Rules
   const ruleResult = ruleCategorize(description, txType);
   if (ruleResult !== "Other") {
+    embeddingCache.put(description, ruleResult, RULES_CONFIDENCE, extractUpiMerchant(description));
     return {
       category: ruleResult,
       confidence: RULES_CONFIDENCE,
       merchant: extractUpiMerchant(description),
       source: "rules",
       reason: "Matched keyword rule"
+    };
+  }
+
+  const cachedResult = embeddingCache.findSimilar(description);
+  if (cachedResult && cachedResult.category !== "Other") {
+    return {
+      category: cachedResult.category,
+      confidence: Math.max(CACHE_CONFIDENCE, cachedResult.confidence * cachedResult.similarity),
+      merchant: cachedResult.merchant || extractUpiMerchant(description),
+      source: "cache",
+      reason: `Matched similar transaction: ${cachedResult.description}`
     };
   }
 
@@ -89,7 +103,7 @@ export async function categorizeSingle(description: string, txType: string = "ex
   try {
     const ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
     const cats = (txType === "expense" ? EXPENSE_CATEGORIES : CATEGORIES).join(", ");
-    
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: [
@@ -124,12 +138,12 @@ export async function categorizeSingle(description: string, txType: string = "ex
 export async function categorizeBatch(transactions: any[], userOverrides?: Record<string, string>): Promise<any[]> {
   const results: Record<string, any> = {};
   const needsLlm: any[] = [];
-  
+
   for (const tx of transactions) {
     const tid = tx.id;
     const desc = tx.description;
     const ttype = tx.type || "expense";
-    
+
     // 1. User overrides
     if (userOverrides) {
       const crypto = await import("crypto");
@@ -145,10 +159,11 @@ export async function categorizeBatch(transactions: any[], userOverrides?: Recor
         continue;
       }
     }
-    
+
     // 2. Rules
     const ruleResult = ruleCategorize(desc, ttype);
     if (ruleResult !== "Other") {
+      embeddingCache.put(desc, ruleResult, RULES_CONFIDENCE, extractUpiMerchant(desc));
       results[tid] = {
         id: tid,
         category: ruleResult,
@@ -158,10 +173,23 @@ export async function categorizeBatch(transactions: any[], userOverrides?: Recor
       };
       continue;
     }
-    
+
+    const cachedResult = embeddingCache.findSimilar(desc);
+    if (cachedResult && cachedResult.category !== "Other") {
+      results[tid] = {
+        id: tid,
+        category: cachedResult.category,
+        confidence: Math.max(CACHE_CONFIDENCE, cachedResult.confidence * cachedResult.similarity),
+        merchant: cachedResult.merchant || extractUpiMerchant(desc),
+        reason: `Similar to: ${cachedResult.description}`
+      };
+      embeddingCache.put(desc, cachedResult.category, cachedResult.confidence, cachedResult.merchant);
+      continue;
+    }
+
     needsLlm.push(tx);
   }
-  
+
   // 3. LLM Batch chunking
   if (needsLlm.length > 0 && config.GEMINI_API_KEY) {
     try {
@@ -169,16 +197,16 @@ export async function categorizeBatch(transactions: any[], userOverrides?: Recor
       const ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
       const cats = EXPENSE_CATEGORIES.join(", ");
       const sysPrompt = BATCH_CATEGORIZE_SYSTEM.replace("{categories}", cats);
-      
+
       for (let i = 0; i < needsLlm.length; i += BATCH_SIZE) {
         const chunk = needsLlm.slice(i, i + BATCH_SIZE);
         const userContent = chunk.map(tx => `- id: ${tx.id}, description: ${tx.description}`).join("\\n");
-        
+
         const response = await ai.models.generateContent({
           model: "gemini-2.5-flash",
           contents: [{ role: "user", parts: [{ text: sysPrompt }, { text: userContent }] }]
         });
-        
+
         const parsed = extractJson(response.text || "");
         if (Array.isArray(parsed)) {
           for (const item of parsed) {
@@ -197,7 +225,7 @@ export async function categorizeBatch(transactions: any[], userOverrides?: Recor
       console.warn("LLM batch classify failed:", e);
     }
   }
-  
+
   // Fill remaining
   for (const tx of needsLlm) {
     if (!results[tx.id]) {
@@ -210,6 +238,6 @@ export async function categorizeBatch(transactions: any[], userOverrides?: Recor
       };
     }
   }
-  
+
   return transactions.map(tx => results[tx.id]);
 }
