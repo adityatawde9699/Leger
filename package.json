@@ -1,9 +1,0 @@
-{
-  "name": "leger",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "build": "cd backend-node && npm ci --legacy-peer-deps && npm run build",
-    "start": "cd backend-node && node dist/index.js"
-  }
-}

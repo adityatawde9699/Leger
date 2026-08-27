@@ -1,6 +1,5 @@
-import React, { useState, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, money, KEYS } from "../lib";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { apiFetch, money } from "../lib";
 import { useToast } from "../components/ui";
 import {
   User, Mail, Calendar, TrendingUp, TrendingDown,
@@ -18,11 +17,11 @@ function getInitials(displayName, email) {
 }
 
 const AVATAR_GRADIENTS = [
-  "linear-gradient(135deg, var(--primary), var(--info))",
-  "linear-gradient(135deg, var(--info), var(--negative))",
-  "linear-gradient(135deg, var(--primary), var(--warning))",
-  "linear-gradient(135deg, var(--warning), var(--negative))",
-  "linear-gradient(135deg, var(--negative), var(--info))",
+  "linear-gradient(135deg, #4f46e5, #7c3aed)",
+  "linear-gradient(135deg, #0ea5e9, #6366f1)",
+  "linear-gradient(135deg, #10b981, #059669)",
+  "linear-gradient(135deg, #f59e0b, #ef4444)",
+  "linear-gradient(135deg, #ec4899, #8b5cf6)",
 ];
 
 function pickGradient(str = "") {
@@ -41,29 +40,34 @@ function formatDate(isoStr) {
 // ── Main Profile component ────────────────────────────────────────────────────
 export default function Profile({ onSignOut }) {
   const toast = useToast();
-  const queryClient = useQueryClient();
   const fileInputRef = useRef(null);
+  const [profile, setProfile] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [form, setForm] = useState({ display_name: "", currency_preference: "INR" });
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  const profileQuery = useQuery({ queryKey: KEYS.profile(), queryFn: () => apiFetch("/profile") });
-  const statsQuery = useQuery({ queryKey: KEYS.profileStats(), queryFn: () => apiFetch("/profile/stats") });
-  const profile = profileQuery.data;
-  const stats = statsQuery.data;
-  const loading = profileQuery.isLoading || statsQuery.isLoading;
+  const loadProfile = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [p, s] = await Promise.all([
+        apiFetch("/profile"),
+        apiFetch("/profile/stats"),
+      ]);
+      setProfile(p);
+      setStats(s);
+      setForm({ display_name: p.display_name || "", currency_preference: p.currency_preference || "INR" });
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
 
-  React.useEffect(() => {
-    if (!profile) return;
-    setForm({ display_name: profile.display_name || "", currency_preference: profile.currency_preference || "INR" });
-  }, [profile]);
-
-  function loadProfile() {
-    profileQuery.refetch();
-    statsQuery.refetch();
-  }
+  useEffect(() => { loadProfile(); }, [loadProfile]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -75,7 +79,7 @@ export default function Profile({ onSignOut }) {
           currency_preference: form.currency_preference,
         }),
       });
-      queryClient.setQueryData(KEYS.profile(), updated);
+      setProfile(updated);
       setEditing(false);
       toast("Profile updated", "success");
     } catch (e) {
@@ -122,7 +126,7 @@ export default function Profile({ onSignOut }) {
             avatar_url: base64Str,
           }),
         });
-        queryClient.setQueryData(KEYS.profile(), updated);
+        setProfile(updated);
         toast("Profile photo updated", "success");
         setUploadingAvatar(false);
       };
@@ -169,28 +173,28 @@ export default function Profile({ onSignOut }) {
   const statCards = [
     {
       icon: BarChart3, label: "Transactions", value: stats?.total_transactions ?? "—",
-      isCount: true, color: "var(--info)", bg: "rgba(56,189,248,0.16)",
+      isCount: true, color: "#6366f1", bg: "#ede9fe",
     },
     {
       icon: TrendingUp, label: "Total Income", value: money(stats?.total_income || 0),
-      color: "var(--positive)", bg: "var(--positive-soft)",
+      color: "#10b981", bg: "#d1fae5",
     },
     {
       icon: TrendingDown, label: "Total Expenses", value: money(stats?.total_expenses || 0),
-      color: "var(--negative)", bg: "var(--negative-soft)",
+      color: "#f43f5e", bg: "#ffe4e6",
     },
     {
       icon: DollarSign, label: "Net Balance", value: money(stats?.net_balance || 0),
-      color: Number(stats?.net_balance || 0) >= 0 ? "var(--positive)" : "var(--negative)",
-      bg: Number(stats?.net_balance || 0) >= 0 ? "var(--positive-soft)" : "var(--negative-soft)",
+      color: Number(stats?.net_balance || 0) >= 0 ? "#10b981" : "#f43f5e",
+      bg: Number(stats?.net_balance || 0) >= 0 ? "#d1fae5" : "#ffe4e6",
     },
     {
       icon: Wallet, label: "Accounts", value: stats?.accounts_count ?? "—",
-      isCount: true, color: "var(--info)", bg: "rgba(56,189,248,0.12)",
+      isCount: true, color: "#0ea5e9", bg: "#e0f2fe",
     },
     {
       icon: Target, label: "Budgets", value: stats?.budgets_count ?? "—",
-      isCount: true, color: "var(--warning)", bg: "rgba(250,204,21,0.16)",
+      isCount: true, color: "#f59e0b", bg: "#fef3c7",
     },
   ];
 
@@ -301,22 +305,17 @@ export default function Profile({ onSignOut }) {
       {/* ── Stats Grid ───────────────────────────────────────────────── */}
       <div className="profile-stats-grid">
         {statCards.map(({ icon: Icon, label, value, isCount, color, bg }) => (
-          <div
-            key={label}
-            className="card profile-stat-card"
-            style={{ "--stat-accent": color }}
-          >
-            <div className="profile-stat-icon" style={{ background: bg, color }}>
-              <Icon size={18} />
+          <div key={label} className="card profile-stat-card glass-card">
+            <div className="profile-stat-icon premium-icon" style={{ background: bg, color }}>
+              <Icon size={16} />
             </div>
             <div className="profile-stat-value" style={{ color }}>
-              {isCount ? (value === "—" ? "—" : Number(value).toLocaleString("en-IN")) : value}
+              {isCount ? value.toLocaleString("en-IN") : value}
             </div>
             <div className="profile-stat-label">{label}</div>
           </div>
         ))}
       </div>
-
 
       {/* ── Combined Settings Section ─────────────────────────────────── */}
       <div className="card profile-settings-card premium-settings">

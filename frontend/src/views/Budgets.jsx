@@ -1,26 +1,36 @@
 import React from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS, KEYS } from "../lib";
-import { useToast, CardSkeleton, QueryGate } from "../components/ui";
+import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS } from "../lib";
+import { useToast, CardSkeleton } from "../components/ui";
 import { Target, AlertCircle, Sparkles, CheckCircle } from "lucide-react";
 
 export default function Budgets() {
   const toast = useToast();
-  const queryClient = useQueryClient();
+  const [budgets, setBudgets]   = React.useState([]);
+  const [summary, setSummary]   = React.useState(null);
   const [draft, setDraft]       = React.useState({});
+  const [loading, setLoading]   = React.useState(true);
   const [saving, setSaving]     = React.useState(false);
 
-  const budgetsQuery = useQuery({ queryKey: KEYS.budgets(), queryFn: () => apiFetch("/budgets") });
-  const summaryQuery = useQuery({ queryKey: KEYS.summary("this_month"), queryFn: () => apiFetch("/summary?range=this_month") });
+  async function load() {
+    setLoading(true);
+    try {
+      const [bud, sum] = await Promise.all([
+        apiFetch("/budgets"),
+        apiFetch("/summary?range=this_month"),
+      ]);
+      setBudgets(bud);
+      setSummary(sum);
+      setDraft(Object.fromEntries(bud.map((b) => [b.category, Number(b.monthly_limit)])));
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  // Re-sync the editable draft whenever the server's budget list changes
-  // (initial load, or after saving/applying suggestions).
-  React.useEffect(() => {
-    if (!budgetsQuery.data) return;
-    setDraft(Object.fromEntries(budgetsQuery.data.map((b) => [b.category, Number(b.monthly_limit)])));
-  }, [budgetsQuery.data]);
+  React.useEffect(() => { load(); }, []);
 
-  const byCategory = summaryQuery.data?.by_category || {};
+  const byCategory = summary?.by_category || {};
 
   async function saveBudgets() {
     setSaving(true);
@@ -30,9 +40,8 @@ export default function Budgets() {
         monthly_limit: Number(draft[cat] || 0),
         strategy: "manual",
       }));
-      await apiFetch("/budgets", { method: "PUT", body: JSON.stringify(payload) });
-      queryClient.invalidateQueries({ queryKey: KEYS.budgets() });
-      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      const saved = await apiFetch("/budgets", { method: "PUT", body: JSON.stringify(payload) });
+      setBudgets(saved);
       toast("Budgets saved", "success");
     } catch (e) {
       toast(e.message, "error");
@@ -44,33 +53,24 @@ export default function Budgets() {
   async function applyDynamic() {
     try {
       const suggestions = await apiFetch("/budgets/suggestions");
-      await apiFetch("/budgets", { method: "PUT", body: JSON.stringify(suggestions) });
-      queryClient.invalidateQueries({ queryKey: KEYS.budgets() });
-      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      const saved = await apiFetch("/budgets", { method: "PUT", body: JSON.stringify(suggestions) });
+      setBudgets(saved);
+      setDraft(Object.fromEntries(saved.map((b) => [b.category, Number(b.monthly_limit)])));
       toast("Dynamic budgets applied", "success");
     } catch (e) {
       toast(e.message, "error");
     }
   }
 
-  const skeleton = (
-    <div className="view-budgets">
-      <h1 className="page-title">Goals & Budgets</h1>
-      <p className="page-subtitle">Loading your budgets…</p>
-      <div className="budget-grid">
-        {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
-      </div>
-    </div>
-  );
-
-  if (budgetsQuery.isLoading || summaryQuery.isLoading || budgetsQuery.isError || summaryQuery.isError) {
+  if (loading) {
     return (
-      <QueryGate
-        loading={budgetsQuery.isLoading || summaryQuery.isLoading}
-        error={budgetsQuery.error || summaryQuery.error}
-        onRetry={() => { budgetsQuery.refetch(); summaryQuery.refetch(); }}
-        skeleton={skeleton}
-      />
+      <div className="view-budgets">
+        <h1 className="page-title">Goals & Budgets</h1>
+        <p className="page-subtitle">Loading your budgets…</p>
+        <div className="budget-grid">
+          {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
+        </div>
+      </div>
     );
   }
 
@@ -82,12 +82,12 @@ export default function Budgets() {
 
   return (
     <div className="view-budgets">
-      <div className="view-header">
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 32 }}>
         <div>
           <h1 className="page-title">Goals & Budgets</h1>
           <p className="page-subtitle" style={{ marginBottom: 0 }}>Track spending limits and stay on budget</p>
         </div>
-        <div className="view-header-actions">
+        <div style={{ display: 'flex', gap: 10 }}>
           <button className="btn-secondary" style={{ fontSize: 14 }} onClick={applyDynamic}>
             <Sparkles size={15} /> AI Suggestions
           </button>
@@ -97,16 +97,16 @@ export default function Budgets() {
         </div>
       </div>
 
-      {/* Summary strip */}
-      <div className="summary-strip">
+      {/* Summary row */}
+      <div className="budget-summary-row">
         {[
-          { label: 'Total Budgeted', val: money(totalBudgeted), color: 'var(--text-primary)' },
-          { label: 'Total Spent',    val: money(totalSpent),    color: totalSpent > totalBudgeted ? 'var(--negative)' : 'var(--primary)' },
-          { label: 'Over Budget',    val: `${overCount} categories`, color: overCount > 0 ? 'var(--negative)' : 'var(--primary)' },
+          { label: 'Total Budgeted', val: money(totalBudgeted), color: 'var(--accent)' },
+          { label: 'Total Spent',    val: money(totalSpent),    color: totalSpent > totalBudgeted ? 'var(--negative)' : 'var(--positive)' },
+          { label: 'Over Budget',    val: `${overCount} categories`, color: overCount > 0 ? 'var(--negative)' : 'var(--positive)' },
         ].map(({ label, val, color }) => (
-          <div className="stat-card" key={label}>
-            <div className="stat-card-label">{label}</div>
-            <div className="stat-card-value" style={{ color }}>{val}</div>
+          <div className="card" key={label} style={{ padding: '20px 24px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{label}</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 700, color }}>{val}</div>
           </div>
         ))}
       </div>
@@ -117,7 +117,7 @@ export default function Budgets() {
           const budget = Number(draft[cat] || 0);
           const pct    = budget > 0 ? Math.min(120, (spent / budget) * 100) : 0;
           const isOver = budget > 0 && spent > budget;
-          const color  = CATEGORY_COLORS[cat] || "var(--text-secondary)";
+          const color  = CATEGORY_COLORS[cat] || "#9ca3af";
 
           return (
             <div className={`card budget-card${isOver ? " over-budget" : ""}`} key={cat}>

@@ -47,8 +47,8 @@ and get AI-powered financial insights — all with local-first privacy.
         ┌───────────────────────┼──────────────────────┐
         ▼                       ▼                      ▼
 ┌──────────────┐  ┌───────────────────────────┐  ┌───────────────────┐
-│  PostgreSQL  │  │ Multi-Provider AI Router  │  │ Vision OCR (LLM)  │
-│  (psycopg3)  │  │ (Groq/Cerebras/Gemini/..) │  │ (Gemini receipts) │
+│  PostgreSQL  │  │ Multi-Provider AI Router  │  │ PaddleOCR Engine  │
+│  (psycopg2)  │  │ (Groq/Cerebras/Gemini/..) │  │ (Receipt Scanning)│
 └──────────────┘  └───────────────────────────┘  └───────────────────┘
 ```
 
@@ -61,7 +61,7 @@ and get AI-powered financial insights — all with local-first privacy.
 | **Analytics** | Dashboard KPIs (w/ time filters), category breakdowns, credit health score (300-900), community benchmarks |
 | **Investments** | Portfolio tracking (stocks/MF/crypto/FD/gold), holdings with live P&L |
 | **Compliance** | GST computation (Indian tax), audit logging, webhook integrations, Tally XML export |
-| **Platform** | Installable PWA (offline support, app shortcuts, maskable icon), command palette (⌘K), data export (CSV/JSON/Tally) |
+| **Platform** | PWA offline support, command palette (⌘K), data export (CSV/JSON/Tally) |
 
 ## Quick Start
 
@@ -104,15 +104,6 @@ npm run dev
 
 App is live at **http://127.0.0.1:5173** — backend API at **http://127.0.0.1:8000/docs**.
 
-The app is an installable PWA — open it in a supporting browser and choose **Install** to add it to your home screen / desktop, with offline support and app shortcuts (Add transaction, Dashboard, Amadeus AI).
-
-**Brand icons** live in `frontend/public/`. The sources of truth are `favicon.svg` (rounded tab/`any` icon) and `maskable-icon.svg` (full-bleed safe-zone icon); every raster artifact (`favicon.ico`, the `pwa-*`, `apple-touch-icon`, and `maskable-*` PNGs) is generated from them:
-
-```bash
-cd frontend
-npm run icons   # regenerate after editing either SVG
-```
-
 ### 4. (Optional) Configure AI Providers
 
 Ledger uses a multi-provider fallback router for maximum availability and zero cost. Set at least one of these keys in your `backend/.env` file:
@@ -128,17 +119,19 @@ CEREBRAS_API_KEY="your_cerebras_key"
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | Yes | `sqlite:///./ledger_dev.db` | PostgreSQL or SQLite connection string |
-| `AUTH_PROVIDER` | Yes | `google` | Auth provider. Only `google` is supported. |
+| `AUTH_PROVIDER` | Yes | `dev` | Auth mode: `dev`, `supabase`, or `firebase` |
 | `ENVIRONMENT` | No | `development` | `development`, `staging`, or `production` |
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Comma-separated allowed origins |
 | `GROQ_API_KEY` | No | — | Groq API key (primary) |
 | `GEMINI_API_KEY` | No | — | Gemini API key (multimodal extraction) |
 | `CEREBRAS_API_KEY` | No | — | Cerebras API key (high speed fallback) |
+| `SUPABASE_JWKS_URL` | If Supabase | — | Supabase JWKS URL for JWT verification |
+| `FIREBASE_PROJECT_ID` | If Firebase | — | Firebase project ID for JWT verification |
 | `REDIS_URL` | No | `redis://localhost:6379/0` | Redis URL for caching |
 | `ADVISOR_RATE_LIMIT` | No | `10/minute` | Rate limit for Amadeus AI endpoint |
 | `DEBUG` | No | `false` | Enable debug logging |
 
-> ⚠️ **Production:** Google OAuth must be configured before starting the app in production.
+> ⚠️ **Production:** `AUTH_PROVIDER=dev` is **blocked** in `ENVIRONMENT=production`. The app will refuse to start.
 
 ## API Endpoints
 
@@ -230,7 +223,7 @@ ledger/
 │   │   ├── App.jsx               # Shell with 10 nav tabs
 │   │   ├── main.jsx              # Entry point + ToastProvider
 │   │   ├── lib.js                # API helpers, formatters
-│   │   ├── styles.css            # Dark dual-palette design system (lime + crimson)
+│   │   ├── styles.css            # Full design system (~650 lines)
 │   │   ├── components/
 │   │   │   ├── CommandPalette.jsx # ⌘K palette (21 actions)
 │   │   │   └── ui.jsx            # Toast system

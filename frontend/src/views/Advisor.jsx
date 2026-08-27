@@ -1,5 +1,5 @@
 import React from "react";
-import { apiFetch, authHeaders, buildApiUrl } from "../lib";
+import { API_BASE, apiFetch, authHeaders } from "../lib";
 import { useToast } from "../components/ui";
 import { Sparkles, Send, Trash2, Plus, MessageSquare } from "lucide-react";
 
@@ -63,7 +63,7 @@ export default function Advisor() {
 
     try {
       const body = JSON.stringify({ question: q, conversation_id: activeId || undefined });
-      const res  = await fetch(buildApiUrl("/advisor/stream"), {
+      const res  = await fetch(`${API_BASE}/advisor/stream`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body,
@@ -149,14 +149,11 @@ export default function Advisor() {
   return (
     <div className="view-advisor">
       <div className="advisor-layout">
-        {/* Backdrop for the mobile conversation sheet */}
-        {showConvs && <div className="advisor-backdrop" onClick={() => setShowConvs(false)} aria-hidden="true" />}
-
         {/* Sidebar */}
         <aside className={`advisor-sidebar${showConvs ? " open" : ""}`}>
           <div className="advisor-sidebar-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <MessageSquare size={16} style={{ color: 'var(--primary)' }} />
+              <MessageSquare size={16} style={{ color: 'var(--accent)' }} />
               <span>Conversations</span>
             </div>
             <button
@@ -210,7 +207,7 @@ export default function Advisor() {
           <div style={{ marginBottom: 24 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
               <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg, var(--primary), var(--info))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg, var(--accent), #c084fc)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Sparkles size={20} style={{ color: 'white' }} />
                 </div>
                 Amadeus AI
@@ -243,8 +240,8 @@ export default function Advisor() {
           <div className="chat-window" ref={chatRef}>
             {messages.length === 0 && (
               <div className="chat-empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, margin: 'auto', textAlign: 'center' }}>
-                <div style={{ width: 56, height: 56, borderRadius: 16, background: 'linear-gradient(135deg, rgba(56,189,248,0.12), rgba(56,189,248,0.16))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Sparkles size={24} style={{ color: 'var(--primary)' }} />
+                <div style={{ width: 56, height: 56, borderRadius: 16, background: 'linear-gradient(135deg, #eff6ff, #e0e7ff)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Sparkles size={24} style={{ color: 'var(--accent)' }} />
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>How can I help you today?</div>
                 <div style={{ fontSize: 13, color: 'var(--text-muted)', maxWidth: 300, lineHeight: 1.6 }}>

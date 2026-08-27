@@ -1,6 +1,5 @@
 import React from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, KEYS } from "../lib";
+import { apiFetch } from "../lib";
 import { useToast } from "../components/ui";
 import {
   Shield, Clock, Edit3, Trash2, Plus, Globe, AlertCircle,
@@ -23,23 +22,34 @@ const ACTION_ICONS = {
 
 const ACTION_COLORS = {
   create: "var(--positive)",
-  update: "var(--primary)",
+  update: "var(--accent)",
   delete: "var(--negative)",
 };
 
 export default function AuditWebhooks() {
   const toast = useToast();
-  const queryClient = useQueryClient();
   const [tab, setTab] = React.useState("audit");
+  const [logs, setLogs] = React.useState([]);
+  const [hooks, setHooks] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
   const [showForm, setShowForm] = React.useState(false);
   const [form, setForm] = React.useState({ url: "", events: "transaction.created,transaction.deleted", secret: "" });
   const [saving, setSaving] = React.useState(false);
 
-  const auditQuery = useQuery({ queryKey: KEYS.audit(), queryFn: () => apiFetch("/audit?limit=100") });
-  const hooksQuery = useQuery({ queryKey: KEYS.webhooks(), queryFn: () => apiFetch("/webhooks") });
-  const logs = auditQuery.data || [];
-  const hooks = hooksQuery.data || [];
-  const loading = auditQuery.isLoading || hooksQuery.isLoading;
+  async function loadAudit() {
+    try {
+      setLogs(await apiFetch("/audit?limit=100"));
+    } catch (e) { toast(e.message, "error"); }
+  }
+  async function loadHooks() {
+    try {
+      setHooks(await apiFetch("/webhooks"));
+    } catch (e) { toast(e.message, "error"); }
+  }
+
+  React.useEffect(() => {
+    Promise.all([loadAudit(), loadHooks()]).finally(() => setLoading(false));
+  }, []);
 
   async function createHook(e) {
     e.preventDefault();
@@ -48,7 +58,7 @@ export default function AuditWebhooks() {
       await apiFetch("/webhooks", { method: "POST", body: JSON.stringify(form) });
       setForm({ url: "", events: "transaction.created,transaction.deleted", secret: "" });
       setShowForm(false);
-      queryClient.invalidateQueries({ queryKey: KEYS.webhooks() });
+      await loadHooks();
       toast("Webhook registered", "success");
     } catch (e) {
       toast(e.message, "error");
@@ -58,7 +68,7 @@ export default function AuditWebhooks() {
   async function deleteHook(id) {
     try {
       await apiFetch(`/webhooks/${id}`, { method: "DELETE" });
-      queryClient.invalidateQueries({ queryKey: KEYS.webhooks() });
+      setHooks(h => h.filter(x => x.id !== id));
       toast("Webhook removed", "success");
     } catch (e) { toast(e.message, "error"); }
   }
@@ -72,7 +82,7 @@ export default function AuditWebhooks() {
 
       {/* Tab toggle */}
       <div className="type-toggle" style={{ marginBottom: 20 }}>
-        <button className={`type-btn${tab === "audit" ? " active expense" : ""}`} onClick={() => setTab("audit")} style={tab === "audit" ? { borderColor: "var(--primary)", background: "rgba(56,189,248,0.12)", color: "var(--primary)" } : {}}>
+        <button className={`type-btn${tab === "audit" ? " active expense" : ""}`} onClick={() => setTab("audit")} style={tab === "audit" ? { borderColor: "var(--accent)", background: "#eff6ff", color: "var(--accent)" } : {}}>
           <Shield size={14} style={{ marginRight: 4 }} /> Audit Log
         </button>
         <button className={`type-btn${tab === "webhooks" ? " active income" : ""}`} onClick={() => setTab("webhooks")}>

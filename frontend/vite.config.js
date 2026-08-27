@@ -2,98 +2,52 @@ import { defineConfig, splitVendorChunkPlugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
-function spaFallbackPlugin() {
-  return {
-    name: "spa-fallback",
-    configureServer(server) {
-      server.middlewares.use((req, res, next) => {
-        if (req.method !== "GET") return next();
-        const url = req.url || "/";
-        if (url.startsWith("/api") || url.startsWith("/@") || url.startsWith("/src") || url.includes(".")) {
-          return next();
-        }
-        req.url = "/index.html";
-        return next();
-      });
-    },
-    configurePreviewServer(server) {
-      server.middlewares.use((req, res, next) => {
-        if (req.method !== "GET") return next();
-        const url = req.url || "/";
-        if (url.startsWith("/api") || url.startsWith("/@") || url.startsWith("/src") || url.includes(".")) {
-          return next();
-        }
-        req.url = "/index.html";
-        return next();
-      });
-    },
-  };
-}
-
 export default defineConfig({
   plugins: [
     react(),
-    spaFallbackPlugin(),
     splitVendorChunkPlugin(), // Split recharts/lucide into separate vendor chunks
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: [
-        "favicon.ico",
-        "favicon.svg",
-        "favicon-32x32.png",
-        "favicon-16x16.png",
-        "apple-touch-icon.png",
-      ],
+      includeAssets: ["pwa-192x192.png", "pwa-512x512.png"],
       manifest: {
         name: "Ledger — AI Finance Platform",
         short_name: "Ledger",
         description: "Manage your personal finances with AI-powered insights",
-        // Match the dark dual-palette brand (near-black surface, neon-lime accent)
-        // so the install splash screen and OS chrome stay on-brand.
-        theme_color: "#0A0A0B",
-        background_color: "#0A0A0B",
+        theme_color: "#4f46e5",
+        background_color: "#f8fafc",
         display: "standalone",
         orientation: "portrait",
         start_url: "/",
         scope: "/",
-        categories: ["finance", "productivity", "business"],
         icons: [
-          { src: "pwa-192x192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-          { src: "pwa-512x512.png", sizes: "512x512", type: "image/png", purpose: "any" },
           {
-            src: "maskable-icon-512x512.png",
+            src: "pwa-192x192.png",
+            sizes: "192x192",
+            type: "image/png",
+            purpose: "any"
+          },
+          {
+            src: "pwa-512x512.png",
             sizes: "512x512",
             type: "image/png",
-            purpose: "maskable",
-          },
-        ],
-        shortcuts: [
-          {
-            name: "Add transaction",
-            short_name: "Add",
-            url: "/transactions",
-            description: "Quickly record a new transaction",
-          },
-          {
-            name: "Dashboard",
-            short_name: "Dashboard",
-            url: "/",
-            description: "Open your financial overview",
-          },
-          {
-            name: "Amadeus AI",
-            short_name: "Advisor",
-            url: "/advisor",
-            description: "Chat with your AI financial advisor",
-          },
-        ],
+            purpose: "any maskable"
+          }
+        ]
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        // API responses are never precached/runtime-cached — TanStack Query
-        // owns freshness/staleness in-app, and stale API data cached by the
-        // service worker would be actively misleading for a finance app.
+        // Don't cache API calls – let the app handle freshness
         runtimeCaching: [
+          {
+            urlPattern: ({ url }) =>
+              url.pathname.startsWith("/api") || url.port === "8000",
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "api-cache",
+              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
+              networkTimeoutSeconds: 10,
+            },
+          },
           {
             // Cache Google Fonts
             urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,

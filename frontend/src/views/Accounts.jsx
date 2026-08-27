@@ -1,6 +1,5 @@
 import React from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiFetch, money, KEYS } from "../lib";
+import { apiFetch, money } from "../lib";
 import { useToast } from "../components/ui";
 import { Plus, CreditCard, Wallet, Building2, PiggyBank, Trash2, ChevronRight } from "lucide-react";
 
@@ -13,33 +12,42 @@ const ICONS = {
 };
 
 const COLORS = {
-  savings: "var(--positive)",
-  current: "var(--info)",
-  credit:  "var(--warning)",
-  wallet:  "var(--info)",
-  cash:    "var(--text-secondary)",
+  savings: "#10b981",
+  current: "#4f46e5",
+  credit:  "#f97316",
+  wallet:  "#a855f7",
+  cash:    "#94a3b8",
 };
 
 const BG_COLORS = {
-  savings: "var(--positive-soft)",
-  current: "rgba(56,189,248,0.12)",
-  credit:  "rgba(250,204,21,0.12)",
-  wallet:  "rgba(56,189,248,0.12)",
-  cash:    "var(--surface-secondary)",
+  savings: "#ecfdf5",
+  current: "#eff6ff",
+  credit:  "#fff7ed",
+  wallet:  "#faf5ff",
+  cash:    "#f8fafc",
 };
 
 export default function Accounts() {
   const toast = useToast();
-  const queryClient = useQueryClient();
+  const [accounts, setAccounts] = React.useState([]);
+  const [loading,  setLoading]  = React.useState(true);
   const [showForm, setShowForm] = React.useState(false);
   const [form, setForm] = React.useState({
     name: "", account_type: "savings", institution: "", balance: "", currency: "INR",
   });
   const [saving, setSaving] = React.useState(false);
 
-  const accountsQuery = useQuery({ queryKey: KEYS.accounts(), queryFn: () => apiFetch("/accounts") });
-  const accounts = accountsQuery.data || [];
-  const loading = accountsQuery.isLoading;
+  async function load() {
+    try {
+      setAccounts(await apiFetch("/accounts"));
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  React.useEffect(() => { load(); }, []);
 
   async function create(e) {
     e.preventDefault();
@@ -51,7 +59,7 @@ export default function Accounts() {
       });
       setForm({ name: "", account_type: "savings", institution: "", balance: "", currency: "INR" });
       setShowForm(false);
-      queryClient.invalidateQueries({ queryKey: KEYS.accounts() });
+      await load();
       toast("Account added", "success");
     } catch (e) {
       toast(e.message, "error");
@@ -63,7 +71,7 @@ export default function Accounts() {
   async function remove(id) {
     try {
       await apiFetch(`/accounts/${id}`, { method: "DELETE" });
-      queryClient.invalidateQueries({ queryKey: KEYS.accounts() });
+      setAccounts((a) => a.filter((x) => x.id !== id));
       toast("Account removed", "success");
     } catch (e) {
       toast(e.message, "error");
@@ -74,7 +82,7 @@ export default function Accounts() {
 
   return (
     <div className="view-accounts">
-      <div className="view-header">
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 32 }}>
         <div>
           <h1 className="page-title">Accounts</h1>
           <p className="page-subtitle" style={{ marginBottom: 0 }}>Manage your bank accounts, wallets, and cards</p>
@@ -103,23 +111,23 @@ export default function Accounts() {
           ))}
         </div>
       ) : accounts.length === 0 ? (
-        <div className="card empty-state">
-          <div className="empty-state-emoji">🏦</div>
-          <div className="empty-state-title">No accounts yet</div>
-          <div className="empty-state-text">Add your first account to start tracking</div>
+        <div className="card" style={{ textAlign: 'center', padding: '56px 24px' }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🏦</div>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No accounts yet</div>
+          <div style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Add your first account to start tracking</div>
         </div>
       ) : (
         <div className="account-grid" style={{ marginBottom: 24 }}>
           {accounts.map((acct) => {
             const IconComp = ICONS[acct.account_type] || Wallet;
-            const color    = COLORS[acct.account_type] || 'var(--text-secondary)';
-            const bg       = BG_COLORS[acct.account_type] || 'var(--surface-secondary)';
+            const color    = COLORS[acct.account_type] || '#94a3b8';
+            const bg       = BG_COLORS[acct.account_type] || '#f8fafc';
             return (
               <div className="card account-card" key={acct.id}
                 style={{ borderTop: `3px solid ${color}` }}>
                 <div className="account-card-header">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div className="icon-chip" style={{ background: bg, color }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 12, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color }}>
                       <IconComp size={22} />
                     </div>
                     <div>
@@ -133,7 +141,7 @@ export default function Accounts() {
                     <Trash2 size={14} />
                   </button>
                 </div>
-                <div className="num" style={{ fontSize: 30, fontWeight: 600, color, marginTop: 4 }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color, marginTop: 4 }}>
                   {money(acct.balance)}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>

@@ -1,5 +1,4 @@
 import React from "react";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, KEYS, money, today, EXPENSE_CATEGORIES, INCOME_CATEGORIES, CATEGORY_COLORS } from "../lib";
 import { useToast } from "../components/ui";
 import {
@@ -16,9 +15,9 @@ function ConfidenceBadge({ confidence }) {
   if (confidence == null) return null;
   const pct = Math.round(confidence * 100);
   const [color, bg] =
-    confidence >= 0.8 ? ["var(--positive)", "var(--positive-soft)"] :
-    confidence >= 0.6 ? ["var(--warning)", "rgba(250,204,21,0.12)"] :
-                        ["var(--negative)", "var(--negative-soft)"];
+    confidence >= 0.8 ? ["#10b981", "#ecfdf5"] :
+    confidence >= 0.6 ? ["#f59e0b", "#fffbeb"] :
+                        ["#ef4444", "#fef2f2"];
   return (
     <span style={{
       fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 8,
@@ -78,16 +77,16 @@ function RecategorizeDropdown({ tx, onSave }) {
             <button key={cat} onClick={() => save(cat)}
               style={{
                 display: "block", width: "100%", textAlign: "left", padding: "8px 14px",
-                background: cat === tx.category ? "var(--positive-soft)" : "none",
+                background: cat === tx.category ? "var(--accent-light)" : "none",
                 border: "none", fontSize: 13, cursor: "pointer", color: "var(--text-primary)",
                 fontWeight: cat === tx.category ? 700 : 400,
               }}
               onMouseEnter={e => e.currentTarget.style.background = "var(--surface-secondary)"}
-              onMouseLeave={e => e.currentTarget.style.background = cat === tx.category ? "var(--positive-soft)" : "none"}
+              onMouseLeave={e => e.currentTarget.style.background = cat === tx.category ? "var(--accent-light)" : "none"}
             >
-              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLORS[cat] || "var(--text-secondary)", marginRight: 8 }} />
+              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLORS[cat] || "#94a3b8", marginRight: 8 }} />
               {cat}
-              {cat === tx.category && <CheckCircle size={11} style={{ marginLeft: 6, color: "var(--primary)", verticalAlign: "middle" }} />}
+              {cat === tx.category && <CheckCircle size={11} style={{ marginLeft: 6, color: "var(--accent)", verticalAlign: "middle" }} />}
             </button>
           ))}
         </div>
@@ -187,7 +186,7 @@ function ReceiptUploadModal({ onClose, onImport, toast }) {
           onDrop={handleDrop}
           onClick={() => document.getElementById("receipt-input").click()}
           style={{
-            border: `2px dashed ${preview ? "var(--primary)" : "var(--border)"}`,
+            border: `2px dashed ${preview ? "var(--accent)" : "var(--border)"}`,
             borderRadius: 16, padding: preview ? 0 : "36px 24px",
             textAlign: "center", cursor: "pointer",
             background: preview ? "transparent" : "var(--bg)",
@@ -216,7 +215,7 @@ function ReceiptUploadModal({ onClose, onImport, toast }) {
         {result && (
           <div style={{
             marginTop: 16, padding: "14px 16px", borderRadius: 12,
-            background: "var(--positive-soft)", border: "1px solid var(--primary)",
+            background: "var(--accent-light)", border: "1px solid var(--accent)",
           }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 10 }}>
               ✅ Receipt Scanned
@@ -268,9 +267,12 @@ function ReceiptUploadModal({ onClose, onImport, toast }) {
 
 export default function Transactions() {
   const toast = useToast();
-  const queryClient = useQueryClient();
+  const [transactions, setTransactions] = React.useState([]);
+  const [loading,      setLoading]      = React.useState(true);
   const [submitting,   setSubmitting]   = React.useState(false);
   const [importing,    setImporting]    = React.useState(false);
+  const [nextCursor,   setNextCursor]   = React.useState(null);
+  const [hasMore,      setHasMore]      = React.useState(false);
   const [search,       setSearch]       = React.useState("");
   const [filterCat,    setFilterCat]    = React.useState("");
   const [filterType,   setFilterType]   = React.useState("");
@@ -278,6 +280,7 @@ export default function Transactions() {
   const [importStatus, setImportStatus] = React.useState(null);
   const [activeTab,    setActiveTab]    = React.useState("manual");
   const [showReceipt,  setShowReceipt]  = React.useState(false);
+  const [anomalyIds,   setAnomalyIds]   = React.useState(new Set());
 
   const [selectedIds,  setSelectedIds]  = React.useState(new Set());
   const [deletingIds,  setDeletingIds]  = React.useState(new Set());
@@ -289,85 +292,50 @@ export default function Transactions() {
     description: "", date: today(), source: "cash",
   });
 
-  const txQueryKey = KEYS.transactions({ search, category: filterCat, type: filterType });
-  const txQuery = useInfiniteQuery({
-    queryKey: txQueryKey,
-    queryFn: ({ pageParam }) => {
+  // Load anomalies to flag unusual transactions
+  React.useEffect(() => {
+    apiFetch("/analytics/anomalies?range=3m")
+      .then((data) => setAnomalyIds(new Set((data || []).map(a => a.transaction_id))))
+      .catch(() => {});
+  }, []);
+
+  const loadTransactions = React.useCallback(async (reset = true) => {
+    setLoading(true);
+    try {
       const params = new URLSearchParams({ limit: PAGE });
       if (search)     params.set("search",   search);
       if (filterCat)  params.set("category", filterCat);
       if (filterType) params.set("type",     filterType);
-      if (pageParam)  params.set("cursor",   pageParam);
-      return apiFetch(`/transactions?${params}`);
-    },
-    initialPageParam: null,
-    getNextPageParam: (last) => (last.has_more ? last.next_cursor : undefined),
-  });
-  const transactions = React.useMemo(
-    () => (txQuery.data?.pages || []).flatMap((p) => p.items),
-    [txQuery.data]
-  );
-  const loading = txQuery.isLoading;
-  const hasMore = txQuery.hasNextPage;
+      if (!reset && nextCursor) params.set("cursor", nextCursor);
+      const data = await apiFetch(`/transactions?${params}`);
+      setTransactions((prev) => reset ? data.items : [...prev, ...data.items]);
+      setNextCursor(data.next_cursor);
+      setHasMore(data.has_more);
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [search, filterCat, filterType, nextCursor]);
 
-  // Anomalies flag unusual transactions; shares its cache entry with Dashboard/Analytics.
-  const { data: anomaliesData } = useQuery({
-    queryKey: KEYS.anomalies("3m"),
-    queryFn: () => apiFetch("/analytics/anomalies?range=3m"),
-  });
-  const anomalyIds = React.useMemo(
-    () => new Set((anomaliesData || []).map((a) => a.transaction_id)),
-    [anomaliesData]
-  );
-
-  // Writes elsewhere (summary, anomalies, forecast, profile stats) are derived
-  // from transaction history, so any mutation here busts all of them.
-  function invalidateAfterWrite() {
-    queryClient.invalidateQueries({ queryKey: ["transactions"] });
-    queryClient.invalidateQueries({ queryKey: ["summary"] });
-    queryClient.invalidateQueries({ queryKey: KEYS.profileStats() });
-    queryClient.invalidateQueries({ queryKey: ["anomalies"] });
-    queryClient.invalidateQueries({ queryKey: KEYS.forecast() });
-  }
-
-  function patchTransactionInCache(id, patch) {
-    queryClient.setQueryData(txQueryKey, (old) => old && {
-      ...old,
-      pages: old.pages.map((page) => ({
-        ...page,
-        items: page.items.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-      })),
-    });
-  }
-
-  function removeTransactionsFromCache(ids) {
-    const idSet = new Set(ids);
-    queryClient.setQueryData(txQueryKey, (old) => old && {
-      ...old,
-      pages: old.pages.map((page) => ({
-        ...page,
-        items: page.items.filter((t) => !idSet.has(t.id)),
-      })),
-    });
-  }
+  React.useEffect(() => { loadTransactions(true); }, [search, filterCat, filterType]);
 
   const handleCategoryCorrection = (txId, newCat) => {
-    patchTransactionInCache(txId, { category: newCat, confidence: 1.0 });
+    setTransactions(prev => prev.map(t => t.id === txId ? { ...t, category: newCat, confidence: 1.0 } : t));
     toast(`Category updated to ${newCat}`, "success");
   };
 
   async function remove(id) {
     setDeletingIds((s) => new Set([...s, id]));
     await new Promise((r) => setTimeout(r, 280));
-    const snapshot = queryClient.getQueryData(txQueryKey);
-    removeTransactionsFromCache([id]);
+    const prev = [...transactions];
+    setTransactions((t) => t.filter((x) => x.id !== id));
     setDeletingIds((s) => { const n = new Set(s); n.delete(id); return n; });
     try {
       await apiFetch(`/transactions/${id}`, { method: "DELETE" });
       toast("Transaction deleted", "success");
-      invalidateAfterWrite();
     } catch (e) {
-      queryClient.setQueryData(txQueryKey, snapshot);
+      setTransactions(prev);
       toast(e.message, "error");
     }
   }
@@ -383,9 +351,9 @@ export default function Transactions() {
   function requestBulkDelete() {
     if (selectedIds.size === 0) return;
     const ids = [...selectedIds];
-    const snapshot = queryClient.getQueryData(txQueryKey);
+    const snapshot = [...transactions];
     setDeletingIds(new Set(ids));
-    setTimeout(() => { removeTransactionsFromCache(ids); setDeletingIds(new Set()); }, 300);
+    setTimeout(() => { setTransactions(t => t.filter(x => !ids.includes(x.id))); setDeletingIds(new Set()); }, 300);
     setSelectedIds(new Set());
     let remaining = Math.ceil(UNDO_DELAY / 1000);
     const undoTimer = setTimeout(() => executeBulkDelete(ids), UNDO_DELAY);
@@ -403,18 +371,16 @@ export default function Transactions() {
     try {
       await apiFetch("/transactions/bulk-delete", { method: "POST", body: JSON.stringify({ transaction_ids: ids }) });
       toast(`${ids.length} transaction${ids.length > 1 ? "s" : ""} deleted`, "success");
-      invalidateAfterWrite();
     } catch (e) {
       toast(e.message, "error");
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      await loadTransactions(true);
     }
   }
 
   function undoBulkDelete() {
     if (!undoState) return;
     clearTimeout(undoState.timer); clearInterval(undoCountRef.current);
-    queryClient.setQueryData(txQueryKey, undoState.snapshot);
-    setUndoState(null);
+    setTransactions(undoState.snapshot); setUndoState(null);
     toast("Deletion undone ✓", "success");
   }
 
@@ -427,7 +393,7 @@ export default function Transactions() {
     try {
       await apiFetch("/transactions", { method: "POST", body: JSON.stringify({ ...form, amount: Number(form.amount) }) });
       setForm({ type: "expense", amount: "", category: "Groceries", description: "", date: today(), source: "cash" });
-      invalidateAfterWrite();
+      await loadTransactions(true);
       toast("Transaction added", "success");
     } catch (e) { toast(e.message, "error"); }
     finally { setSubmitting(false); }
@@ -439,7 +405,7 @@ export default function Transactions() {
     setImporting(true);
     try {
       const saved = await apiFetch("/imports/sms", { method: "POST", body: JSON.stringify({ messages }) });
-      setSmsText(""); invalidateAfterWrite();
+      setSmsText(""); await loadTransactions(true);
       toast(`Imported ${saved.length} transactions from SMS`, "success");
     } catch (e) { toast(e.message, "error"); }
     finally { setImporting(false); }
@@ -456,7 +422,7 @@ export default function Transactions() {
         try {
           const j = await apiFetch(`/imports/jobs/${job.id}`);
           setImportStatus(j.status);
-          if (j.status === "done") { clearInterval(poll); toast(`Import complete — ${j.row_count} transactions added`, "success"); invalidateAfterWrite(); }
+          if (j.status === "done") { clearInterval(poll); toast(`Import complete — ${j.row_count} transactions added`, "success"); await loadTransactions(true); }
           else if (j.status === "failed") { clearInterval(poll); toast(`Import failed: ${j.error_message}`, "error"); }
         } catch { clearInterval(poll); }
       }, 1500);
@@ -567,9 +533,9 @@ export default function Transactions() {
             {importStatus && (
               <div style={{
                 padding: "14px 18px", borderRadius: 12, fontSize: 14, fontWeight: 600,
-                background: importStatus === "done" ? "var(--positive-soft)" : importStatus === "failed" ? "var(--negative-soft)" : "rgba(56,189,248,0.12)",
-                color: importStatus === "done" ? "var(--positive)" : importStatus === "failed" ? "var(--negative)" : "var(--info)",
-                border: `1px solid ${importStatus === "done" ? "rgba(168,255,47,0.3)" : importStatus === "failed" ? "rgba(255,45,45,0.4)" : "rgba(56,189,248,0.3)"}`,
+                background: importStatus === "done" ? "#ecfdf5" : importStatus === "failed" ? "#fff1f2" : "#eff6ff",
+                color: importStatus === "done" ? "#059669" : importStatus === "failed" ? "#e11d48" : "#4f46e5",
+                border: `1px solid ${importStatus === "done" ? "#a7f3d0" : importStatus === "failed" ? "#fecdd3" : "#c7d2fe"}`,
               }}>
                 {importStatus === "processing" && "⏳ Processing your statement…"}
                 {importStatus === "done"       && "✅ Import complete!"}
@@ -586,7 +552,7 @@ export default function Transactions() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div className="chart-title">Recent Transactions</div>
             {selectedIds.size > 0 && (
-              <span style={{ background: "var(--primary)", color: "white", fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 99, lineHeight: 1.8 }}>
+              <span style={{ background: "var(--accent)", color: "white", fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 99, lineHeight: 1.8 }}>
                 {selectedIds.size} selected
               </span>
             )}
@@ -637,19 +603,8 @@ export default function Transactions() {
           </div>
         ))}
 
-        {/* Error state */}
-        {!loading && txQuery.isError && transactions.length === 0 && (
-          <div style={{ textAlign: "center", padding: "56px 24px" }}>
-            <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>
-              Couldn't load transactions
-            </div>
-            <div style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 16 }}>{txQuery.error.message}</div>
-            <button className="btn-secondary" onClick={() => txQuery.refetch()}>Retry</button>
-          </div>
-        )}
-
         {/* Empty state */}
-        {!loading && !txQuery.isError && transactions.length === 0 && (
+        {!loading && transactions.length === 0 && (
           <div style={{ textAlign: "center", padding: "56px 24px" }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
             <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No transactions found</div>
@@ -666,7 +621,7 @@ export default function Transactions() {
             <div key={tx.id}
               className={`tx-item${isSelected ? " selected" : ""}${isDeleting ? " tx-deleting" : ""}`}
               onClick={(e) => { if (e.target.closest("button") || e.target.closest(".tx-checkbox")) return; toggleSelect(tx.id); }}
-              style={{ cursor: "pointer", borderLeft: isAnomaly ? "3px solid var(--warning)" : "3px solid transparent" }}
+              style={{ cursor: "pointer", borderLeft: isAnomaly ? "3px solid #f59e0b" : "3px solid transparent" }}
             >
               {/* Checkbox */}
               <div className="tx-checkbox-wrap" onClick={(e) => e.stopPropagation()}>
@@ -678,13 +633,13 @@ export default function Transactions() {
                 {tx.date}
                 {isAnomaly && (
                   <span title="Anomaly detected" style={{ marginLeft: 4, verticalAlign: "middle" }}>
-                    <AlertTriangle size={11} style={{ color: "var(--warning)" }} />
+                    <AlertTriangle size={11} style={{ color: "#f59e0b" }} />
                   </span>
                 )}
               </span>
 
               <span className="tx-cat-wrap" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLORS[tx.category] || "var(--text-secondary)", flexShrink: 0 }} />
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLORS[tx.category] || "#94a3b8", flexShrink: 0 }} />
                 <span style={{ color: "var(--text-secondary)", fontSize: 13, fontWeight: 500 }}>{tx.category}</span>
               </span>
 
@@ -721,13 +676,8 @@ export default function Transactions() {
         {/* Load more */}
         {hasMore && (
           <div style={{ padding: "16px 20px", borderTop: "1px solid var(--border)" }}>
-            <button
-              className="btn-secondary"
-              onClick={() => txQuery.fetchNextPage()}
-              disabled={txQuery.isFetchingNextPage}
-              style={{ fontSize: 14 }}
-            >
-              {txQuery.isFetchingNextPage ? "Loading…" : "Load more"}
+            <button className="btn-secondary" onClick={() => loadTransactions(false)} style={{ fontSize: 14 }}>
+              Load more
             </button>
           </div>
         )}
@@ -737,7 +687,7 @@ export default function Transactions() {
       {showReceipt && (
         <ReceiptUploadModal
           onClose={() => { setShowReceipt(false); setActiveTab("manual"); }}
-          onImport={invalidateAfterWrite}
+          onImport={() => loadTransactions(true)}
           toast={toast}
         />
       )}
@@ -745,7 +695,7 @@ export default function Transactions() {
       {/* Floating bulk action bar */}
       {selectedIds.size > 0 && !undoState && (
         <div className="floating-action-bar">
-          <CheckSquare size={18} style={{ color: "var(--primary)", flexShrink: 0 }} />
+          <CheckSquare size={18} style={{ color: "var(--accent)", flexShrink: 0 }} />
           <span>{selectedIds.size} transaction{selectedIds.size > 1 ? "s" : ""} selected</span>
           <button className="btn-clear-selection" onClick={clearSelection}>Clear</button>
           <button className="btn-delete-bulk" onClick={requestBulkDelete}>
