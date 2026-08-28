@@ -17,11 +17,11 @@ function getInitials(displayName, email) {
 }
 
 const AVATAR_GRADIENTS = [
-  "linear-gradient(135deg, #4f46e5, #7c3aed)",
-  "linear-gradient(135deg, #0ea5e9, #6366f1)",
-  "linear-gradient(135deg, #10b981, #059669)",
-  "linear-gradient(135deg, #f59e0b, #ef4444)",
-  "linear-gradient(135deg, #ec4899, #8b5cf6)",
+  "linear-gradient(135deg, var(--primary), var(--info))",
+  "linear-gradient(135deg, var(--info), var(--negative))",
+  "linear-gradient(135deg, var(--primary), var(--warning))",
+  "linear-gradient(135deg, var(--warning), var(--negative))",
+  "linear-gradient(135deg, var(--negative), var(--info))",
 ];
 
 function pickGradient(str = "") {
@@ -173,28 +173,28 @@ export default function Profile({ onSignOut }) {
   const statCards = [
     {
       icon: BarChart3, label: "Transactions", value: stats?.total_transactions ?? "—",
-      isCount: true, color: "#6366f1", bg: "#ede9fe",
+      isCount: true, color: "var(--info)", bg: "rgba(56,189,248,0.16)",
     },
     {
       icon: TrendingUp, label: "Total Income", value: money(stats?.total_income || 0),
-      color: "#10b981", bg: "#d1fae5",
+      color: "var(--positive)", bg: "var(--positive-soft)",
     },
     {
       icon: TrendingDown, label: "Total Expenses", value: money(stats?.total_expenses || 0),
-      color: "#f43f5e", bg: "#ffe4e6",
+      color: "var(--negative)", bg: "var(--negative-soft)",
     },
     {
       icon: DollarSign, label: "Net Balance", value: money(stats?.net_balance || 0),
-      color: Number(stats?.net_balance || 0) >= 0 ? "#10b981" : "#f43f5e",
-      bg: Number(stats?.net_balance || 0) >= 0 ? "#d1fae5" : "#ffe4e6",
+      color: Number(stats?.net_balance || 0) >= 0 ? "var(--positive)" : "var(--negative)",
+      bg: Number(stats?.net_balance || 0) >= 0 ? "var(--positive-soft)" : "var(--negative-soft)",
     },
     {
       icon: Wallet, label: "Accounts", value: stats?.accounts_count ?? "—",
-      isCount: true, color: "#0ea5e9", bg: "#e0f2fe",
+      isCount: true, color: "var(--info)", bg: "rgba(56,189,248,0.12)",
     },
     {
       icon: Target, label: "Budgets", value: stats?.budgets_count ?? "—",
-      isCount: true, color: "#f59e0b", bg: "#fef3c7",
+      isCount: true, color: "var(--warning)", bg: "rgba(250,204,21,0.16)",
     },
   ];
 
@@ -305,17 +305,22 @@ export default function Profile({ onSignOut }) {
       {/* ── Stats Grid ───────────────────────────────────────────────── */}
       <div className="profile-stats-grid">
         {statCards.map(({ icon: Icon, label, value, isCount, color, bg }) => (
-          <div key={label} className="card profile-stat-card glass-card">
-            <div className="profile-stat-icon premium-icon" style={{ background: bg, color }}>
-              <Icon size={16} />
+          <div
+            key={label}
+            className="card profile-stat-card"
+            style={{ "--stat-accent": color }}
+          >
+            <div className="profile-stat-icon" style={{ background: bg, color }}>
+              <Icon size={18} />
             </div>
             <div className="profile-stat-value" style={{ color }}>
-              {isCount ? value.toLocaleString("en-IN") : value}
+              {isCount ? (value === "—" ? "—" : Number(value).toLocaleString("en-IN")) : value}
             </div>
             <div className="profile-stat-label">{label}</div>
           </div>
         ))}
       </div>
+
 
       {/* ── Combined Settings Section ─────────────────────────────────── */}
       <div className="card profile-settings-card premium-settings">

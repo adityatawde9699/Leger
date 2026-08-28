@@ -15,7 +15,7 @@ function CreditGauge({ score, grade, color }) {
       <div className="gauge-ring" style={{ position: 'relative', display: 'inline-block' }}>
         <svg viewBox="0 0 120 120" width="200" height="200">
           {/* Background ring */}
-          <circle cx="60" cy="60" r="52" fill="none" stroke="#e2e8f0" strokeWidth="12"
+          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="12"
             strokeDasharray={circumference} strokeDashoffset="0" transform="rotate(-90 60 60)" />
           {/* Score ring */}
           <circle cx="60" cy="60" r="52" fill="none" stroke={color} strokeWidth="12"
@@ -86,7 +86,7 @@ export default function CreditBenchmarks() {
               padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
               fontSize: 14, fontWeight: 600, transition: 'all 0.2s',
               background: tab === id ? 'var(--surface)' : 'transparent',
-              color: tab === id ? 'var(--accent)' : 'var(--text-secondary)',
+              color: tab === id ? 'var(--primary)' : 'var(--text-secondary)',
               boxShadow: tab === id ? 'var(--shadow)' : 'none',
             }}
           >
@@ -112,11 +112,11 @@ export default function CreditBenchmarks() {
                 {Object.entries(credit.breakdown).map(([key, factor]) => {
                   const Icon = FACTOR_ICONS[key] || Zap;
                   const pct  = Math.round((factor.score / factor.max) * 100);
-                  const barColor = pct > 70 ? '#10b981' : pct > 40 ? '#f59e0b' : '#f43f5e';
+                  const barColor = pct > 70 ? 'var(--positive)' : pct > 40 ? 'var(--warning)' : 'var(--negative)';
                   return (
                     <div className="card credit-factor-card" key={key}>
                       <div className="credit-factor-top">
-                        <div style={{ width: 36, height: 36, borderRadius: 10, background: pct > 70 ? '#ecfdf5' : pct > 40 ? '#fffbeb' : '#fff1f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 10, background: pct > 70 ? 'var(--positive-soft)' : pct > 40 ? 'rgba(250,204,21,0.12)' : 'var(--negative-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           <Icon size={18} style={{ color: barColor }} />
                         </div>
                         <div>
@@ -136,12 +136,12 @@ export default function CreditBenchmarks() {
               {credit.tips.length > 0 && (
                 <div className="card">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600 }}>
-                    <Lightbulb size={18} style={{ color: '#f59e0b' }} /> Tips to Improve
+                    <Lightbulb size={18} style={{ color: 'var(--warning)' }} /> Tips to Improve
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {credit.tips.map((tip, i) => (
-                      <div key={i} style={{ display: 'flex', gap: 12, padding: '14px 16px', background: '#fffbeb', borderRadius: 12, borderLeft: '3px solid #f59e0b' }}>
-                        <ArrowUp size={15} style={{ color: '#f59e0b', flexShrink: 0, marginTop: 2 }} />
+                      <div key={i} style={{ display: 'flex', gap: 12, padding: '14px 16px', background: 'rgba(250,204,21,0.12)', borderRadius: 12, borderLeft: '3px solid var(--warning)' }}>
+                        <ArrowUp size={15} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 2 }} />
                         <p style={{ fontSize: 14, margin: 0, lineHeight: 1.6, color: 'var(--text-primary)' }}>{tip}</p>
                       </div>
                     ))}
@@ -170,15 +170,15 @@ export default function CreditBenchmarks() {
 
               <div className="card">
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 24, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Users size={18} style={{ color: 'var(--accent)' }} /> Category Comparison
+                  <Users size={18} style={{ color: 'var(--primary)' }} /> Category Comparison
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                   {benchmarks.categories.map(cat => {
                     const STATUS_COLORS = {
-                      low:     { bar: '#10b981', badge: { bg: '#ecfdf5', color: '#059669' } },
-                      good:    { bar: '#4f46e5', badge: { bg: '#eff6ff', color: '#4338ca' } },
-                      average: { bar: '#f59e0b', badge: { bg: '#fffbeb', color: '#b45309' } },
-                      high:    { bar: '#f43f5e', badge: { bg: '#fff1f2', color: '#be123c' } },
+                      low:     { bar: 'var(--positive)', badge: { bg: 'var(--positive-soft)', color: 'var(--positive)' } },
+                      good:    { bar: 'var(--info)', badge: { bg: 'rgba(56,189,248,0.12)', color: 'var(--info)' } },
+                      average: { bar: 'var(--warning)', badge: { bg: 'rgba(250,204,21,0.12)', color: 'var(--warning)' } },
+                      high:    { bar: 'var(--negative)', badge: { bg: 'var(--negative-soft)', color: 'var(--negative)' } },
                     };
                     const sc = STATUS_COLORS[cat.status] || STATUS_COLORS.average;
                     return (

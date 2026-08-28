@@ -18,8 +18,6 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO, StringIO
 
 import httpx
-import pandas as pd
-import pdfplumber
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from ..config import settings
@@ -59,6 +57,8 @@ class StatementRow(BaseModel):
 
 
 def _parse_date_value(value) -> date | None:
+    import pandas as pd
+
     raw = str(value or "").strip()
     for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y", "%d %b %Y", "%d%b%Y", "%d%b%y"):
         try:
@@ -79,7 +79,8 @@ def _parse_date_value(value) -> date | None:
 # ── Structured table parser ───────────────────────────────────────────────────
 
 
-def _normalize_frame(df: pd.DataFrame) -> list[dict]:
+def _normalize_frame(df) -> list[dict]:
+
     df = df.dropna(how="all")
     normalized = {str(c).strip().lower().replace("\ufeff", ""): c for c in df.columns}
     date_col = next((normalized[c] for c in normalized if "date" in c or "timestamp" in c or "time" in c), None)
@@ -253,6 +254,8 @@ def _strip_code_fence(text: str) -> str:
 
 
 def _rows_from_json_text(text: str) -> list[dict]:
+    import pandas as pd
+
     raw = _strip_code_fence(text)
     try:
         payload = json.loads(raw)
@@ -290,6 +293,8 @@ def _rows_from_json_text(text: str) -> list[dict]:
 
 
 def _rows_from_markdown_tables(text: str) -> list[dict]:
+    import pandas as pd
+
     rows: list[dict] = []
     table_lines: list[str] = []
 
@@ -322,6 +327,8 @@ def _rows_from_markdown_tables(text: str) -> list[dict]:
 
 
 def _rows_from_csv_text(text: str) -> list[dict]:
+    import pandas as pd
+
     raw = _strip_code_fence(text)
     sample = "\n".join(line for line in raw.splitlines() if line.strip())
     if "," not in sample or "date" not in sample.lower():
@@ -416,6 +423,8 @@ async def _mistral_ocr_pdf(content: bytes) -> str:
 
 
 def parse_csv(content: bytes) -> list[dict]:
+    import pandas as pd
+
     # Robust check: if content starts with PK ZIP magic bytes, it's actually an Excel workbook (.xlsx)
     if content.startswith(b"PK\x03\x04"):
         logger.info("parse_csv: Detected Excel magic signature. Redirecting to parse_excel.")
@@ -429,6 +438,8 @@ def parse_csv(content: bytes) -> list[dict]:
 
 
 def parse_excel(content: bytes) -> list[dict]:
+    import pandas as pd
+
     rows: list[dict] = []
     workbook = pd.read_excel(BytesIO(content), sheet_name=None, dtype=str, keep_default_na=False)
     for sheet_name, df in workbook.items():
@@ -439,6 +450,9 @@ def parse_excel(content: bytes) -> list[dict]:
 
 
 async def parse_pdf(content: bytes) -> list[dict]:
+    import pandas as pd
+    import pdfplumber
+
     rows: list[dict] = []
     full_text_lines: list[str] = []
     has_any_text = False

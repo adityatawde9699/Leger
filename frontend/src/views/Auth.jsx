@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabase';
 import { Mail, Lock, Loader2, ShieldCheck } from 'lucide-react';
-import { LegerLogo } from '../components/ui';
+import { LedgerLogo } from '../components/ui';
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
@@ -56,7 +56,7 @@ export default function Auth() {
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-header">
-          <LegerLogo size={56} className="auth-logo" />
+          <LedgerLogo size={56} className="auth-logo" />
           <h2>Welcome to Ledger</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: 15, fontWeight: 500 }}>
             Your personal AI finance platform
@@ -77,7 +77,7 @@ export default function Auth() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
-                style={{ paddingLeft: 44, background: 'rgba(255,255,255,0.8)' }}
+                style={{ paddingLeft: 44 }}
               />
             </div>
           </div>
@@ -92,7 +92,7 @@ export default function Auth() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                style={{ paddingLeft: 44, background: 'rgba(255,255,255,0.8)' }}
+                style={{ paddingLeft: 44 }}
               />
             </div>
           </div>

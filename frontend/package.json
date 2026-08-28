@@ -2,7 +2,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",
@@ -15,6 +16,7 @@
     "vite": "^6.0.7"
   },
   "devDependencies": {
+    "sharp": "^0.35.1",
     "vite-plugin-pwa": "^1.2.0"
   }
 }

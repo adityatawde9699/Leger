@@ -82,12 +82,12 @@ export default function Budgets() {
 
   return (
     <div className="view-budgets">
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 32 }}>
+      <div className="view-header">
         <div>
           <h1 className="page-title">Goals & Budgets</h1>
           <p className="page-subtitle" style={{ marginBottom: 0 }}>Track spending limits and stay on budget</p>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div className="view-header-actions">
           <button className="btn-secondary" style={{ fontSize: 14 }} onClick={applyDynamic}>
             <Sparkles size={15} /> AI Suggestions
           </button>
@@ -97,16 +97,16 @@ export default function Budgets() {
         </div>
       </div>
 
-      {/* Summary row */}
-      <div className="budget-summary-row">
+      {/* Summary strip */}
+      <div className="summary-strip">
         {[
-          { label: 'Total Budgeted', val: money(totalBudgeted), color: 'var(--accent)' },
-          { label: 'Total Spent',    val: money(totalSpent),    color: totalSpent > totalBudgeted ? 'var(--negative)' : 'var(--positive)' },
-          { label: 'Over Budget',    val: `${overCount} categories`, color: overCount > 0 ? 'var(--negative)' : 'var(--positive)' },
+          { label: 'Total Budgeted', val: money(totalBudgeted), color: 'var(--text-primary)' },
+          { label: 'Total Spent',    val: money(totalSpent),    color: totalSpent > totalBudgeted ? 'var(--negative)' : 'var(--primary)' },
+          { label: 'Over Budget',    val: `${overCount} categories`, color: overCount > 0 ? 'var(--negative)' : 'var(--primary)' },
         ].map(({ label, val, color }) => (
-          <div className="card" key={label} style={{ padding: '20px 24px' }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{label}</div>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 700, color }}>{val}</div>
+          <div className="stat-card" key={label}>
+            <div className="stat-card-label">{label}</div>
+            <div className="stat-card-value" style={{ color }}>{val}</div>
           </div>
         ))}
       </div>
@@ -117,7 +117,7 @@ export default function Budgets() {
           const budget = Number(draft[cat] || 0);
           const pct    = budget > 0 ? Math.min(120, (spent / budget) * 100) : 0;
           const isOver = budget > 0 && spent > budget;
-          const color  = CATEGORY_COLORS[cat] || "#9ca3af";
+          const color  = CATEGORY_COLORS[cat] || "var(--text-secondary)";
 
           return (
             <div className={`card budget-card${isOver ? " over-budget" : ""}`} key={cat}>

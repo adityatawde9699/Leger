@@ -22,7 +22,7 @@ const ACTION_ICONS = {
 
 const ACTION_COLORS = {
   create: "var(--positive)",
-  update: "var(--accent)",
+  update: "var(--primary)",
   delete: "var(--negative)",
 };
 
@@ -82,7 +82,7 @@ export default function AuditWebhooks() {
 
       {/* Tab toggle */}
       <div className="type-toggle" style={{ marginBottom: 20 }}>
-        <button className={`type-btn${tab === "audit" ? " active expense" : ""}`} onClick={() => setTab("audit")} style={tab === "audit" ? { borderColor: "var(--accent)", background: "#eff6ff", color: "var(--accent)" } : {}}>
+        <button className={`type-btn${tab === "audit" ? " active expense" : ""}`} onClick={() => setTab("audit")} style={tab === "audit" ? { borderColor: "var(--primary)", background: "rgba(56,189,248,0.12)", color: "var(--primary)" } : {}}>
           <Shield size={14} style={{ marginRight: 4 }} /> Audit Log
         </button>
         <button className={`type-btn${tab === "webhooks" ? " active income" : ""}`} onClick={() => setTab("webhooks")}>

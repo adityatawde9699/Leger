@@ -12,19 +12,19 @@ const ICONS = {
 };
 
 const COLORS = {
-  savings: "#10b981",
-  current: "#4f46e5",
-  credit:  "#f97316",
-  wallet:  "#a855f7",
-  cash:    "#94a3b8",
+  savings: "var(--positive)",
+  current: "var(--info)",
+  credit:  "var(--warning)",
+  wallet:  "var(--info)",
+  cash:    "var(--text-secondary)",
 };
 
 const BG_COLORS = {
-  savings: "#ecfdf5",
-  current: "#eff6ff",
-  credit:  "#fff7ed",
-  wallet:  "#faf5ff",
-  cash:    "#f8fafc",
+  savings: "var(--positive-soft)",
+  current: "rgba(56,189,248,0.12)",
+  credit:  "rgba(250,204,21,0.12)",
+  wallet:  "rgba(56,189,248,0.12)",
+  cash:    "var(--surface-secondary)",
 };
 
 export default function Accounts() {
@@ -82,7 +82,7 @@ export default function Accounts() {
 
   return (
     <div className="view-accounts">
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 32 }}>
+      <div className="view-header">
         <div>
           <h1 className="page-title">Accounts</h1>
           <p className="page-subtitle" style={{ marginBottom: 0 }}>Manage your bank accounts, wallets, and cards</p>
@@ -111,23 +111,23 @@ export default function Accounts() {
           ))}
         </div>
       ) : accounts.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: '56px 24px' }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🏦</div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No accounts yet</div>
-          <div style={{ fontSize: 14, color: 'var(--text-secondary)' }}>Add your first account to start tracking</div>
+        <div className="card empty-state">
+          <div className="empty-state-emoji">🏦</div>
+          <div className="empty-state-title">No accounts yet</div>
+          <div className="empty-state-text">Add your first account to start tracking</div>
         </div>
       ) : (
         <div className="account-grid" style={{ marginBottom: 24 }}>
           {accounts.map((acct) => {
             const IconComp = ICONS[acct.account_type] || Wallet;
-            const color    = COLORS[acct.account_type] || '#94a3b8';
-            const bg       = BG_COLORS[acct.account_type] || '#f8fafc';
+            const color    = COLORS[acct.account_type] || 'var(--text-secondary)';
+            const bg       = BG_COLORS[acct.account_type] || 'var(--surface-secondary)';
             return (
               <div className="card account-card" key={acct.id}
                 style={{ borderTop: `3px solid ${color}` }}>
                 <div className="account-card-header">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 44, height: 44, borderRadius: 12, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color }}>
+                    <div className="icon-chip" style={{ background: bg, color }}>
                       <IconComp size={22} />
                     </div>
                     <div>
@@ -141,7 +141,7 @@ export default function Accounts() {
                     <Trash2 size={14} />
                   </button>
                 </div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 700, color, marginTop: 4 }}>
+                <div className="num" style={{ fontSize: 30, fontWeight: 600, color, marginTop: 4 }}>
                   {money(acct.balance)}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>

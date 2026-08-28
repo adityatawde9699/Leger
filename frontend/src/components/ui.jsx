@@ -21,47 +21,36 @@ export function ToastProvider({ children }) {
   const remove = (id) => setToasts((t) => t.filter((x) => x.id !== id));
 
   const TYPE_STYLES = {
-    success: { background: '#059669', icon: '✓' },
-    error:   { background: '#e11d48', icon: '✕' },
-    info:    { background: '#4f46e5', icon: 'ℹ' },
+    success: { background: '#A8FF2F', color: '#0A0A0B', icon: '✓' },
+    error:   { background: 'var(--accent)', color: '#FFFFFF', icon: '✕' },
+    info:    { background: '#26262D', color: '#FFFFFF', icon: 'ℹ' },
   };
 
   return (
     <ToastCtx.Provider value={add}>
       {children}
-      <div
-        aria-live="polite"
-        style={{
-          position: 'fixed', bottom: 32, right: 32,
-          display: 'flex', flexDirection: 'column', gap: 12,
-          zIndex: 9999, pointerEvents: 'none',
-        }}
-      >
+      <div className="toast-container">
         {toasts.map(({ id, message, type }) => {
           const s = TYPE_STYLES[type] || TYPE_STYLES.info;
           return (
             <div
               key={id}
               role="alert"
+              className="toast"
               style={{
-                display: 'flex', alignItems: 'center', gap: 12,
-                minWidth: 300, maxWidth: 420,
-                padding: '14px 18px', borderRadius: 16,
-                background: s.background, color: 'white',
-                fontSize: 15, fontWeight: 600,
-                boxShadow: `0 12px 32px ${s.background}40`,
-                animation: 'fadeSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                pointerEvents: 'auto',
+                background: s.background,
+                color: s.color,
+                boxShadow: type === 'success' ? '0 10px 30px rgba(168, 255, 47, 0.2)' : 'var(--shadow)'
               }}
             >
-              <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
+              <div style={{ width: 24, height: 24, borderRadius: '6px', background: 'rgba(0,0,0,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
                 {s.icon}
               </div>
               <span style={{ flex: 1 }}>{message}</span>
               <button
                 onClick={() => remove(id)}
                 aria-label="Dismiss"
-                style={{ background: 'none', border: 'none', color: 'white', opacity: 0.7, cursor: 'pointer', fontSize: 16, padding: 0, lineHeight: 1 }}
+                style={{ background: 'none', border: 'none', color: 'inherit', opacity: 0.7, cursor: 'pointer', fontSize: 16, padding: 0, lineHeight: 1 }}
               >
                 ✕
               </button>
@@ -80,7 +69,7 @@ export function Skeleton({ width = "100%", height = 20, radius = 8 }) {
       aria-hidden="true"
       style={{
         width, height, borderRadius: radius,
-        background: 'linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%)',
+        background: 'linear-gradient(90deg, #1C1C21 25%, #26262D 50%, #1C1C21 75%)',
         backgroundSize: '200% 100%',
         animation: 'shimmer 1.5s infinite',
       }}
@@ -116,45 +105,44 @@ export function EmptyState({ icon, title, subtitle }) {
 export function ErrorMsg({ message }) {
   if (!message) return null;
   return (
-    <div role="alert" style={{
-      padding: '12px 16px', borderRadius: 12, fontSize: 14, fontWeight: 600,
-      background: '#fff1f2', color: '#e11d48', border: '1px solid #fecdd3',
-    }}>
+    <div role="alert" className="error-msg">
       {message}
     </div>
   );
 }
 
-export function LegerLogo({ size = 38, className = "" }) {
+export function LedgerLogo({ size = 38, className = "" }) {
+  // Ledger mark: a bold "L" monogram beside an ascending 3-bar chart (growth /
+  // ledger entries). The tallest bar is crimson — the lime + crimson identity.
+  const s = size * 0.6;
   return (
-    <div 
-      className={`logo-icon ${className}`} 
-      style={{ 
-        width: size, 
-        height: size, 
-        background: 'linear-gradient(135deg, var(--accent), #c084fc)',
+    <div
+      className={`logo-icon ${className}`}
+      style={{
+        width: size,
+        height: size,
+        background: 'linear-gradient(135deg, var(--primary), var(--primary-hover))',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: '10px',
-        boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)'
+        borderRadius: size > 48 ? '16px' : '10px',
+        boxShadow: '0 4px 15px var(--primary-glow)',
+        flexShrink: 0,
       }}
     >
-      <svg 
-        width={size * 0.55} 
-        height={size * 0.55} 
-        viewBox="0 0 24 24" 
-        fill="none" 
-        stroke="white" 
-        strokeWidth="2.5" 
-        strokeLinecap="round" 
-        strokeLinejoin="round"
-      >
-        {/* The 'L' representing the Ledger */}
-        <path d="M6 4v14a2 2 0 0 0 2 2h12" />
-        {/* The upward growth node */}
-        <path d="M12 14l4-4 4 4" />
-        <path d="M16 10V4" />
+      <svg width={s} height={s} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        {/* "L" monogram */}
+        <path
+          d="M9 6.5 V22.5 H15.5"
+          stroke="var(--bg)"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {/* Ascending bars — baseline aligns to the foot of the L */}
+        <rect x="17.6" y="18"  width="2.8" height="4.5" rx="1.2" fill="var(--bg)" />
+        <rect x="22.1" y="14"  width="2.8" height="8.5" rx="1.2" fill="var(--bg)" />
+        <rect x="26.6" y="9.5" width="2.8" height="13"  rx="1.2" fill="var(--accent)" />
       </svg>
     </div>
   );

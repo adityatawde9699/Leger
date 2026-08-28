@@ -1,8 +1,9 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -251,6 +252,16 @@ class WebhookIn(BaseModel):
     url: str = Field(min_length=10, max_length=2048)
     events: str = Field(min_length=1, max_length=512)  # comma-separated event names
     secret: str = Field(min_length=16, max_length=64)
+
+    @field_validator("url")
+    @classmethod
+    def _url_is_absolute_http(cls, v: str) -> str:
+        # Cheap, no-DNS shape check; the SSRF (IP-resolution) check runs in the
+        # endpoint via url_guard.validate_webhook_url.
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("url must be an absolute http(s) URL")
+        return v
 
 
 class WebhookOut(BaseModel):

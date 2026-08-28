@@ -1,5 +1,5 @@
 import React from "react";
-import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS } from "../lib";
+import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS, paletteColor } from "../lib";
 import { useToast } from "../components/ui";
 import { AlertTriangle, TrendingUp, TrendingDown, BarChart3, Activity, Zap } from "lucide-react";
 import {
@@ -13,7 +13,7 @@ const TIME_FILTERS = [
   { id: "all",         label: "All Time"  },
 ];
 
-const SEVERITY_COLOR = { high: "#ef4444", medium: "#f59e0b", low: "#3b82f6" };
+const SEVERITY_COLOR = { high: "var(--negative)", medium: "var(--warning)", low: "var(--info)" };
 
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -100,9 +100,11 @@ export default function Analytics() {
   });
 
   // Spending heatmap: day × category intensity
-  const heatmapData = topCats.map(cat => {
+  const heatmapData = topCats.map((cat, i) => {
     const catTotal = Number(byCategory[cat] || 0);
-    return { category: cat, value: catTotal, color: CATEGORY_COLORS[cat] || "#94a3b8" };
+    const norm = cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase();
+    const color = CATEGORY_COLORS[norm] || CATEGORY_COLORS[cat] || paletteColor(cat, i);
+    return { category: cat, value: catTotal, color };
   }).sort((a, b) => b.value - a.value);
 
   // Monthly cash flow with net line
@@ -172,10 +174,10 @@ export default function Analytics() {
       {/* KPI Row */}
       <div className="account-grid" style={{ marginBottom: 24 }}>
         {[
-          { label: "Avg Monthly Spend", val: money(avgMonthlyExpense), sub: `over ${months_covered} month(s)`, color: "#ef4444", Icon: TrendingDown },
-          { label: "Total Income",       val: money(income),           sub: summary?.period_start ? `${summary.period_start} →` : "All time", color: "#10b981", Icon: TrendingUp },
-          { label: "Net Savings",        val: money(Math.max(0, net)), sub: income > 0 ? `${Math.round((Math.max(0,net)/income)*100)}% rate` : "—",  color: "#6366f1", Icon: Activity },
-          { label: "Anomalies",          val: anomalies.length,        sub: `${anomalies.filter(a=>a.severity==="high").length} high severity`, color: "#f59e0b", Icon: AlertTriangle, isCount: true },
+          { label: "Avg Monthly Spend", val: money(avgMonthlyExpense), sub: `over ${months_covered} month(s)`, color: "var(--negative)", Icon: TrendingDown },
+          { label: "Total Income",       val: money(income),           sub: summary?.period_start ? `${summary.period_start} →` : "All time", color: "var(--positive)", Icon: TrendingUp },
+          { label: "Net Savings",        val: money(Math.max(0, net)), sub: income > 0 ? `${Math.round((Math.max(0,net)/income)*100)}% rate` : "—",  color: "var(--info)", Icon: Activity },
+          { label: "Anomalies",          val: anomalies.length,        sub: `${anomalies.filter(a=>a.severity==="high").length} high severity`, color: "var(--warning)", Icon: AlertTriangle, isCount: true },
         ].map(({ label, val, sub, color, Icon, isCount }) => (
           <div key={label} className="card account-card" style={{ borderTop: `3px solid ${color}` }}>
             <div className="account-card-header">
@@ -203,23 +205,23 @@ export default function Analytics() {
             <AreaChart data={cashFlowData}>
               <defs>
                 <linearGradient id="gAnalyticsInc" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#10b981" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                  <stop offset="5%"  stopColor="var(--positive)" stopOpacity={0.15} />
+                  <stop offset="95%" stopColor="var(--positive)" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gAnalyticsExp" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#f43f5e" stopOpacity={0.12} />
-                  <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                  <stop offset="5%"  stopColor="var(--negative)" stopOpacity={0.12} />
+                  <stop offset="95%" stopColor="var(--negative)" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={62}
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--surface-secondary)" vertical={false} />
+              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} width={62}
                 tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0)+"k" : v}`} />
               <Tooltip content={<ChartTooltip />} />
               <Legend iconSize={8} iconType="circle" wrapperStyle={{ fontSize: 12 }} />
-              <Area dataKey="Income"   name="Income"   stroke="#10b981" fill="url(#gAnalyticsInc)" strokeWidth={2.5} dot={false} />
-              <Area dataKey="Expenses" name="Expenses" stroke="#f43f5e" fill="url(#gAnalyticsExp)" strokeWidth={2.5} dot={false} />
-              <Line dataKey="Net"      name="Net"      stroke="#6366f1" strokeWidth={2} dot={false} strokeDasharray="5 3" />
+              <Area dataKey="Income"   name="Income"   stroke="var(--positive)" fill="url(#gAnalyticsInc)" strokeWidth={2.5} dot={false} />
+              <Area dataKey="Expenses" name="Expenses" stroke="var(--negative)" fill="url(#gAnalyticsExp)" strokeWidth={2.5} dot={false} />
+              <Line dataKey="Net"      name="Net"      stroke="var(--info)" strokeWidth={2} dot={false} strokeDasharray="5 3" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -247,23 +249,23 @@ export default function Analytics() {
                 {momRows.map((row, i) => (
                   <tr key={row.month} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--surface-secondary)" }}>
                     <td style={{ padding: "12px 16px", fontWeight: 700, color: "var(--text-primary)" }}>{row.month}</td>
-                    <td style={{ padding: "12px 16px", textAlign: "right", color: "#10b981", fontWeight: 600 }}>{money(row.currInc)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right", color: "var(--positive)", fontWeight: 600 }}>{money(row.currInc)}</td>
                     <td style={{ padding: "12px 16px", textAlign: "right" }}>
-                      <span style={{ color: row.incDelta >= 0 ? "#10b981" : "#ef4444", fontWeight: 700, fontSize: 12 }}>
+                      <span style={{ color: row.incDelta >= 0 ? "var(--positive)" : "var(--negative)", fontWeight: 700, fontSize: 12 }}>
                         {row.incDelta >= 0 ? "↑" : "↓"}{Math.abs(row.incDelta).toFixed(0)}%
                       </span>
                     </td>
-                    <td style={{ padding: "12px 16px", textAlign: "right", color: "#f43f5e", fontWeight: 600 }}>{money(row.currExp)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right", color: "var(--negative)", fontWeight: 600 }}>{money(row.currExp)}</td>
                     <td style={{ padding: "12px 16px", textAlign: "right" }}>
                       <span style={{
-                        color: row.delta <= 0 ? "#10b981" : "#ef4444",
-                        background: row.delta <= 0 ? "#ecfdf5" : "#fef2f2",
+                        color: row.delta <= 0 ? "var(--positive)" : "var(--negative)",
+                        background: row.delta <= 0 ? "var(--positive-soft)" : "var(--negative-soft)",
                         padding: "2px 8px", borderRadius: 8, fontWeight: 700, fontSize: 12,
                       }}>
                         {row.delta >= 0 ? "↑" : "↓"}{Math.abs(row.delta).toFixed(0)}%
                       </span>
                     </td>
-                    <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: row.currInc - row.currExp >= 0 ? "#10b981" : "#ef4444" }}>
+                    <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: row.currInc - row.currExp >= 0 ? "var(--positive)" : "var(--negative)" }}>
                       {money(row.currInc - row.currExp)}
                     </td>
                   </tr>
@@ -326,15 +328,15 @@ export default function Analytics() {
           </div>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={forecastBars} barGap={3} barCategoryGap="25%">
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="cat" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={64}
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--surface-secondary)" vertical={false} />
+              <XAxis dataKey="cat" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} width={64}
                 tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0)+"k" : v}`} />
               <Tooltip content={<ChartTooltip />} />
               <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Current"     fill="#e2e8f0" radius={[4,4,0,0]} />
-              <Bar dataKey="30-Day Proj" fill="#6366f1" radius={[4,4,0,0]} />
-              <Bar dataKey="90-Day Proj" fill="#a78bfa" radius={[4,4,0,0]} />
+              <Bar dataKey="Current"     fill="var(--text-muted)" radius={[4,4,0,0]} />
+              <Bar dataKey="30-Day Proj" fill="var(--info)" radius={[4,4,0,0]} />
+              <Bar dataKey="90-Day Proj" fill="#C084FC" radius={[4,4,0,0]} />
             </BarChart>
           </ResponsiveContainer>
           {/* Trend indicators */}
@@ -342,9 +344,9 @@ export default function Analytics() {
             {forecastBars.map(r => (
               <div key={r.cat} style={{
                 fontSize: 11, padding: "4px 10px", borderRadius: 20, fontWeight: 600,
-                background: r.trend === "up" ? "#fef2f2" : r.trend === "down" ? "#ecfdf5" : "#f8fafc",
-                color: r.trend === "up" ? "#ef4444" : r.trend === "down" ? "#10b981" : "#94a3b8",
-                border: `1px solid ${r.trend === "up" ? "#fecaca" : r.trend === "down" ? "#a7f3d0" : "#e2e8f0"}`,
+                background: r.trend === "up" ? "var(--negative-soft)" : r.trend === "down" ? "var(--positive-soft)" : "var(--surface-secondary)",
+                color: r.trend === "up" ? "var(--negative)" : r.trend === "down" ? "var(--positive)" : "var(--text-secondary)",
+                border: `1px solid ${r.trend === "up" ? "rgba(255,45,45,0.4)" : r.trend === "down" ? "rgba(168,255,47,0.3)" : "var(--border)"}`,
               }}>
                 {r.cat}: {r.trend === "up" ? "📈 Rising" : r.trend === "down" ? "📉 Falling" : "→ Stable"}
                 {" "}({Math.round(r.confidence * 100)}% confidence)
@@ -362,19 +364,19 @@ export default function Analytics() {
               <div className="chart-title">Anomaly Timeline</div>
               <div className="chart-subtitle">{anomalies.length} unusual transactions detected</div>
             </div>
-            <AlertTriangle size={18} style={{ color: "#f59e0b" }} />
+            <AlertTriangle size={18} style={{ color: "var(--warning)" }} />
           </div>
 
           {anomalyTimeline.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <ResponsiveContainer width="100%" height={80}>
                 <BarChart data={anomalyTimeline}>
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} />
                   <Tooltip
                     formatter={(v) => [`${v} anomal${v !== 1 ? "ies" : "y"}`, "Count"]}
                     contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}
                   />
-                  <Bar dataKey="count" fill="#f59e0b" radius={[4,4,0,0]} />
+                  <Bar dataKey="count" fill="var(--warning)" radius={[4,4,0,0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -385,12 +387,12 @@ export default function Analytics() {
               <div key={a.transaction_id} style={{
                 display: "flex", alignItems: "center", gap: 12, padding: "12px 14px",
                 borderRadius: 12, border: "1px solid var(--border)",
-                borderLeft: `4px solid ${SEVERITY_COLOR[a.severity] || "#94a3b8"}`,
+                borderLeft: `4px solid ${SEVERITY_COLOR[a.severity] || "var(--text-secondary)"}`,
                 background: "var(--surface)",
               }}>
                 <div style={{
                   width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-                  background: a.severity === "high" ? "#fef2f2" : a.severity === "medium" ? "#fffbeb" : "#eff6ff",
+                  background: a.severity === "high" ? "var(--negative-soft)" : a.severity === "medium" ? "rgba(250,204,21,0.12)" : "rgba(56,189,248,0.12)",
                   display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14,
                 }}>
                   {a.severity === "high" ? "🔴" : a.severity === "medium" ? "🟡" : "🔵"}
@@ -438,8 +440,8 @@ export default function Analytics() {
                 .slice(0, 10)}
               margin={{ left: 20, right: 30 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false}
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--surface-secondary)" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false}
                 tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0)+"k" : v}`} />
               <YAxis type="category" dataKey="cat" tick={{ fontSize: 12, fill: "var(--text-secondary)", fontWeight: 500 }} axisLine={false} tickLine={false} width={90} />
               <Tooltip
@@ -450,9 +452,11 @@ export default function Analytics() {
                 {Object.entries(byCategory)
                   .sort((a,b) => Number(b[1]) - Number(a[1]))
                   .slice(0,10)
-                  .map(([cat]) => (
-                    <Cell key={cat} fill={CATEGORY_COLORS[cat] || "#94a3b8"} />
-                  ))}
+                  .map(([cat], i) => {
+                    const norm = cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase();
+                    const color = CATEGORY_COLORS[norm] || CATEGORY_COLORS[cat] || paletteColor(cat, i);
+                    return <Cell key={cat} fill={color} />;
+                  })}
               </Bar>
             </BarChart>
           </ResponsiveContainer>

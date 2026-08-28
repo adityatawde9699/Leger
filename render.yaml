@@ -35,3 +35,7 @@ services:
         value: "1"      # free tier has 512MB RAM — 1 worker is safer
       - key: ADVISOR_RATE_LIMIT
         value: "10/minute"
+      # entrypoint.sh already runs the schema DDL on container start, so skip the
+      # redundant create_all + inspector round-trips on every cold start.
+      - key: RUN_DB_BOOTSTRAP
+        value: "false"

@@ -3,10 +3,10 @@ import { apiFetch } from "../lib";
 import { AlertCircle, Lightbulb, CheckCircle, Info, Zap, X, ChevronRight } from "lucide-react";
 
 const TYPE_CONFIG = {
-  warning:  { icon: <AlertCircle  size={14} />, color: "#ef4444", bg: "#fef2f2", border: "#fecaca", label: "Warning"  },
-  tip:      { icon: <Lightbulb    size={14} />, color: "#f59e0b", bg: "#fffbeb", border: "#fde68a", label: "Tip"      },
-  positive: { icon: <CheckCircle  size={14} />, color: "#10b981", bg: "#ecfdf5", border: "#a7f3d0", label: "Great"    },
-  info:     { icon: <Info         size={14} />, color: "#6366f1", bg: "#eef2ff", border: "#c7d2fe", label: "Info"     },
+  warning:  { icon: <AlertCircle  size={14} />, color: "var(--negative)", bg: "var(--negative-soft)", border: "rgba(255,45,45,0.4)", label: "Warning"  },
+  tip:      { icon: <Lightbulb    size={14} />, color: "var(--warning)", bg: "rgba(250,204,21,0.12)", border: "rgba(250,204,21,0.4)", label: "Tip"      },
+  positive: { icon: <CheckCircle  size={14} />, color: "var(--positive)", bg: "var(--positive-soft)", border: "rgba(168,255,47,0.3)", label: "Great"    },
+  info:     { icon: <Info         size={14} />, color: "var(--info)", bg: "rgba(56,189,248,0.12)", border: "rgba(56,189,248,0.3)", label: "Info"     },
 };
 
 const PRIORITY_LABEL = { 5: "Critical", 4: "Important", 3: "Notable", 2: "Informational", 1: "Minor" };
@@ -49,7 +49,7 @@ export default function ProactiveInsights({ onNavigate }) {
     return (
       <div className="proactive-card card">
         <div className="proactive-title" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-          <Zap size={16} style={{ color: "#6366f1" }} />
+          <Zap size={16} style={{ color: "var(--info)" }} />
           <span>AI Insights</span>
           <div className="skeleton" style={{ width: 40, height: 20, borderRadius: 10, marginLeft: "auto" }} />
         </div>
@@ -67,7 +67,7 @@ export default function ProactiveInsights({ onNavigate }) {
   return (
     <div className="proactive-card card">
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-        <Zap size={16} style={{ color: "#6366f1" }} />
+        <Zap size={16} style={{ color: "var(--info)" }} />
         <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>AI Insights</span>
         <span style={{
           marginLeft: "auto", fontSize: 11, padding: "2px 10px", borderRadius: 20,
@@ -101,7 +101,7 @@ export default function ProactiveInsights({ onNavigate }) {
                 <div style={{
                   position: "absolute", top: -6, right: 36, fontSize: 9, fontWeight: 800,
                   padding: "1px 6px", borderRadius: 6, textTransform: "uppercase",
-                  background: ins.priority === 5 ? "#ef4444" : "#f59e0b", color: "#fff",
+                  background: ins.priority === 5 ? "var(--negative)" : "var(--warning)", color: "#fff",
                 }}>
                   {PRIORITY_LABEL[ins.priority]}
                 </div>

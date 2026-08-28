@@ -1,5 +1,5 @@
 import React from "react";
-import { apiFetch, money, CATEGORY_COLORS } from "../lib";
+import { apiFetch, money, CATEGORY_COLORS, paletteColor } from "../lib";
 import { CardSkeleton } from "../components/ui";
 import { useToast } from "../components/ui";
 import ProactiveInsights from "../components/ProactiveInsights";
@@ -20,8 +20,8 @@ const TIME_FILTERS = [
   { id: "all",         label: "All Time" },
 ];
 
-const SEVERITY_COLOR = { high: "#ef4444", medium: "#f59e0b", low: "#3b82f6" };
-const SEVERITY_BG    = { high: "#fef2f2", medium: "#fffbeb", low: "#eff6ff" };
+const SEVERITY_COLOR = { high: "var(--accent)", medium: "var(--warning)", low: "var(--info)" };
+const SEVERITY_BG    = { high: "rgba(255, 59, 59, 0.1)", medium: "rgba(250, 204, 21, 0.1)", low: "rgba(56, 189, 248, 0.1)" };
 
 export default function Dashboard({ analyticsOnly = false }) {
   const toast = useToast();
@@ -164,8 +164,8 @@ export default function Dashboard({ analyticsOnly = false }) {
     return null;
   };
 
-  const kpiColors   = { positive: "#10b981", negative: "#f43f5e", muted: "#94a3b8" };
-  const kpiBgColors = { positive: "#ecfdf5", negative: "#fff1f2", muted: "#f8fafc" };
+  const kpiColors   = { positive: "var(--primary)", negative: "var(--accent)", muted: "var(--text-secondary)" };
+  const kpiBgColors = { positive: "var(--positive-soft)", negative: "var(--negative-soft)", muted: "var(--surface-secondary)" };
 
   // Savings rate donut data
   const savingsDonut = [
@@ -201,7 +201,7 @@ export default function Dashboard({ analyticsOnly = false }) {
       {visibleAnomalies.length > 0 && (
         <div style={{ marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-            <AlertTriangle size={18} style={{ color: "#ef4444" }} />
+            <AlertTriangle size={18} style={{ color: "var(--accent)" }} />
             <span style={{ fontWeight: 700, fontSize: 15, color: "var(--text-primary)" }}>
               {anomalies.filter(a => !dismissedAnomalies.includes(a.transaction_id)).length} Anomalies Detected
             </span>
@@ -214,9 +214,9 @@ export default function Dashboard({ analyticsOnly = false }) {
               <div key={a.transaction_id}
                 style={{
                   display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
-                  background: SEVERITY_BG[a.severity] || "#f8fafc",
-                  border: `1px solid ${SEVERITY_COLOR[a.severity] || "#e2e8f0"}`,
-                  borderLeft: `4px solid ${SEVERITY_COLOR[a.severity] || "#94a3b8"}`,
+                  background: SEVERITY_BG[a.severity] || "var(--surface-secondary)",
+                  border: `1px solid ${SEVERITY_COLOR[a.severity] || "var(--border)"}`,
+                  borderLeft: `4px solid ${SEVERITY_COLOR[a.severity] || "var(--text-secondary)"}`,
                   borderRadius: 12,
                 }}>
                 <div style={{ flex: 1 }}>
@@ -271,16 +271,16 @@ export default function Dashboard({ analyticsOnly = false }) {
       <div className="account-grid" style={{ marginBottom: 24 }}>
         {kpiCards.map(({ label, val, change, type, Icon, isCount, isCash }) => (
           <div className="card account-card" key={label}
-            style={{ borderTop: `3px solid ${isCash ? "#f59e0b" : kpiColors[type]}` }}>
+            style={{ borderTop: `3px solid ${isCash ? "var(--warning)" : kpiColors[type]}` }}>
             <div className="account-card-header">
               <span className="account-label">{label}</span>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: isCash ? "#fef3c7" : kpiBgColors[type], display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Icon size={18} style={{ color: isCash ? "#f59e0b" : kpiColors[type] }} />
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: isCash ? "rgba(250,204,21,0.16)" : kpiBgColors[type], display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon size={18} style={{ color: isCash ? "var(--warning)" : kpiColors[type] }} />
               </div>
             </div>
             <div className="account-amount">{isCount ? val : money(val)}</div>
             <div className={`account-change ${type}`} style={{ fontSize: 12 }}>
-              {isCash ? <span style={{ color: "#a78bfa", fontWeight: 600 }}>✦ Not in bank · Physical</span> : change}
+              {isCash ? <span style={{ color: "var(--info)", fontWeight: 600 }}>✦ Not in bank · Physical</span> : change}
             </div>
           </div>
         ))}
@@ -303,9 +303,11 @@ export default function Dashboard({ analyticsOnly = false }) {
               <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
                   <Pie data={pieRows} dataKey="value" innerRadius={62} outerRadius={95} paddingAngle={3} strokeWidth={0}>
-                    {pieRows.map((r) => (
-                      <Cell key={r.name} fill={CATEGORY_COLORS[r.name] || "#94a3b8"} />
-                    ))}
+                    {pieRows.map((r, i) => {
+                      const norm = r.name.charAt(0).toUpperCase() + r.name.slice(1).toLowerCase();
+                      const color = CATEGORY_COLORS[norm] || CATEGORY_COLORS[r.name] || paletteColor(r.name, i);
+                      return <Cell key={r.name} fill={color} />;
+                    })}
                   </Pie>
                   <Tooltip content={<CustomTooltip />} />
                   <Legend iconSize={8} iconType="circle" wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
@@ -337,12 +339,12 @@ export default function Dashboard({ analyticsOnly = false }) {
           </div>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={dayRows} barGap={4} barCategoryGap="30%">
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#94a3b8", fontWeight: 500 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: "#94a3b8", fontWeight: 500 }} axisLine={false} tickLine={false} width={60} tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0) + "k" : v}`} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 500 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 500 }} axisLine={false} tickLine={false} width={60} tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0) + "k" : v}`} />
               <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="Income"   fill="#10b981" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="Expenses" fill="#f43f5e" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="Income"   fill="var(--primary)" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="Expenses" fill="var(--negative)" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -360,25 +362,25 @@ export default function Dashboard({ analyticsOnly = false }) {
           <AreaChart data={monthRows.length > 1 ? monthRows : dayRows}>
             <defs>
               <linearGradient id="gInc" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor="#10b981" stopOpacity={0.15} />
-                <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                <stop offset="5%"  stopColor="var(--primary)" stopOpacity={0.15} />
+                <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
               </linearGradient>
               <linearGradient id="gExp" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor="#f43f5e" stopOpacity={0.12} />
-                <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                <stop offset="5%"  stopColor="var(--negative)" stopOpacity={0.12} />
+                <stop offset="95%" stopColor="var(--negative)" stopOpacity={0} />
               </linearGradient>
               <linearGradient id="gNet" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.1} />
-                <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                <stop offset="5%"  stopColor="var(--info)" stopOpacity={0.1} />
+                <stop offset="95%" stopColor="var(--info)" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-            <XAxis dataKey={monthRows.length > 1 ? "month" : "date"} tick={{ fontSize: 11, fill: "#94a3b8", fontWeight: 500 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 11, fill: "#94a3b8", fontWeight: 500 }} axisLine={false} tickLine={false} width={60} tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0) + "k" : v}`} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+            <XAxis dataKey={monthRows.length > 1 ? "month" : "date"} tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 500 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 500 }} axisLine={false} tickLine={false} width={60} tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0) + "k" : v}`} />
             <Tooltip content={<CustomTooltip />} />
-            <Area dataKey="Income"   stroke="#10b981" fill="url(#gInc)" strokeWidth={2.5} dot={false} />
-            <Area dataKey="Expenses" stroke="#f43f5e" fill="url(#gExp)" strokeWidth={2.5} dot={false} />
-            {monthRows.length > 0 && <Area dataKey="Net" stroke="#6366f1" fill="url(#gNet)" strokeWidth={2} dot={false} strokeDasharray="4 2" />}
+            <Area dataKey="Income"   stroke="var(--primary)" fill="url(#gInc)" strokeWidth={2.5} dot={false} />
+            <Area dataKey="Expenses" stroke="var(--negative)" fill="url(#gExp)" strokeWidth={2.5} dot={false} />
+            {monthRows.length > 0 && <Area dataKey="Net" stroke="var(--info)" fill="url(#gNet)" strokeWidth={2} dot={false} strokeDasharray="4 2" />}
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -392,21 +394,21 @@ export default function Dashboard({ analyticsOnly = false }) {
               <div className="chart-subtitle">Projected vs current · EWMA model</div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
-              <div style={{ width: 12, height: 3, background: "#6366f1", borderRadius: 2 }} /> Projected
-              <div style={{ width: 12, height: 3, background: "#e2e8f0", borderRadius: 2 }} /> Current
+              <div style={{ width: 12, height: 3, background: "var(--primary)", borderRadius: 2 }} /> Projected
+              <div style={{ width: 12, height: 3, background: "var(--surface-secondary)", borderRadius: 2 }} /> Current
             </div>
           </div>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={forecastBars} barGap={4} barCategoryGap="28%">
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="cat" tick={{ fontSize: 11, fill: "#94a3b8", fontWeight: 500 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: "#94a3b8", fontWeight: 500 }} axisLine={false} tickLine={false} width={62} tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0) + "k" : v}`} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="cat" tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 500 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 500 }} axisLine={false} tickLine={false} width={62} tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0) + "k" : v}`} />
               <Tooltip
                 formatter={(val, name) => [money(val), name === "projected" ? "30-Day Forecast" : "Current"]}
                 contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}
               />
-              <Bar dataKey="actual"    fill="#e2e8f0" radius={[4, 4, 0, 0]} name="Current" />
-              <Bar dataKey="projected" fill="#6366f1" radius={[4, 4, 0, 0]} name="Projected"
+              <Bar dataKey="actual"    fill="var(--surface-secondary)" radius={[4, 4, 0, 0]} name="Current" />
+              <Bar dataKey="projected" fill="var(--primary)" radius={[4, 4, 0, 0]} name="Projected"
                 label={false}
               />
             </BarChart>
@@ -416,9 +418,9 @@ export default function Dashboard({ analyticsOnly = false }) {
               {forecast.budget_warnings.map((w) => (
                 <div key={w.category} style={{
                   fontSize: 12, padding: "5px 12px", borderRadius: 20,
-                  background: w.severity === "high" ? "#fef2f2" : "#fffbeb",
-                  color: w.severity === "high" ? "#ef4444" : "#f59e0b",
-                  border: `1px solid ${w.severity === "high" ? "#fecaca" : "#fde68a"}`,
+                  background: w.severity === "high" ? "var(--negative-soft)" : "rgba(250,204,21,0.12)",
+                  color: w.severity === "high" ? "var(--accent)" : "var(--warning)",
+                  border: `1px solid ${w.severity === "high" ? "rgba(255,45,45,0.4)" : "rgba(250,204,21,0.4)"}`,
                   fontWeight: 600,
                 }}>
                   ⚠ {w.category}: projected to overspend by {money(w.projected_excess)}
@@ -464,7 +466,7 @@ export default function Dashboard({ analyticsOnly = false }) {
                     <div style={{ height: 4, borderRadius: 4, background: "var(--surface-secondary)", overflow: "hidden" }}>
                       <div style={{
                         height: "100%", width: `${pct}%`, borderRadius: 4,
-                        background: `linear-gradient(90deg, #6366f1, #8b5cf6)`,
+                        background: `linear-gradient(90deg, var(--primary), var(--info))`,
                         transition: "width 0.6s ease",
                       }} />
                     </div>
@@ -483,12 +485,12 @@ export default function Dashboard({ analyticsOnly = false }) {
       {(summary?.insights || []).length > 0 && (
         <div className="card" style={{ marginTop: 24 }}>
           <div className="chart-title" style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 8 }}>
-            <AlertCircle size={18} style={{ color: "var(--accent)" }} /> Actionable Insights
+            <AlertCircle size={18} style={{ color: "var(--primary)" }} /> Actionable Insights
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {summary.insights.map((item) => (
-              <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px", background: "var(--accent-light)", borderRadius: 12, borderLeft: "3px solid var(--accent)" }}>
-                <AlertCircle size={15} style={{ color: "var(--accent)", flexShrink: 0, marginTop: 2 }} />
+              <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px", background: "var(--positive-soft)", borderRadius: 12, borderLeft: "3px solid var(--primary)" }}>
+                <AlertCircle size={15} style={{ color: "var(--primary)", flexShrink: 0, marginTop: 2 }} />
                 <p style={{ fontSize: 14, color: "var(--text-primary)", lineHeight: 1.6, margin: 0 }}>{item}</p>
               </div>
             ))}
@@ -508,7 +510,7 @@ export default function Dashboard({ analyticsOnly = false }) {
             <div className="card account-card" key={name}>
               <div className="account-card-header">
                 <span className="account-label">{name}</span>
-                <Icon size={18} style={{ color: "var(--accent)" }} />
+                <Icon size={18} style={{ color: "var(--primary)" }} />
               </div>
               <div className="account-amount" style={{ fontSize: 22 }}>{val}</div>
               <div className="account-change muted">{sub}</div>

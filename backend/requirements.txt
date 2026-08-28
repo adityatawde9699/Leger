@@ -20,5 +20,7 @@ openai==1.51.0
 mistralai==1.0.3
 cohere==5.11.0
 # Document Processing
-paddleocr==3.5.0
-pytesseract==0.3.13
+# NOTE: Receipt OCR uses Gemini vision (google-generativeai) — no local OCR engine
+# is imported anywhere in app/. paddleocr/pytesseract were removed to keep the
+# Render free-tier image small and within the 512MB RAM budget (PaddlePaddle alone
+# is hundreds of MB). Re-add a local engine only if you wire it into receipt_ocr.py.

@@ -15,7 +15,8 @@ from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy.orm import Session
+from sqlalchemy import inspect, text
+from sqlalchemy.orm import Session, selectinload
 
 from .auth import get_current_user
 from .config import settings
@@ -91,6 +92,7 @@ from .services.prompt_guard import build_safe_messages, sanitize_user_input
 from .services.receipt_ocr import parse_receipt_image
 from .services.sms_parser import parse_sms
 from .services.statements import parse_csv, parse_excel, parse_pdf
+from .services.url_guard import UnsafeURLError, validate_webhook_url
 
 
 # ── Tiered TTL Cache (L1: in-memory with TTL) ─────────────────────────────────
@@ -154,29 +156,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ledger.api")
 
-from sqlalchemy import inspect, text
-
 # ── Database bootstrap ────────────────────────────────────────────────────────
-# NOTE: In production, use `alembic upgrade head` instead.
-Base.metadata.create_all(bind=engine)
+# NOTE: In production, use `alembic upgrade head` instead. entrypoint.sh runs the
+# same DDL on container start, so set RUN_DB_BOOTSTRAP=false in production to skip
+# these redundant inspector round-trips on every cold start.
+if settings.run_db_bootstrap:
+    Base.metadata.create_all(bind=engine)
 
-# Ad-hoc migration: Ensure avatar_url exists since Alembic is not currently configured
-try:
-    inspector = inspect(engine)
-    if inspector.has_table("users"):
-        columns = [col["name"] for col in inspector.get_columns("users")]
-        if "avatar_url" not in columns:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE users ADD COLUMN avatar_url TEXT"))
-                logger.info("Migrated: Added avatar_url to users table.")
-except Exception as e:
-    logger.warning("Failed to auto-migrate schema: %s", e)
+    # Ad-hoc migration: Ensure avatar_url exists since Alembic is not configured
+    try:
+        inspector = inspect(engine)
+        if inspector.has_table("users"):
+            columns = [col["name"] for col in inspector.get_columns("users")]
+            if "avatar_url" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN avatar_url TEXT"))
+                    logger.info("Migrated: Added avatar_url to users table.")
+    except Exception as e:
+        logger.warning("Failed to auto-migrate schema: %s", e)
 
 # ── Rate limiter ──────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
 
 # ── App ───────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Ledger API", version="1.2.0", docs_url="/docs")
+app = FastAPI(title="Ledger API", version="1.4.0", docs_url="/docs")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -199,6 +202,10 @@ def _tx_query(db: Session, user_id: str, month: str | None = None):
     return q.order_by(Transaction.date.desc(), Transaction.created_at.desc())
 
 
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
 def _get_balance_at(
     db: Session,
     user_id: str,
@@ -218,7 +225,7 @@ def _get_balance_at(
        to compute the net_change since that anchor.
     3. Return anchor.running_balance + net_change.
     """
-    from sqlalchemy import and_, func, or_
+    from sqlalchemy import and_, case, func, or_
 
     # ── Step 1: find the anchor row ──
     anchor_q = db.query(Transaction).filter(
@@ -260,23 +267,25 @@ def _get_balance_at(
         ),
     )
 
-    post_q = db.query(Transaction).filter(
+    # Single SQL aggregate (income - expense) instead of pulling every row into
+    # Python and summing. Avoids O(n²) work when this is called per-row during
+    # statement import, and keeps memory flat regardless of history size.
+    signed_amount = case(
+        (Transaction.type == "income", Transaction.amount),
+        else_=-Transaction.amount,
+    )
+    net_q = db.query(func.coalesce(func.sum(signed_amount), 0)).filter(
         Transaction.user_id == user_id,
         Transaction.id != anchor.id,
         Transaction.source != "cash",
         after_filter,
     )
     if as_of_date:
-        post_q = post_q.filter(Transaction.date < as_of_date)
+        net_q = net_q.filter(Transaction.date < as_of_date)
     if exclude_id:
-        post_q = post_q.filter(Transaction.id != exclude_id)
+        net_q = net_q.filter(Transaction.id != exclude_id)
 
-    net_change = Decimal("0")
-    for tx in post_q.all():
-        if tx.type == "income":
-            net_change += tx.amount
-        else:
-            net_change -= tx.amount
+    net_change = Decimal(str(net_q.scalar() or 0))
 
     return anchor.running_balance + net_change
 
@@ -360,7 +369,7 @@ def ping():
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.0.1"}
+    return {"ok": True, "version": "1.4.0"}
 
 
 # ── Profile ───────────────────────────────────────────────────────────────────
@@ -501,6 +510,7 @@ def create_transaction(
 @app.delete("/transactions/{transaction_id}")
 def delete_transaction(
     transaction_id: str,
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -508,6 +518,10 @@ def delete_transaction(
     if not tx or tx.user_id != user.id:
         raise HTTPException(status_code=404, detail="Transaction not found")
     db.delete(tx)
+    log_event(
+        db, user_id=user.id, action="delete", resource_type="transaction",
+        resource_id=transaction_id, ip_address=_client_ip(request),
+    )
     db.commit()
     logger.info("transaction.deleted user=%s id=%s", user.id, transaction_id)
     return {"deleted": True}
@@ -516,6 +530,7 @@ def delete_transaction(
 @app.post("/transactions/bulk-delete")
 def bulk_delete_transactions(
     payload: BulkDeleteRequest,
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -533,6 +548,10 @@ def bulk_delete_transactions(
     count = len(txs)
     for tx in txs:
         db.delete(tx)
+    log_event(
+        db, user_id=user.id, action="delete", resource_type="transaction",
+        details={"bulk": True, "count": count}, ip_address=_client_ip(request),
+    )
     db.commit()
     logger.info("transactions.bulk_deleted user=%s count=%d", user.id, count)
     return {"deleted_count": count}
@@ -550,6 +569,7 @@ def list_budgets(
 @app.put("/budgets", response_model=list[BudgetOut])
 def upsert_budgets(
     payload: list[BudgetIn],
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -564,6 +584,11 @@ def upsert_budgets(
             budget = Budget(user_id=user.id, **item.model_dump())
             db.add(budget)
         saved.append(budget)
+    log_event(
+        db, user_id=user.id, action="update", resource_type="budget",
+        details={"categories": [item.category for item in payload]},
+        ip_address=_client_ip(request),
+    )
     db.commit()
     for b in saved:
         db.refresh(b)
@@ -621,7 +646,9 @@ def get_summary(
 
 # ── SMS Import ────────────────────────────────────────────────────────────────
 @app.post("/imports/sms", response_model=list[TransactionOut])
+@limiter.limit(settings.import_rate_limit)
 def import_sms(
+    request: Request,
     payload: SmsParseRequest,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -689,7 +716,9 @@ def import_sms_webhook(
 
 # ── Statement Import (async job) ──────────────────────────────────────────────
 @app.post("/imports/statement", response_model=ImportJobOut, status_code=202)
+@limiter.limit(settings.import_rate_limit)
 async def import_statement(
+    request: Request,
     file: UploadFile = File(...),
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -699,10 +728,15 @@ async def import_statement(
     ext = file.filename.lower().rsplit(".", 1)[-1]
     if ext not in ("csv", "pdf", "xls", "xlsx"):
         raise HTTPException(status_code=400, detail="Upload a CSV, Excel, or PDF statement")
-    if file.size and file.size > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    # Fast-path reject when the client advertises a size; re-checked authoritatively
+    # below since UploadFile.size is often None.
+    if file.size and file.size > max_bytes:
+        raise HTTPException(status_code=400, detail=f"File too large (max {settings.max_upload_mb}MB)")
 
     content = await file.read()
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=400, detail=f"File too large (max {settings.max_upload_mb}MB)")
 
     # Create import job record
     job = ImportJob(user_id=user.id, file_name=file.filename, status="processing")
@@ -721,7 +755,19 @@ async def import_statement(
             else:
                 rows = await parse_pdf(content)
 
-            saved_count = 0
+            # Cap row count so a pathological file can't exhaust the 512MB worker.
+            if len(rows) > settings.max_import_rows:
+                job.status = "failed"
+                job.error_message = (
+                    f"Statement has {len(rows)} rows, over the "
+                    f"{settings.max_import_rows}-row limit. Split the file and re-upload."
+                )
+                db.commit()
+                return
+
+            # Validate + fingerprint every row first, then resolve all duplicates
+            # in a single IN(...) query instead of one query per row.
+            prepared = []  # list[(validated_dict, fingerprint)]
             for seq, row in enumerate(rows):
                 row["stmt_seq"] = seq  # preserve bank statement row order
                 validated = TransactionIn(**row).model_dump()
@@ -730,38 +776,59 @@ async def import_statement(
                     f"{validated['date']}{validated['amount']}{validated['description']}".encode()
                 ).hexdigest()
                 validated["source_ref"] = fingerprint
+                prepared.append((validated, fingerprint))
 
-                duplicate = (
-                    db.query(Transaction)
+            existing_refs: set[str] = set()
+            if prepared:
+                fingerprints = [fp for _, fp in prepared]
+                existing_refs = {
+                    ref
+                    for (ref,) in db.query(Transaction.source_ref)
                     .filter(
                         Transaction.user_id == user.id,
                         Transaction.source == "statement",
-                        Transaction.source_ref == fingerprint,
+                        Transaction.source_ref.in_(fingerprints),
                     )
-                    .first()
-                )
-                if not duplicate:
-                    new_tx = Transaction(user_id=user.id, **validated)
-                    # Backfill running_balance for rows where the parsed PDF/CSV
-                    # had no Balance column (e.g. receipt PDFs, Spotify invoices).
-                    if new_tx.running_balance is None and new_tx.source != "cash":
-                        prior_bal = _get_balance_at(db, user.id, as_of_date=None)
-                        if prior_bal is not None:
-                            if new_tx.type == "income":
-                                new_tx.running_balance = prior_bal + new_tx.amount
-                            else:
-                                new_tx.running_balance = prior_bal - new_tx.amount
-                    db.add(new_tx)
-                    saved_count += 1
+                    .all()
+                }
+
+            # Backfill anchor balance is computed once: the session has
+            # autoflush=False, so freshly-added (un-flushed) rows are invisible to
+            # _get_balance_at — every per-row call in the old loop returned this
+            # same value. Computing it once is equivalent and avoids N queries.
+            prior_bal = _get_balance_at(db, user.id, as_of_date=None)
+
+            saved_count = 0
+            seen: set[str] = set()
+            pending = 0
+            for validated, fingerprint in prepared:
+                if fingerprint in existing_refs or fingerprint in seen:
+                    continue  # skip DB duplicates and in-file repeats
+                seen.add(fingerprint)
+                new_tx = Transaction(user_id=user.id, **validated)
+                # Backfill running_balance for rows where the parsed PDF/CSV
+                # had no Balance column (e.g. receipt PDFs, Spotify invoices).
+                if new_tx.running_balance is None and new_tx.source != "cash" and prior_bal is not None:
+                    if new_tx.type == "income":
+                        new_tx.running_balance = prior_bal + new_tx.amount
+                    else:
+                        new_tx.running_balance = prior_bal - new_tx.amount
+                db.add(new_tx)
+                saved_count += 1
+                pending += 1
+                # Flush+commit in chunks so the session's pending set stays bounded
+                # instead of holding every row in memory until one final commit.
+                if pending >= 500:
+                    db.commit()
+                    pending = 0
 
             db.commit()
             if not rows:
                 job.status = "failed"
                 job.error_message = (
                     "No transactions could be extracted from this file. "
-                    "If this is a scanned/image PDF, install Tesseract OCR on your system "
-                    "(https://github.com/UB-Mannheim/tesseract/wiki) for OCR support. "
-                    "Alternatively, export a digital/text-layer PDF or CSV from your bank."
+                    "If this is a scanned/image PDF, export a digital (text-layer) PDF "
+                    "or a CSV from your bank instead, then re-upload."
                 )
             else:
                 job.status = "done"
@@ -870,8 +937,12 @@ async def advisor_stream(
     db.add(user_msg)
     db.commit()
 
-    # Simple hashing of the complete message context
-    cache_key = hashlib.sha256(json.dumps(messages).encode()).hexdigest()
+    # Hash the complete message context, scoped to the user. The user prefix is
+    # required so TTLCache.invalidate_user (which matches on the "{user_id}:"
+    # prefix) actually evicts these entries when the user corrects a category —
+    # otherwise stale advice lingers. It also rules out cross-user cache hits.
+    context_hash = hashlib.sha256(json.dumps(messages).encode()).hexdigest()
+    cache_key = f"{user.id}:advisor:{context_hash}"
     cached_reply = llm_cache.get(cache_key)
 
     if cached_reply:
@@ -1017,6 +1088,7 @@ def create_account(
 def update_account(
     account_id: str,
     payload: AccountIn,
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1025,6 +1097,10 @@ def update_account(
         raise HTTPException(status_code=404, detail="Account not found")
     for k, v in payload.model_dump().items():
         setattr(acct, k, v)
+    log_event(
+        db, user_id=user.id, action="update", resource_type="account",
+        resource_id=account_id, ip_address=_client_ip(request),
+    )
     db.commit()
     db.refresh(acct)
     return acct
@@ -1033,6 +1109,7 @@ def update_account(
 @app.delete("/accounts/{account_id}")
 def delete_account(
     account_id: str,
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1040,6 +1117,10 @@ def delete_account(
     if not acct or acct.user_id != user.id:
         raise HTTPException(status_code=404, detail="Account not found")
     acct.is_active = False  # soft delete
+    log_event(
+        db, user_id=user.id, action="delete", resource_type="account",
+        resource_id=account_id, ip_address=_client_ip(request),
+    )
     db.commit()
     logger.info("account.deleted user=%s id=%s", user.id, account_id)
     return {"deleted": True}
@@ -1047,7 +1128,9 @@ def delete_account(
 
 # ── Auto-categorize ──────────────────────────────────────────────────────────
 @app.post("/categorize", response_model=CategorizeSingleResponse)
+@limiter.limit(settings.categorize_rate_limit)
 async def auto_categorize(
+    request: Request,
     payload: CategorizeSingleRequest,
     user: UserContext = Depends(get_current_user),
 ):
@@ -1056,7 +1139,9 @@ async def auto_categorize(
 
 
 @app.post("/categorize/batch")
+@limiter.limit(settings.categorize_rate_limit)
 async def auto_categorize_batch(
+    request: Request,
     payload: CategorizeBatchRequest,
     user: UserContext = Depends(get_current_user),
 ):
@@ -1070,7 +1155,9 @@ async def auto_categorize_batch(
 
 # ── Receipt OCR ───────────────────────────────────────────────────────────────
 @app.post("/receipts/scan")
+@limiter.limit(settings.receipt_rate_limit)
 async def scan_receipt(
+    request: Request,
     file: UploadFile = File(...),
     user: UserContext = Depends(get_current_user),
 ):
@@ -1094,6 +1181,7 @@ async def scan_receipt(
 def update_transaction(
     transaction_id: str,
     payload: TransactionIn,
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1102,6 +1190,10 @@ def update_transaction(
         raise HTTPException(status_code=404, detail="Transaction not found")
     for k, v in payload.model_dump().items():
         setattr(tx, k, v)
+    log_event(
+        db, user_id=user.id, action="update", resource_type="transaction",
+        resource_id=tx.id, ip_address=_client_ip(request),
+    )
     db.commit()
     db.refresh(tx)
     logger.info("transaction.updated user=%s id=%s", user.id, tx.id)
@@ -1136,6 +1228,12 @@ def create_webhook(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # SSRF guard: reject URLs that resolve to loopback/private/metadata addresses.
+    try:
+        validate_webhook_url(payload.url)
+    except UnsafeURLError as e:
+        raise HTTPException(status_code=400, detail=f"Unsafe webhook URL: {e}") from e
+
     hook = Webhook(user_id=user.id, **payload.model_dump())
     db.add(hook)
     log_event(
@@ -1248,6 +1346,7 @@ def create_portfolio(
 @app.delete("/portfolios/{portfolio_id}")
 def delete_portfolio(
     portfolio_id: str,
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1255,6 +1354,10 @@ def delete_portfolio(
     if not p or p.user_id != user.id:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     db.delete(p)
+    log_event(
+        db, user_id=user.id, action="delete", resource_type="portfolio",
+        resource_id=portfolio_id, ip_address=_client_ip(request),
+    )
     db.commit()
     return {"deleted": True}
 
@@ -1293,6 +1396,7 @@ def add_holding(
 def update_holding(
     holding_id: str,
     payload: HoldingIn,
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1304,6 +1408,10 @@ def update_holding(
         raise HTTPException(status_code=404, detail="Not authorized")
     for k, v in payload.model_dump().items():
         setattr(h, k, v)
+    log_event(
+        db, user_id=user.id, action="update", resource_type="holding",
+        resource_id=holding_id, ip_address=_client_ip(request),
+    )
     db.commit()
     db.refresh(h)
     return h
@@ -1312,6 +1420,7 @@ def update_holding(
 @app.delete("/holdings/{holding_id}")
 def delete_holding(
     holding_id: str,
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1322,6 +1431,10 @@ def delete_holding(
     if not p or p.user_id != user.id:
         raise HTTPException(status_code=404, detail="Not authorized")
     db.delete(h)
+    log_event(
+        db, user_id=user.id, action="delete", resource_type="holding",
+        resource_id=holding_id, ip_address=_client_ip(request),
+    )
     db.commit()
     return {"deleted": True}
 
@@ -1332,7 +1445,12 @@ def portfolio_summary(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    portfolios = db.query(Portfolio).filter(Portfolio.user_id == user.id).all()
+    portfolios = (
+        db.query(Portfolio)
+        .options(selectinload(Portfolio.holdings))
+        .filter(Portfolio.user_id == user.id)
+        .all()
+    )
     total_invested = 0
     total_current = 0
     by_type = {}
@@ -1372,7 +1490,9 @@ def credit_health(
 
 # ── Bill Negotiator ───────────────────────────────────────────────────────────
 @app.get("/bills/negotiate")
+@limiter.limit(settings.insights_rate_limit)
 async def negotiate_bills(
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1446,7 +1566,12 @@ def portfolio_analytics(
     db: Session = Depends(get_db),
 ):
     """Compute Sharpe ratio, XIRR, asset allocation, drawdown for all portfolios."""
-    portfolios = db.query(Portfolio).filter(Portfolio.user_id == user.id).all()
+    portfolios = (
+        db.query(Portfolio)
+        .options(selectinload(Portfolio.holdings))
+        .filter(Portfolio.user_id == user.id)
+        .all()
+    )
     if not portfolios:
         return {"allocation": [], "total_return_pct": 0, "sharpe_ratio": None}
 
@@ -1456,7 +1581,9 @@ def portfolio_analytics(
 
 # ── Proactive Insights (upgraded — with anomaly + forecast context) ────────────
 @app.get("/insights/proactive", response_model=list[ProactiveInsight])
+@limiter.limit(settings.insights_rate_limit)
 async def proactive_insights_v2(
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1526,7 +1653,9 @@ def embedding_cache_stats(
 
 # ── Mass Recategorize (new categories support) ────────────────────────────────
 @app.post("/categorize/recategorize")
+@limiter.limit(settings.categorize_rate_limit)
 async def recategorize_uncategorized(
+    request: Request,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     user: UserContext = Depends(get_current_user),

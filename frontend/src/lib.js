@@ -63,26 +63,57 @@ export const EXPENSE_CATEGORIES = [
 
 export const INCOME_CATEGORIES = ["Salary", "Freelance", "Other"];
 
+// Distinct per-category hues so charts don't collapse different categories into
+// the same color. Tuned for the near-black (#0A0A0B) dark surface: bright enough
+// to read, evenly spaced around the hue wheel. Semantics are preserved where it
+// matters — income (Salary/Freelance) stays green/positive, Taxes/Fees stay red.
 export const CATEGORY_COLORS = {
-  Housing:       "#c084fc",
-  Groceries:     "#22c55e",
-  Transport:     "#38bdf8",
-  Dining:        "#f97316",
-  Subscriptions: "#a78bfa",
-  Shopping:      "#f472b6",
-  Health:        "#14b8a6",
-  Utilities:     "#94a3b8",
-  Entertainment: "#facc15",
-  Education:     "#60a5fa",
-  Insurance:     "#34d399",
-  Investments:   "#4f46e5",
-  Transfers:     "#a8a29e",
-  Taxes:         "#f87171",
-  Fees:          "#fb923c",
-  Other:         "#9ca3af",
-  Salary:        "#4ade80",
-  Freelance:     "#84cc16",
+  Housing:       "#60A5FA", // blue
+  Groceries:     "#A8FF2F", // lime
+  Transport:     "#FBBF24", // amber
+  Dining:        "#FB7185", // rose
+  Subscriptions: "#C084FC", // violet
+  Shopping:      "#F472B6", // pink
+  Health:        "#2DD4BF", // teal
+  Utilities:     "#94A3B8", // slate
+  Entertainment: "#FB923C", // orange
+  Education:     "#818CF8", // indigo
+  Insurance:     "#4ADE80", // green
+  Investments:   "#22D3EE", // cyan
+  Transfers:     "#A1A1AA", // zinc
+  Taxes:         "#F87171", // red
+  Fees:          "#E879F9", // fuchsia
+  Other:         "#64748B", // gray
+  Salary:        "#34D399", // emerald (income)
+  Freelance:     "#FCD34D", // gold (income)
 };
+
+// General-purpose categorical palette for charts whose series aren't fixed
+// expense categories (e.g. forecast horizons, ad-hoc groupings). Ordered for
+// maximum separation between adjacent entries.
+export const CHART_PALETTE = [
+  "#A8FF2F", // lime
+  "#38BDF8", // sky
+  "#FB7185", // rose
+  "#C084FC", // violet
+  "#FBBF24", // amber
+  "#2DD4BF", // teal
+  "#F472B6", // pink
+  "#818CF8", // indigo
+  "#FB923C", // orange
+  "#4ADE80", // green
+  "#22D3EE", // cyan
+  "#E879F9", // fuchsia
+];
+
+// Stable color for an arbitrary label by hashing it into CHART_PALETTE.
+export function paletteColor(key, i) {
+  if (typeof i === "number") return CHART_PALETTE[i % CHART_PALETTE.length];
+  let h = 0;
+  const s = String(key);
+  for (let j = 0; j < s.length; j++) h = (h * 31 + s.charCodeAt(j)) >>> 0;
+  return CHART_PALETTE[h % CHART_PALETTE.length];
+}
 
 export const money = (v) =>
   new Intl.NumberFormat("en-IN", {

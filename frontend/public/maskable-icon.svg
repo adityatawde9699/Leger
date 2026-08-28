@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- Maskable variant: full-bleed lime, mark kept within the 80% safe zone
+       so OS shape masks (circle/squircle/rounded) never clip it. -->
+  <defs>
+    <linearGradient id="lime" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BFFF5C"/>
+      <stop offset="1" stop-color="#A8FF2F"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#lime)"/>
+  <g transform="translate(25.6 82) scale(12)">
+    <path d="M9 6.5 V22.5 H15.5" stroke="#0A0A0B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="17.6" y="18"  width="2.8" height="4.5" rx="1.2" fill="#0A0A0B"/>
+    <rect x="22.1" y="14"  width="2.8" height="8.5" rx="1.2" fill="#0A0A0B"/>
+    <rect x="26.6" y="9.5" width="2.8" height="13"  rx="1.2" fill="#FF2D2D"/>
+  </g>
+</svg>

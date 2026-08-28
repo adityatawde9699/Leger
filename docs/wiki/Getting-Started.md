@@ -13,7 +13,7 @@
 
 ```bash
 git clone https://github.com/adityatawde9699/Leger.git
-cd ledger
+cd Leger
 ```
 
 ## Step 2: Start Database Services

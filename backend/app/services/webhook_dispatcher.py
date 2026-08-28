@@ -14,6 +14,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from ..models import Webhook
+from .url_guard import UnsafeURLError, is_safe_webhook_url
 
 logger = logging.getLogger("ledger.webhooks")
 
@@ -70,6 +71,11 @@ async def fire_event(
 
 async def _deliver(hook: Webhook, event_type: str, payload: dict) -> None:
     """Send HMAC-signed POST to webhook URL."""
+    # Re-validate at delivery time too — guards against DNS rebinding and any
+    # rows that predate registration-time SSRF validation.
+    if not is_safe_webhook_url(hook.url):
+        raise UnsafeURLError(f"refusing to deliver to non-public URL: {hook.url[:60]}")
+
     body = json.dumps(
         {
             "event": event_type,

@@ -15,9 +15,9 @@ function ConfidenceBadge({ confidence }) {
   if (confidence == null) return null;
   const pct = Math.round(confidence * 100);
   const [color, bg] =
-    confidence >= 0.8 ? ["#10b981", "#ecfdf5"] :
-    confidence >= 0.6 ? ["#f59e0b", "#fffbeb"] :
-                        ["#ef4444", "#fef2f2"];
+    confidence >= 0.8 ? ["var(--positive)", "var(--positive-soft)"] :
+    confidence >= 0.6 ? ["var(--warning)", "rgba(250,204,21,0.12)"] :
+                        ["var(--negative)", "var(--negative-soft)"];
   return (
     <span style={{
       fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 8,
@@ -77,16 +77,16 @@ function RecategorizeDropdown({ tx, onSave }) {
             <button key={cat} onClick={() => save(cat)}
               style={{
                 display: "block", width: "100%", textAlign: "left", padding: "8px 14px",
-                background: cat === tx.category ? "var(--accent-light)" : "none",
+                background: cat === tx.category ? "var(--positive-soft)" : "none",
                 border: "none", fontSize: 13, cursor: "pointer", color: "var(--text-primary)",
                 fontWeight: cat === tx.category ? 700 : 400,
               }}
               onMouseEnter={e => e.currentTarget.style.background = "var(--surface-secondary)"}
-              onMouseLeave={e => e.currentTarget.style.background = cat === tx.category ? "var(--accent-light)" : "none"}
+              onMouseLeave={e => e.currentTarget.style.background = cat === tx.category ? "var(--positive-soft)" : "none"}
             >
-              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLORS[cat] || "#94a3b8", marginRight: 8 }} />
+              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLORS[cat] || "var(--text-secondary)", marginRight: 8 }} />
               {cat}
-              {cat === tx.category && <CheckCircle size={11} style={{ marginLeft: 6, color: "var(--accent)", verticalAlign: "middle" }} />}
+              {cat === tx.category && <CheckCircle size={11} style={{ marginLeft: 6, color: "var(--primary)", verticalAlign: "middle" }} />}
             </button>
           ))}
         </div>
@@ -186,7 +186,7 @@ function ReceiptUploadModal({ onClose, onImport, toast }) {
           onDrop={handleDrop}
           onClick={() => document.getElementById("receipt-input").click()}
           style={{
-            border: `2px dashed ${preview ? "var(--accent)" : "var(--border)"}`,
+            border: `2px dashed ${preview ? "var(--primary)" : "var(--border)"}`,
             borderRadius: 16, padding: preview ? 0 : "36px 24px",
             textAlign: "center", cursor: "pointer",
             background: preview ? "transparent" : "var(--bg)",
@@ -215,7 +215,7 @@ function ReceiptUploadModal({ onClose, onImport, toast }) {
         {result && (
           <div style={{
             marginTop: 16, padding: "14px 16px", borderRadius: 12,
-            background: "var(--accent-light)", border: "1px solid var(--accent)",
+            background: "var(--positive-soft)", border: "1px solid var(--primary)",
           }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 10 }}>
               ✅ Receipt Scanned
@@ -533,9 +533,9 @@ export default function Transactions() {
             {importStatus && (
               <div style={{
                 padding: "14px 18px", borderRadius: 12, fontSize: 14, fontWeight: 600,
-                background: importStatus === "done" ? "#ecfdf5" : importStatus === "failed" ? "#fff1f2" : "#eff6ff",
-                color: importStatus === "done" ? "#059669" : importStatus === "failed" ? "#e11d48" : "#4f46e5",
-                border: `1px solid ${importStatus === "done" ? "#a7f3d0" : importStatus === "failed" ? "#fecdd3" : "#c7d2fe"}`,
+                background: importStatus === "done" ? "var(--positive-soft)" : importStatus === "failed" ? "var(--negative-soft)" : "rgba(56,189,248,0.12)",
+                color: importStatus === "done" ? "var(--positive)" : importStatus === "failed" ? "var(--negative)" : "var(--info)",
+                border: `1px solid ${importStatus === "done" ? "rgba(168,255,47,0.3)" : importStatus === "failed" ? "rgba(255,45,45,0.4)" : "rgba(56,189,248,0.3)"}`,
               }}>
                 {importStatus === "processing" && "⏳ Processing your statement…"}
                 {importStatus === "done"       && "✅ Import complete!"}
@@ -552,7 +552,7 @@ export default function Transactions() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div className="chart-title">Recent Transactions</div>
             {selectedIds.size > 0 && (
-              <span style={{ background: "var(--accent)", color: "white", fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 99, lineHeight: 1.8 }}>
+              <span style={{ background: "var(--primary)", color: "white", fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 99, lineHeight: 1.8 }}>
                 {selectedIds.size} selected
               </span>
             )}
@@ -621,7 +621,7 @@ export default function Transactions() {
             <div key={tx.id}
               className={`tx-item${isSelected ? " selected" : ""}${isDeleting ? " tx-deleting" : ""}`}
               onClick={(e) => { if (e.target.closest("button") || e.target.closest(".tx-checkbox")) return; toggleSelect(tx.id); }}
-              style={{ cursor: "pointer", borderLeft: isAnomaly ? "3px solid #f59e0b" : "3px solid transparent" }}
+              style={{ cursor: "pointer", borderLeft: isAnomaly ? "3px solid var(--warning)" : "3px solid transparent" }}
             >
               {/* Checkbox */}
               <div className="tx-checkbox-wrap" onClick={(e) => e.stopPropagation()}>
@@ -633,13 +633,13 @@ export default function Transactions() {
                 {tx.date}
                 {isAnomaly && (
                   <span title="Anomaly detected" style={{ marginLeft: 4, verticalAlign: "middle" }}>
-                    <AlertTriangle size={11} style={{ color: "#f59e0b" }} />
+                    <AlertTriangle size={11} style={{ color: "var(--warning)" }} />
                   </span>
                 )}
               </span>
 
               <span className="tx-cat-wrap" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLORS[tx.category] || "#94a3b8", flexShrink: 0 }} />
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLORS[tx.category] || "var(--text-secondary)", flexShrink: 0 }} />
                 <span style={{ color: "var(--text-secondary)", fontSize: 13, fontWeight: 500 }}>{tx.category}</span>
               </span>
 
@@ -695,7 +695,7 @@ export default function Transactions() {
       {/* Floating bulk action bar */}
       {selectedIds.size > 0 && !undoState && (
         <div className="floating-action-bar">
-          <CheckSquare size={18} style={{ color: "var(--accent)", flexShrink: 0 }} />
+          <CheckSquare size={18} style={{ color: "var(--primary)", flexShrink: 0 }} />
           <span>{selectedIds.size} transaction{selectedIds.size > 1 ? "s" : ""} selected</span>
           <button className="btn-clear-selection" onClick={clearSelection}>Clear</button>
           <button className="btn-delete-bulk" onClick={requestBulkDelete}>

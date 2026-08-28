@@ -11,11 +11,11 @@ import {
 
 
 const TYPE_META = {
-  stocks:       { Icon: BarChart3,  color: "#4f46e5", bg: "#eff6ff",  label: "Stocks" },
-  mutual_funds: { Icon: PiggyBank,  color: "#10b981", bg: "#ecfdf5",  label: "Mutual Funds" },
-  crypto:       { Icon: Bitcoin,    color: "#f59e0b", bg: "#fffbeb",  label: "Crypto" },
-  fixed_deposit:{ Icon: Landmark,   color: "#6366f1", bg: "#eef2ff",  label: "Fixed Deposit" },
-  gold:         { Icon: Award,      color: "#eab308", bg: "#fefce8",  label: "Gold" },
+  stocks:       { Icon: BarChart3,  color: "var(--info)", bg: "rgba(56,189,248,0.12)",  label: "Stocks" },
+  mutual_funds: { Icon: PiggyBank,  color: "var(--positive)", bg: "var(--positive-soft)",  label: "Mutual Funds" },
+  crypto:       { Icon: Bitcoin,    color: "var(--warning)", bg: "rgba(250,204,21,0.12)",  label: "Crypto" },
+  fixed_deposit:{ Icon: Landmark,   color: "var(--info)", bg: "rgba(56,189,248,0.12)",  label: "Fixed Deposit" },
+  gold:         { Icon: Award,      color: "var(--warning)", bg: "rgba(250,204,21,0.12)",  label: "Gold" },
 };
 
 export default function Investments() {
@@ -161,7 +161,7 @@ export default function Investments() {
                   <PieChart>
                     <Pie data={analytics.allocation} dataKey="value" innerRadius={55} outerRadius={82} paddingAngle={3} strokeWidth={0}>
                       {analytics.allocation.map((a, i) => {
-                        const colors = ["#6366f1","#10b981","#f59e0b","#ef4444","#8b5cf6"];
+                        const colors = ["var(--info)","var(--positive)","var(--warning)","var(--negative)","var(--info)"];
                         return <Cell key={a.asset_type} fill={colors[i % colors.length]} />;
                       })}
                     </Pie>
@@ -189,28 +189,28 @@ export default function Investments() {
                   label: "Total Return",
                   val: analytics.total_return_pct != null ? `${analytics.total_return_pct > 0 ? "+" : ""}${analytics.total_return_pct?.toFixed(1)}%` : "—",
                   sub: "vs invested capital",
-                  color: analytics.total_return_pct >= 0 ? "#10b981" : "#ef4444",
+                  color: analytics.total_return_pct >= 0 ? "var(--positive)" : "var(--negative)",
                   Icon: TrendingUp,
                 },
                 {
                   label: "Sharpe Ratio",
                   val: analytics.sharpe_ratio != null ? analytics.sharpe_ratio.toFixed(2) : "—",
                   sub: analytics.sharpe_ratio >= 1 ? "Excellent risk-adjusted return" : analytics.sharpe_ratio >= 0 ? "Acceptable" : "Below risk-free rate",
-                  color: "#6366f1",
+                  color: "var(--info)",
                   Icon: Activity,
                 },
                 {
                   label: "XIRR",
                   val: analytics.xirr != null ? `${(analytics.xirr * 100).toFixed(1)}%` : "—",
                   sub: "Annualized IRR",
-                  color: "#f59e0b",
+                  color: "var(--warning)",
                   Icon: Zap,
                 },
                 {
                   label: "Max Drawdown",
                   val: analytics.max_drawdown_pct != null ? `${analytics.max_drawdown_pct.toFixed(1)}%` : "—",
                   sub: "Peak-to-trough loss",
-                  color: "#ef4444",
+                  color: "var(--negative)",
                   Icon: TrendingDown,
                 },
               ].map(({ label, val, sub, color, Icon }) => (
@@ -232,17 +232,17 @@ export default function Investments() {
           {(analytics.best_performer || analytics.worst_performer) && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {analytics.best_performer && (
-                <div className="card" style={{ padding: "14px 18px", borderLeft: "3px solid #10b981" }}>
-                  <div style={{ fontSize: 11, color: "#10b981", fontWeight: 700, marginBottom: 4 }}>🏆 Best Performer</div>
+                <div className="card" style={{ padding: "14px 18px", borderLeft: "3px solid var(--positive)" }}>
+                  <div style={{ fontSize: 11, color: "var(--positive)", fontWeight: 700, marginBottom: 4 }}>🏆 Best Performer</div>
                   <div style={{ fontSize: 15, fontWeight: 700 }}>{analytics.best_performer.symbol}</div>
-                  <div style={{ fontSize: 13, color: "#10b981", fontWeight: 600 }}>+{analytics.best_performer.return_pct?.toFixed(1)}% return</div>
+                  <div style={{ fontSize: 13, color: "var(--positive)", fontWeight: 600 }}>+{analytics.best_performer.return_pct?.toFixed(1)}% return</div>
                 </div>
               )}
               {analytics.worst_performer && (
-                <div className="card" style={{ padding: "14px 18px", borderLeft: "3px solid #ef4444" }}>
-                  <div style={{ fontSize: 11, color: "#ef4444", fontWeight: 700, marginBottom: 4 }}>📉 Worst Performer</div>
+                <div className="card" style={{ padding: "14px 18px", borderLeft: "3px solid var(--negative)" }}>
+                  <div style={{ fontSize: 11, color: "var(--negative)", fontWeight: 700, marginBottom: 4 }}>📉 Worst Performer</div>
                   <div style={{ fontSize: 15, fontWeight: 700 }}>{analytics.worst_performer.symbol}</div>
-                  <div style={{ fontSize: 13, color: "#ef4444", fontWeight: 600 }}>{analytics.worst_performer.return_pct?.toFixed(1)}% return</div>
+                  <div style={{ fontSize: 13, color: "var(--negative)", fontWeight: 600 }}>{analytics.worst_performer.return_pct?.toFixed(1)}% return</div>
                 </div>
               )}
             </div>
@@ -368,7 +368,7 @@ export default function Investments() {
                           <td style={{ padding: '14px 16px' }}>{money(h.buy_price)}</td>
                           <td style={{ padding: '14px 16px', fontWeight: 600 }}>{money(h.current_price)}</td>
                           <td style={{ padding: '14px 16px', color: pnlColor(pnl), fontWeight: 700 }}>
-                            <span style={{ background: pnl >= 0 ? '#ecfdf5' : '#fff1f2', padding: '4px 10px', borderRadius: 8 }}>
+                            <span style={{ background: pnl >= 0 ? 'var(--positive-soft)' : 'var(--negative-soft)', padding: '4px 10px', borderRadius: 8 }}>
                               {pnl >= 0 ? "+" : ""}{money(pnl)} ({pnlPct}%)
                             </span>
                           </td>
@@ -414,7 +414,7 @@ export default function Investments() {
                         </div>
                         <div className="holding-mobile-pnl" style={{ color: pnlColor(pnl) }}>
                           <div className="holding-mobile-label">Total P&L</div>
-                          <span style={{ background: pnl >= 0 ? '#ecfdf5' : '#fff1f2', padding: '4px 10px', borderRadius: 8, fontSize: 13, fontWeight: 700 }}>
+                          <span style={{ background: pnl >= 0 ? 'var(--positive-soft)' : 'var(--negative-soft)', padding: '4px 10px', borderRadius: 8, fontSize: 13, fontWeight: 700 }}>
                             {pnl >= 0 ? "+" : ""}{money(pnl)} ({pnlPct}%)
                           </span>
                         </div>

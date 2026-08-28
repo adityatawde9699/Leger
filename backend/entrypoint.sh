@@ -6,12 +6,13 @@ echo "Running database migrations..."
 python -c "
 from app.db import Base, engine
 from app.models import *  # noqa: import all models so they register
-
-# Add new columns if they don't exist (safe for SQLite & Postgres)
 from sqlalchemy import text, inspect
-inspector = inspect(engine)
-existing_cols = [c['name'] for c in inspector.get_columns('users')]
 
+# 1. Create any missing tables first (fresh DBs get every column from the model).
+Base.metadata.create_all(bind=engine)
+
+# 2. Ad-hoc column adds for pre-existing 'users' tables (Alembic is not configured).
+existing_cols = [c['name'] for c in inspect(engine).get_columns('users')]
 with engine.begin() as conn:
     if 'display_name' not in existing_cols:
         conn.execute(text('ALTER TABLE users ADD COLUMN display_name VARCHAR(128)'))
@@ -23,8 +24,9 @@ with engine.begin() as conn:
         except Exception:
             conn.execute(text('ALTER TABLE users ADD COLUMN currency_preference VARCHAR(3)'))
         print('  + Added users.currency_preference')
-
-Base.metadata.create_all(bind=engine)
+    if 'avatar_url' not in existing_cols:
+        conn.execute(text('ALTER TABLE users ADD COLUMN avatar_url TEXT'))
+        print('  + Added users.avatar_url')
 print('  Migrations OK')
 "
 
