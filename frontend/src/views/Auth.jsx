@@ -1,50 +1,29 @@
 import React, { useState } from 'react';
-import { supabase } from '../supabase';
-import { Mail, Lock, Loader2, ShieldCheck } from 'lucide-react';
+import { signInWithPopup } from 'firebase/auth';
+import { firebaseAuth, googleProvider } from '../firebase';
+import { Loader2, ShieldCheck } from 'lucide-react';
 import { LedgerLogo } from '../components/ui';
 
 export default function Auth() {
-  const [isLogin, setIsLogin] = useState(true);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [message, setMessage] = useState(null);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleGoogleSignIn = async () => {
     setLoading(true);
     setError(null);
-    setMessage(null);
 
     try {
       if (import.meta.env.VITE_AUTH_PROVIDER === 'dev') {
         const session = {
           access_token: "dev-user",
-          user: { email: email || "dev@ledger.local" },
+          user: { email: "dev@ledger.local" },
         };
         localStorage.setItem("dev-session", JSON.stringify(session));
         window.location.reload();
         return;
       }
 
-      if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/`,
-          },
-        });
-        if (error) throw error;
-        setMessage('Check your email for the confirmation link!');
-      }
+      await signInWithPopup(firebaseAuth, googleProvider);
     } catch (err) {
       setError(err.message || 'An error occurred during authentication.');
     } finally {
@@ -64,53 +43,9 @@ export default function Auth() {
         </div>
 
         {error && <div className="auth-alert error">{error}</div>}
-        {message && <div className="auth-alert success">{message}</div>}
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div className="form-field" style={{ marginBottom: 0 }}>
-            <label className="form-label">Email</label>
-            <div className="input-prefix-wrap">
-              <Mail size={18} className="input-prefix" />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                style={{ paddingLeft: 44 }}
-              />
-            </div>
-          </div>
-          
-          <div className="form-field" style={{ marginBottom: 0 }}>
-            <label className="form-label">Password</label>
-            <div className="input-prefix-wrap">
-              <Lock size={18} className="input-prefix" />
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                style={{ paddingLeft: 44 }}
-              />
-            </div>
-          </div>
-
-          <button type="submit" className="btn-primary full-width" style={{ marginTop: '8px', padding: '14px' }} disabled={loading}>
-            {loading ? <Loader2 size={18} className="spin" /> : isLogin ? 'Sign In' : 'Create Account'}
-          </button>
-        </form>
-
-        <div style={{ marginTop: '32px', textAlign: 'center' }}>
-          <button 
-            type="button" 
-            className="btn-link" 
-            onClick={() => setIsLogin(!isLogin)}
-          >
-            {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-          </button>
-        </div>
+        <button type="button" className="btn-primary full-width" onClick={handleGoogleSignIn} disabled={loading} style={{ marginTop: '8px', padding: '14px' }}>
+          {loading ? <Loader2 size={18} className="spin" /> : 'Continue with Google'}
+        </button>
         
         <div style={{ marginTop: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 12, fontWeight: 500 }}>
           <ShieldCheck size={14} /> Secure & Encrypted

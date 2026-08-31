@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { supabase } from "./supabase";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { firebaseAuth } from "./firebase";
 import { apiFetch, API_BASE, EXPENSE_CATEGORIES, setAuthToken, today } from "./lib";
 import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
 import Auth from "./views/Auth";
@@ -70,13 +71,6 @@ function pickGradient(str = "") {
   return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
 }
 
-function clearSupabaseStorage() {
-  if (typeof window === "undefined") return;
-  Object.keys(window.localStorage)
-    .filter((k) => k.startsWith("sb-") || k.includes("supabase"))
-    .forEach((k) => window.localStorage.removeItem(k));
-}
-
 function ViewFallback() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingTop: 16 }}>
@@ -122,22 +116,12 @@ export default function App() {
       return;
     }
 
-    supabase.auth.getSession()
-      .then(({ data: { session } }) => {
-        setSession(session);
-        setAuthToken(session?.access_token || null);
-      })
-      .catch(() => { clearSupabaseStorage(); setSession(null); setAuthToken(null); })
-      .finally(() => setLoadingAuth(false));
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "TOKEN_REFRESH_FAILED") {
-        clearSupabaseStorage(); setSession(null); setAuthToken(null); return;
-      }
-      setSession(session);
-      setAuthToken(session?.access_token || null);
+    const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+      setSession(user);
+      setAuthToken(user ? await user.getIdToken() : null);
+      setLoadingAuth(false);
     });
-    return () => subscription.unsubscribe();
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -161,7 +145,7 @@ export default function App() {
     if (import.meta.env.VITE_AUTH_PROVIDER === "dev") {
       localStorage.removeItem("dev-session"); setSession(null); setAuthToken(null); return;
     }
-    await supabase.auth.signOut();
+    await signOut(firebaseAuth);
   };
 
   const renderView = () => {
