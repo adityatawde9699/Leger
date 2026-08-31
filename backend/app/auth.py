@@ -1,5 +1,4 @@
-# ── Supabase Auth Verification ────────────────────────────────────────────────
-# Supabase now uses ES256/RS256 asymmetric signatures for new projects, verified via JWKS.
+import json
 from functools import lru_cache
 
 import httpx
@@ -38,9 +37,17 @@ def _verify_token(token: str) -> UserContext:
         try:
             import firebase_admin
             from firebase_admin import auth as firebase_auth
+            from firebase_admin import credentials
 
             if not firebase_admin._apps:
-                firebase_admin.initialize_app()
+                if settings.firebase_service_account_json:
+                    service_account = json.loads(settings.firebase_service_account_json)
+                    firebase_admin.initialize_app(
+                        credentials.Certificate(service_account),
+                        {"projectId": settings.firebase_project_id} if settings.firebase_project_id else None,
+                    )
+                else:
+                    firebase_admin.initialize_app()
             decoded = firebase_auth.verify_id_token(token)
             return UserContext(id=decoded["uid"], email=decoded.get("email"))
         except Exception as e:

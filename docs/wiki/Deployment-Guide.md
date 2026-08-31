@@ -5,7 +5,9 @@
 ### Environment
 ```bash
 ENVIRONMENT=production
-AUTH_PROVIDER=supabase     # NEVER dev in production
+AUTH_PROVIDER=firebase     # Google sign-in; NEVER dev in production
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
 DATABASE_URL=postgresql+psycopg://user:pass@host:5432/ledger?sslmode=require
 CORS_ORIGINS=https://your-domain.com
 ```
