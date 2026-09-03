@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { onAuthStateChanged, signOut } from "firebase/auth";
+import { onIdTokenChanged, signOut } from "firebase/auth";
 import { firebaseAuth } from "./firebase";
 import { apiFetch, API_BASE, EXPENSE_CATEGORIES, setAuthToken, today } from "./lib";
 import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
@@ -116,9 +116,9 @@ export default function App() {
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
-      setSession(user);
+    const unsubscribe = onIdTokenChanged(firebaseAuth, async (user) => {
       setAuthToken(user ? await user.getIdToken() : null);
+      setSession(user);
       setLoadingAuth(false);
     });
     return unsubscribe;
