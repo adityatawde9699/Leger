@@ -49,7 +49,12 @@ def _verify_token(token: str) -> UserContext:
                 else:
                     firebase_admin.initialize_app()
             decoded = firebase_auth.verify_id_token(token)
-            return UserContext(id=decoded["uid"], email=decoded.get("email"))
+            return UserContext(
+                id=decoded["uid"],
+                email=decoded.get("email"),
+                name=decoded.get("name"),
+                picture=decoded.get("picture")
+            )
         except Exception as e:
             raise HTTPException(status_code=401, detail=f"Firebase auth failed: {e}")
 
@@ -83,6 +88,21 @@ def get_current_user(
     # Upsert user record
     existing = db.get(User, user.id)
     if not existing:
-        db.add(User(id=user.id, email=user.email))
+        db.add(User(
+            id=user.id,
+            email=user.email,
+            display_name=user.name,
+            avatar_url=user.picture
+        ))
         db.commit()
+    else:
+        updated = False
+        if not existing.display_name and user.name:
+            existing.display_name = user.name
+            updated = True
+        if not existing.avatar_url and user.picture:
+            existing.avatar_url = user.picture
+            updated = True
+        if updated:
+            db.commit()
     return user

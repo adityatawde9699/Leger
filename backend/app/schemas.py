@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field, field_validator
 class UserContext(BaseModel):
     id: str
     email: str | None = None
+    name: str | None = None
+    picture: str | None = None
 
 
 # ── Profile ───────────────────────────────────────────────────────────────────
