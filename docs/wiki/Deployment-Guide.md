@@ -5,9 +5,8 @@
 ### Environment
 ```bash
 ENVIRONMENT=production
-AUTH_PROVIDER=firebase     # Google sign-in; NEVER dev in production
-FIREBASE_PROJECT_ID=your-firebase-project-id
-FIREBASE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
+AUTH_PROVIDER=google       # Google Identity Services; NEVER dev in production
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 DATABASE_URL=postgresql+psycopg://user:pass@host:5432/ledger?sslmode=require
 CORS_ORIGINS=https://your-domain.com
 ```
@@ -28,6 +27,10 @@ gunicorn app.main:app --worker-class uvicorn.workers.UvicornWorker --workers 4 -
 ```
 
 ### Frontend Deploy
+Set `VITE_AUTH_PROVIDER=google` and `VITE_GOOGLE_CLIENT_ID` to the same Web
+OAuth client ID. In Google Cloud Console, add the deployed frontend URL and
+local development URL to the client's **Authorized JavaScript origins**.
+
 ```bash
 npm run build
 # Deploy dist/ to Vercel, Netlify, or Cloudflare Pages

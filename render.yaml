@@ -16,10 +16,8 @@ services:
       - key: DATABASE_URL
         sync: false     # set in Render dashboard → secret
       - key: AUTH_PROVIDER
-        sync: false     # firebase
-      - key: FIREBASE_PROJECT_ID
-        sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        value: google
+      - key: GOOGLE_CLIENT_ID
         sync: false
       - key: CORS_ORIGINS
         sync: false     # comma-separated, e.g. https://your-app.vercel.app

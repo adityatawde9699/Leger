@@ -12,8 +12,7 @@ class Settings(BaseSettings):
     # Auth
     auth_provider: str = "dev"
     supabase_jwks_url: str | None = None
-    firebase_project_id: str | None = None
-    firebase_service_account_json: str | None = None
+    google_client_id: str | None = None
 
     # AI Providers (free tiers)
     groq_api_key: str | None = None
@@ -97,7 +96,13 @@ class Settings(BaseSettings):
             if self.auth_provider == "dev":
                 print(
                     "FATAL: AUTH_PROVIDER=dev is not allowed in production. "
-                    "Set AUTH_PROVIDER=firebase.",
+                    "Set AUTH_PROVIDER=google.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if self.auth_provider == "google" and not self.google_client_id:
+                print(
+                    "FATAL: GOOGLE_CLIENT_ID is required when AUTH_PROVIDER=google.",
                     file=sys.stderr,
                 )
                 sys.exit(1)

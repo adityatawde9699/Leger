@@ -1,4 +1,3 @@
-import json
 from functools import lru_cache
 
 import httpx
@@ -33,34 +32,29 @@ def _verify_token(token: str) -> UserContext:
             raise HTTPException(status_code=401, detail="Token required even in dev mode")
         return UserContext(id=token, email=f"{token}@dev.ledger.local")
 
-    if provider in ("firebase", "google"):
+    if provider == "google":
         try:
-            import firebase_admin
-            from firebase_admin import auth as firebase_auth
-            from firebase_admin import credentials
+            from google.auth.transport.requests import Request as GoogleRequest
+            from google.oauth2 import id_token
 
-            if not firebase_admin._apps:
-                if settings.firebase_service_account_json:
-                    service_account = json.loads(settings.firebase_service_account_json)
-                    firebase_admin.initialize_app(
-                        credentials.Certificate(service_account),
-                        {"projectId": settings.firebase_project_id} if settings.firebase_project_id else None,
-                    )
-                else:
-                    options = {"projectId": settings.firebase_project_id} if settings.firebase_project_id else None
-                    if options:
-                        firebase_admin.initialize_app(options=options)
-                    else:
-                        firebase_admin.initialize_app()
-            decoded = firebase_auth.verify_id_token(token)
+            if not settings.google_client_id:
+                raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID not configured")
+
+            decoded = id_token.verify_oauth2_token(
+                token,
+                GoogleRequest(),
+                settings.google_client_id,
+            )
             return UserContext(
-                id=decoded["uid"],
+                id=decoded["sub"],
                 email=decoded.get("email"),
                 name=decoded.get("name"),
                 picture=decoded.get("picture")
             )
+        except HTTPException:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=401, detail=f"Firebase auth failed: {e}")
+            raise HTTPException(status_code=401, detail="Google ID token is invalid or expired") from e
 
     if provider == "supabase":
         try:

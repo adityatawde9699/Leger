@@ -128,14 +128,13 @@ CEREBRAS_API_KEY="your_cerebras_key"
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | Yes | `sqlite:///./ledger_dev.db` | PostgreSQL or SQLite connection string |
-| `AUTH_PROVIDER` | Yes | `dev` | Auth mode: `dev` or `firebase` (Google sign-in) |
+| `AUTH_PROVIDER` | Yes | `dev` | Auth mode: `dev` or `google` (Google Identity Services) |
 | `ENVIRONMENT` | No | `development` | `development`, `staging`, or `production` |
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Comma-separated allowed origins |
 | `GROQ_API_KEY` | No | — | Groq API key (primary) |
 | `GEMINI_API_KEY` | No | — | Gemini API key (multimodal extraction) |
 | `CEREBRAS_API_KEY` | No | — | Cerebras API key (high speed fallback) |
-| `FIREBASE_PROJECT_ID` | If Firebase | — | Firebase project ID for JWT verification |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | If Firebase on Render | — | Firebase Admin service-account JSON secret |
+| `GOOGLE_CLIENT_ID` | If Google auth | — | Google Cloud Web OAuth client ID used to verify ID tokens |
 | `REDIS_URL` | No | `redis://localhost:6379/0` | Redis URL for caching |
 | `ADVISOR_RATE_LIMIT` | No | `10/minute` | Rate limit for Amadeus AI endpoint |
 | `DEBUG` | No | `false` | Enable debug logging |

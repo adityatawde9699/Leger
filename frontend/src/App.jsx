@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { onIdTokenChanged, signOut } from "firebase/auth";
-import { firebaseAuth } from "./firebase";
 import { apiFetch, API_BASE, EXPENSE_CATEGORIES, setAuthToken, today } from "./lib";
+import { clearGoogleSession, loadGoogleSession } from "./googleAuth";
 import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
 import Auth from "./views/Auth";
 import CommandPalette from "./components/CommandPalette";
@@ -116,12 +115,18 @@ export default function App() {
       return;
     }
 
-    const unsubscribe = onIdTokenChanged(firebaseAuth, async (user) => {
-      setAuthToken(user ? await user.getIdToken() : null);
-      setSession(user);
-      setLoadingAuth(false);
-    });
-    return unsubscribe;
+    const googleSession = loadGoogleSession();
+    setSession(googleSession);
+    setAuthToken(googleSession?.access_token || null);
+    setLoadingAuth(false);
+
+    if (!googleSession) return undefined;
+    const expiryTimer = window.setTimeout(() => {
+      clearGoogleSession();
+      setAuthToken(null);
+      setSession(null);
+    }, Math.max(0, googleSession.expires_at - Date.now()));
+    return () => window.clearTimeout(expiryTimer);
   }, []);
 
   useEffect(() => {
@@ -145,7 +150,9 @@ export default function App() {
     if (import.meta.env.VITE_AUTH_PROVIDER === "dev") {
       localStorage.removeItem("dev-session"); setSession(null); setAuthToken(null); return;
     }
-    await signOut(firebaseAuth);
+    clearGoogleSession();
+    setSession(null);
+    setAuthToken(null);
   };
 
   const renderView = () => {

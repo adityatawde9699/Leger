@@ -34,7 +34,7 @@ Please report security issues responsibly:
 ## Security Architecture
 
 ### Authentication
-- JWT-based authentication with multi-provider support (Supabase, Firebase)
+- JWT-based authentication with Google Identity Services (plus local dev mode)
 - `AUTH_PROVIDER=dev` is **hard-blocked** in production environments
 - All API endpoints require `Authorization: Bearer <token>` header
 
