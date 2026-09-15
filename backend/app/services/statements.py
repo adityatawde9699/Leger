@@ -1,5 +1,5 @@
 """
-statements.py — Bank statement parser (CSV + PDF).
+statements.py — Bank statement parser (CSV + Excel/OpenDocument + PDF).
 
 PDF parsing strategy (in order of preference):
   1. pdfplumber structured table extraction (for digital/text PDFs)
@@ -437,14 +437,21 @@ def parse_csv(content: bytes) -> list[dict]:
     return _normalize_frame(df)
 
 
-def parse_excel(content: bytes) -> list[dict]:
+def parse_excel(content: bytes, file_format: str | None = None) -> list[dict]:
     import pandas as pd
 
     rows: list[dict] = []
-    workbook = pd.read_excel(BytesIO(content), sheet_name=None, dtype=str, keep_default_na=False)
+    engine = "odf" if file_format == "ods" else None
+    workbook = pd.read_excel(
+        BytesIO(content),
+        sheet_name=None,
+        dtype=str,
+        keep_default_na=False,
+        engine=engine,
+    )
     for sheet_name, df in workbook.items():
         parsed = _normalize_frame(df)
-        logger.info("Excel sheet parsed sheet=%s rows=%d", sheet_name, len(parsed))
+        logger.info("Spreadsheet parsed format=%s sheet=%s rows=%d", file_format or "excel", sheet_name, len(parsed))
         rows.extend(parsed)
     return rows
 

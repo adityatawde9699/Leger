@@ -726,8 +726,8 @@ async def import_statement(
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
     ext = file.filename.lower().rsplit(".", 1)[-1]
-    if ext not in ("csv", "pdf", "xls", "xlsx"):
-        raise HTTPException(status_code=400, detail="Upload a CSV, Excel, or PDF statement")
+    if ext not in ("csv", "pdf", "xls", "xlsx", "ods"):
+        raise HTTPException(status_code=400, detail="Upload a CSV, Excel, OpenDocument, or PDF statement")
     max_bytes = settings.max_upload_mb * 1024 * 1024
     # Fast-path reject when the client advertises a size; re-checked authoritatively
     # below since UploadFile.size is often None.
@@ -750,8 +750,8 @@ async def import_statement(
         try:
             if ext == "csv":
                 rows = parse_csv(content)
-            elif ext in ("xls", "xlsx"):
-                rows = parse_excel(content)
+            elif ext in ("xls", "xlsx", "ods"):
+                rows = parse_excel(content, ext)
             else:
                 rows = await parse_pdf(content)
 

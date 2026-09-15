@@ -5,7 +5,7 @@ const ACTIONS = [
   { id: "add-expense", label: "Add expense", desc: "Log a new expense transaction", view: "transactions", Icon: Plus },
   { id: "add-income", label: "Add income", desc: "Log new income", view: "transactions", Icon: Plus },
   { id: "import-sms", label: "Import SMS messages", desc: "Parse UPI SMS", view: "transactions", Icon: Plus },
-  { id: "import-statement", label: "Upload bank statement", desc: "Import CSV or PDF", view: "transactions", Icon: Plus },
+  { id: "import-statement", label: "Upload bank statement", desc: "Import CSV, spreadsheet, or PDF", view: "transactions", Icon: Plus },
   { id: "view-dashboard", label: "Go to Dashboard", desc: "Financial overview", view: "dashboard", Icon: LayoutDashboard },
   { id: "view-budgets", label: "Goals & Budgets", desc: "Manage spending limits", view: "budgets", Icon: Target },
   { id: "view-analytics", label: "Analytics", desc: "Spending trends & patterns", view: "analytics", Icon: BarChart3 },

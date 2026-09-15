@@ -519,15 +519,15 @@ export default function Transactions() {
         {activeTab === "statement" && (
           <div>
             <p style={{ color: "var(--text-secondary)", fontSize: 14, marginBottom: 20, lineHeight: 1.6 }}>
-              Upload your bank statement in CSV, Excel, or PDF format. We'll automatically extract and categorize your transactions.
+              Upload your bank statement in CSV, Excel, OpenDocument, or PDF format. We'll automatically extract and categorize your transactions.
             </p>
             <div style={{ border: "2px dashed var(--border)", borderRadius: "var(--radius-sm)", padding: "40px 24px", textAlign: "center", marginBottom: 16, background: "var(--bg)" }}>
               <FileText size={32} style={{ color: "var(--text-muted)", marginBottom: 12 }} />
               <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>Drop your file here</div>
-              <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20 }}>Supports CSV, XLS, XLSX, PDF</div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20 }}>Supports CSV, XLS, XLSX, ODS, PDF</div>
               <label className="btn-secondary" style={{ cursor: "pointer", padding: "10px 24px" }}>
                 Browse File
-                <input type="file" accept=".csv,.xls,.xlsx,.pdf" onChange={uploadStatement} style={{ display: "none" }} />
+                <input type="file" accept=".csv,.xls,.xlsx,.ods,.pdf" onChange={uploadStatement} style={{ display: "none" }} />
               </label>
             </div>
             {importStatus && (
