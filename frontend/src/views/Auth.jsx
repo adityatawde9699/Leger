@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createGoogleSession, saveGoogleSession } from '../googleAuth';
-import { Loader2, ShieldCheck } from 'lucide-react';
+import { ArrowUpRight, ChartNoAxesCombined, Loader2, ScanLine, ShieldCheck, Sparkles } from 'lucide-react';
 import { LedgerLogo } from '../components/ui';
 
 export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [googleReady, setGoogleReady] = useState(false);
   const googleButtonRef = useRef(null);
   const isDev = import.meta.env.VITE_AUTH_PROVIDER === 'dev';
 
@@ -43,6 +44,7 @@ export default function Auth() {
         logo_alignment: 'left',
         width: String(Math.min(360, googleButtonRef.current.clientWidth || 360)),
       });
+      setGoogleReady(true);
     };
 
     const script = document.getElementById('google-identity-services');
@@ -68,28 +70,82 @@ export default function Auth() {
 
   return (
     <div className="auth-container">
-      <div className="auth-card">
-        <div className="auth-header">
-          <LedgerLogo size={56} className="auth-logo" />
-          <h2>Welcome to Ledger</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 15, fontWeight: 500 }}>
-            Your personal AI finance platform
-          </p>
-        </div>
+      <div className="auth-orb auth-orb-one" />
+      <div className="auth-orb auth-orb-two" />
 
-        {error && <div className="auth-alert error">{error}</div>}
-        {isDev ? (
-          <button type="button" className="btn-primary full-width" onClick={handleDevSignIn} disabled={loading} style={{ marginTop: '8px', padding: '14px' }}>
-            {loading ? <Loader2 size={18} className="spin" /> : 'Continue in development mode'}
-          </button>
-        ) : (
-          <div ref={googleButtonRef} style={{ marginTop: 8, minHeight: 44, display: 'flex', justifyContent: 'center' }} />
-        )}
-        
-        <div style={{ marginTop: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 12, fontWeight: 500 }}>
-          <ShieldCheck size={14} /> Secure & Encrypted
-        </div>
-      </div>
+      <main className="auth-shell">
+        <section className="auth-story">
+          <div className="auth-brand">
+            <LedgerLogo size={42} />
+            <span>Ledger</span>
+          </div>
+
+          <div className="auth-story-copy">
+            <div className="auth-kicker"><Sparkles size={14} /> Finance, made clear</div>
+            <h1>Your money.<br /><span>Finally in focus.</span></h1>
+            <p>Track every rupee, spot patterns early, and make confident decisions with one intelligent financial workspace.</p>
+
+            <div className="auth-feature-list">
+              <div className="auth-feature"><ChartNoAxesCombined size={18} /><span>Live spending intelligence</span></div>
+              <div className="auth-feature"><ScanLine size={18} /><span>Effortless statement imports</span></div>
+              <div className="auth-feature"><Sparkles size={18} /><span>Personal AI guidance</span></div>
+            </div>
+          </div>
+
+          <div className="auth-preview" aria-hidden="true">
+            <div className="auth-preview-top">
+              <div>
+                <span>MONTHLY OVERVIEW</span>
+                <strong>₹84,240</strong>
+              </div>
+              <div className="auth-preview-growth"><ArrowUpRight size={14} /> 12.4%</div>
+            </div>
+            <div className="auth-preview-chart">
+              {[38, 55, 46, 72, 61, 88, 78, 100].map((height, index) => (
+                <i key={index} style={{ height: `${height}%` }} />
+              ))}
+            </div>
+            <div className="auth-preview-meta"><span>Income</span><b>₹1,24,500</b><span>Saved</span><b className="positive">₹40,260</b></div>
+          </div>
+
+          <div className="auth-story-foot"><ShieldCheck size={15} /> Private by design · Your financial data stays yours</div>
+        </section>
+
+        <section className="auth-form-panel">
+          <div className="auth-mobile-brand">
+            <LedgerLogo size={38} />
+            <span>Ledger</span>
+          </div>
+
+          <div className="auth-card">
+            <div className="auth-header">
+              <div className="auth-secure-label"><span /> Secure access</div>
+              <h2>Welcome back</h2>
+              <p>Sign in to continue to your financial dashboard.</p>
+            </div>
+
+            {error && <div className="auth-alert error" role="alert">{error}</div>}
+            {isDev ? (
+              <button type="button" className="btn-primary auth-dev-button" onClick={handleDevSignIn} disabled={loading}>
+                {loading ? <Loader2 size={18} className="spin" /> : 'Continue in development mode'}
+              </button>
+            ) : (
+              <div className={`auth-google-wrap${googleReady ? ' ready' : ''}`}>
+                <div ref={googleButtonRef} className="auth-google-button" />
+              </div>
+            )}
+
+            <div className="auth-trust-note">
+              <ShieldCheck size={17} />
+              <span>Google verifies your identity.<br />Ledger never sees your password.</span>
+            </div>
+
+            <p className="auth-legal">By continuing, you agree to use Ledger responsibly and keep your account secure.</p>
+          </div>
+
+          <div className="auth-form-foot"><span>Encrypted connection</span><i /> <span>Privacy-first finance</span></div>
+        </section>
+      </main>
     </div>
   );
 }
