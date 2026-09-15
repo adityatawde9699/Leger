@@ -1,7 +1,9 @@
 from functools import lru_cache
+from threading import Lock
 
 import httpx
 from fastapi import Depends, Header, HTTPException
+from google.auth.exceptions import TransportError
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -10,11 +12,25 @@ from .models import User
 from .schemas import UserContext
 
 
+_google_verify_lock = Lock()
+
+
 @lru_cache(maxsize=1)
 def _get_supabase_jwks(url: str):
     response = httpx.get(url, timeout=10.0)
     response.raise_for_status()
     return response.json()
+
+
+@lru_cache(maxsize=1)
+def _get_google_request():
+    """Reuse Google's signing certificates according to their cache headers."""
+    import requests
+    from cachecontrol import CacheControl
+    from google.auth.transport.requests import Request as GoogleRequest
+
+    cached_session = CacheControl(requests.Session())
+    return GoogleRequest(session=cached_session)
 
 
 def _bearer(authorization: str | None) -> str:
@@ -34,17 +50,20 @@ def _verify_token(token: str) -> UserContext:
 
     if provider == "google":
         try:
-            from google.auth.transport.requests import Request as GoogleRequest
             from google.oauth2 import id_token
 
             if not settings.google_client_id:
                 raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID not configured")
 
-            decoded = id_token.verify_oauth2_token(
-                token,
-                GoogleRequest(),
-                settings.google_client_id,
-            )
+            # A newly started worker can receive many dashboard requests at once.
+            # Serialize verification so only the first request fills the shared
+            # certificate cache; subsequent requests validate locally.
+            with _google_verify_lock:
+                decoded = id_token.verify_oauth2_token(
+                    token,
+                    _get_google_request(),
+                    settings.google_client_id,
+                )
             return UserContext(
                 id=decoded["sub"],
                 email=decoded.get("email"),
@@ -53,6 +72,11 @@ def _verify_token(token: str) -> UserContext:
             )
         except HTTPException:
             raise
+        except TransportError as e:
+            raise HTTPException(
+                status_code=503,
+                detail="Google signing keys are temporarily unavailable",
+            ) from e
         except Exception as e:
             raise HTTPException(status_code=401, detail="Google ID token is invalid or expired") from e
 
