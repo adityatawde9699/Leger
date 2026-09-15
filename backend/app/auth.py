@@ -47,7 +47,11 @@ def _verify_token(token: str) -> UserContext:
                         {"projectId": settings.firebase_project_id} if settings.firebase_project_id else None,
                     )
                 else:
-                    firebase_admin.initialize_app()
+                    options = {"projectId": settings.firebase_project_id} if settings.firebase_project_id else None
+                    if options:
+                        firebase_admin.initialize_app(options=options)
+                    else:
+                        firebase_admin.initialize_app()
             decoded = firebase_auth.verify_id_token(token)
             return UserContext(
                 id=decoded["uid"],
