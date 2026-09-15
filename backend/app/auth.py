@@ -33,7 +33,7 @@ def _verify_token(token: str) -> UserContext:
             raise HTTPException(status_code=401, detail="Token required even in dev mode")
         return UserContext(id=token, email=f"{token}@dev.ledger.local")
 
-    if provider == "firebase":
+    if provider in ("firebase", "google"):
         try:
             import firebase_admin
             from firebase_admin import auth as firebase_auth
