@@ -647,13 +647,14 @@ def get_summary(
 # ── SMS Import ────────────────────────────────────────────────────────────────
 @app.post("/imports/sms", response_model=list[TransactionOut])
 @limiter.limit(settings.import_rate_limit)
-def import_sms(
+async def import_sms(
     request: Request,
     payload: SmsParseRequest,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     saved = []
+    pending_txs: list[Transaction] = []
     for message in payload.messages:
         parsed = parse_sms(message)
         if not parsed:
@@ -671,22 +672,45 @@ def import_sms(
             continue
         tx = Transaction(user_id=user.id, **parsed)
         db.add(tx)
-        saved.append(tx)
+        pending_txs.append(tx)
     db.commit()
-    for tx in saved:
+
+    # ── AI Categorization upgrade pass ────────────────────────────────────────
+    # parse_sms uses keyword rules — upgrade with the full 4-tier pipeline.
+    if pending_txs:
+        try:
+            db.flush()  # ensure tx.id is assigned before we reference it
+            user_overrides = get_user_overrides(db, user.id)
+            batch_input = [{"id": tx.id, "description": tx.description, "type": tx.type} for tx in pending_txs]
+            ai_results = await categorize_batch(batch_input, user_overrides=user_overrides)
+            ai_map = {r["id"]: r for r in ai_results}
+            for tx in pending_txs:
+                res = ai_map.get(tx.id)
+                if res and res.get("confidence", 0) >= 0.6 and res.get("category", "Other") != "Other":
+                    tx.category = res["category"]
+                    tx.confidence = res["confidence"]
+                if res and res.get("merchant"):
+                    tx.merchant_normalized = res["merchant"]
+            db.commit()
+        except Exception as ai_err:
+            logger.warning("SMS AI categorization pass failed: %s", ai_err)
+
+    for tx in pending_txs:
         db.refresh(tx)
+        saved.append(tx)
     logger.info("sms.import user=%s imported=%d", user.id, len(saved))
     return saved
 
 
 @app.post("/imports/sms/webhook", response_model=list[TransactionOut])
-def import_sms_webhook(
+async def import_sms_webhook(
     payload: SmsWebhookRequest,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Receive SMS payloads from an Android companion bridge and reuse the SMS parser."""
     saved = []
+    pending_txs: list[Transaction] = []
     for message in payload.messages:
         parsed = parse_sms(message)
         if not parsed:
@@ -706,10 +730,30 @@ def import_sms_webhook(
             continue
         tx = Transaction(user_id=user.id, **parsed)
         db.add(tx)
-        saved.append(tx)
+        pending_txs.append(tx)
     db.commit()
-    for tx in saved:
+
+    # ── AI Categorization upgrade pass ────────────────────────────────────────
+    if pending_txs:
+        try:
+            user_overrides = get_user_overrides(db, user.id)
+            batch_input = [{"id": tx.id, "description": tx.description, "type": tx.type} for tx in pending_txs]
+            ai_results = await categorize_batch(batch_input, user_overrides=user_overrides)
+            ai_map = {r["id"]: r for r in ai_results}
+            for tx in pending_txs:
+                res = ai_map.get(tx.id)
+                if res and res.get("confidence", 0) >= 0.6 and res.get("category", "Other") != "Other":
+                    tx.category = res["category"]
+                    tx.confidence = res["confidence"]
+                if res and res.get("merchant"):
+                    tx.merchant_normalized = res["merchant"]
+            db.commit()
+        except Exception as ai_err:
+            logger.warning("SMS webhook AI categorization pass failed: %s", ai_err)
+
+    for tx in pending_txs:
         db.refresh(tx)
+        saved.append(tx)
     logger.info("sms.webhook user=%s device=%s imported=%d", user.id, payload.device_id, len(saved))
     return saved
 
@@ -765,18 +809,44 @@ async def import_statement(
                 db.commit()
                 return
 
-            # Validate + fingerprint every row first, then resolve all duplicates
+            # ── AI Categorization upgrade pass ────────────────────────────────
+            # The parsers use a fast keyword-rules categorizer; now run the full
+            # 4-tier pipeline (user overrides → rules → embedding cache → LLM)
+            # over all rows so ambiguous/generic UPI descriptions get the best
+            # possible category instead of falling back to "Other".
+            if rows:
+                user_overrides = get_user_overrides(db, user.id)
+                batch_input = [
+                    {"id": str(i), "description": r["description"], "type": r.get("type", "expense")}
+                    for i, r in enumerate(rows)
+                ]
+                try:
+                    ai_results = await categorize_batch(batch_input, user_overrides=user_overrides)
+                    for res in ai_results:
+                        idx = int(res["id"])
+                        if res.get("confidence", 0) >= 0.6 and res.get("category", "Other") != "Other":
+                            rows[idx]["category"] = res["category"]
+                            rows[idx]["ai_confidence"] = res["confidence"]  # carried through prepared
+                        if res.get("merchant"):
+                            rows[idx]["merchant_normalized"] = res["merchant"]
+                except Exception as ai_err:
+                    logger.warning("Statement AI categorization pass failed: %s", ai_err)
+
             # in a single IN(...) query instead of one query per row.
-            prepared = []  # list[(validated_dict, fingerprint)]
+            prepared = []  # list[(validated_dict, merchant_normalized, ai_confidence, fingerprint)]
             for seq, row in enumerate(rows):
                 row["stmt_seq"] = seq  # preserve bank statement row order
+                # merchant_normalized and ai_confidence are set by the AI pass but are
+                # NOT TransactionIn fields — extract them before schema validation.
+                merchant_norm = row.pop("merchant_normalized", None)
+                ai_confidence = row.pop("ai_confidence", None)
                 validated = TransactionIn(**row).model_dump()
                 # SHA-256 dedup on date+amount+description
                 fingerprint = hashlib.sha256(
                     f"{validated['date']}{validated['amount']}{validated['description']}".encode()
                 ).hexdigest()
                 validated["source_ref"] = fingerprint
-                prepared.append((validated, fingerprint))
+                prepared.append((validated, merchant_norm, ai_confidence, fingerprint))
 
             existing_refs: set[str] = set()
             if prepared:
@@ -801,11 +871,16 @@ async def import_statement(
             saved_count = 0
             seen: set[str] = set()
             pending = 0
-            for validated, fingerprint in prepared:
+            for validated, merchant_norm, ai_confidence, fingerprint in prepared:
                 if fingerprint in existing_refs or fingerprint in seen:
                     continue  # skip DB duplicates and in-file repeats
                 seen.add(fingerprint)
                 new_tx = Transaction(user_id=user.id, **validated)
+                # Apply AI-resolved metadata if available.
+                if merchant_norm:
+                    new_tx.merchant_normalized = merchant_norm
+                if ai_confidence is not None:
+                    new_tx.confidence = ai_confidence
                 # Backfill running_balance for rows where the parsed PDF/CSV
                 # had no Balance column (e.g. receipt PDFs, Spotify invoices).
                 if new_tx.running_balance is None and new_tx.source != "cash" and prior_bal is not None:
@@ -876,7 +951,7 @@ async def advisor_stream(
         answer = _format_transaction(latest) if latest else "No transactions were found for this signed-in account."
 
         async def last_tx_event_generator():
-            yield f"data: {answer}\n\n"
+            yield f"data: {json.dumps(answer)}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
@@ -889,7 +964,7 @@ async def advisor_stream(
         answer = _format_overspending(transactions)
 
         async def overspending_event_generator():
-            yield f"data: {answer}\n\n"
+            yield f"data: {json.dumps(answer)}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(
@@ -949,8 +1024,9 @@ async def advisor_stream(
         logger.info("Cache hit for advisor stream.")
 
         async def cached_event_generator():
-            # Yield cached string fully
-            yield f"data: {cached_reply}\n\n"
+            # Yield cached string fully — JSON-encoded so embedded newlines
+            # (markdown bullet points, paragraphs) survive SSE line parsing.
+            yield f"data: {json.dumps(cached_reply)}\n\n"
 
             assistant_msg = AIMessage(
                 conversation_id=conversation.id,
@@ -975,7 +1051,7 @@ async def advisor_stream(
         try:
             async for token in ai_router.stream(SYSTEM_PROMPT, messages):
                 full_reply.append(token)
-                yield f"data: {token}\n\n"
+                yield f"data: {json.dumps(token)}\n\n"
         except Exception as e:
             logger.exception("advisor.stream.error user=%s", user.id)
             yield f"data: [ERROR] {str(e)[:100]}\n\n"
@@ -1516,7 +1592,7 @@ def community_benchmarks(
 # ── Anomaly Detection ─────────────────────────────────────────────────────────
 @app.get("/analytics/anomalies")
 def get_anomalies(
-    range: str | None = Query("3m", pattern="^(this_month|3m|1y|all)$"),
+    range: str | None = Query("3m", pattern="^(this_month|30d|3m|1y|all|current_year)$"),
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

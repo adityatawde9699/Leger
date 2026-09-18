@@ -21,9 +21,10 @@ logger = logging.getLogger("ledger.ai_router")
 # ── Task-specific token budgets ───────────────────────────────────────────────
 TASK_TOKENS = {
     "categorize": 150,
-    "insights": 400,
+    "categorize_batch": 700,   # 15 items × ~45 tokens, with headroom
+    "insights": 650,           # 7 items × ~80 tokens + JSON overhead
     "advisor": 900,
-    "negotiate": 600,
+    "negotiate": 700,          # up to 10 bills × ~60 tokens
     "receipt": 300,
     "default": 512,
 }

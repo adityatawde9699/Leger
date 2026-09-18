@@ -1,14 +1,37 @@
-"""
-Bill Negotiator v2 — fixed to use ai_router.generate() instead of non-existent .generate() method.
-"""
-
 import json
 import logging
+import re
 from typing import Any
 
 from .ai_router import ai_router
 
 logger = logging.getLogger("ledger.negotiator")
+
+
+def _extract_json(raw: str) -> list | None:
+    """Robustly extract a JSON array from an LLM response, handling markdown wrappers."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    m = re.search(r"```(?:json)?\s*(\[[\s\S]+?\])\s*```", raw)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+    m = re.search(r"(\[[\s\S]+\])", raw)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+
 
 NEGOTIATOR_SYSTEM = """You are an expert bill negotiation advisor for Indian consumers.
 Analyze the user's recurring payments and suggest specific, actionable negotiation strategies.
@@ -56,7 +79,7 @@ Focus on subscriptions, utilities, insurance, and services where negotiation or 
             task_type="negotiate",
         )
 
-        results = json.loads(response)
+        results = _extract_json(response)
         if isinstance(results, list):
             return results
 

@@ -90,9 +90,13 @@ export default function Advisor() {
 
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-          if (data === "[DONE]") break;
-          if (data.startsWith("[ERROR]")) { toast(data.slice(7).trim(), "error"); break; }
+          const raw = line.slice(6);
+          if (raw === "[DONE]") break;
+          if (raw.startsWith("[ERROR]")) { toast(raw.slice(7).trim(), "error"); break; }
+          // Tokens are JSON-encoded by the backend so embedded newlines
+          // (markdown bullet points, paragraphs) survive SSE line parsing.
+          let data;
+          try { data = JSON.parse(raw); } catch { data = raw; }
           setMessages((prev) => {
             const updated = [...prev];
             updated[updated.length - 1] = {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { apiFetch, API_BASE, EXPENSE_CATEGORIES, setAuthToken, today } from "./lib";
-import { clearGoogleSession, loadGoogleSession } from "./googleAuth";
+import { clearGoogleSession, loadGoogleSession, silentlyRefreshGoogleSession, msUntilRefresh } from "./googleAuth";
 import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
 import Auth from "./views/Auth";
 import CommandPalette from "./components/CommandPalette";
@@ -20,24 +20,40 @@ const Profile       = lazy(() => import("./views/Profile"));
 import {
   LayoutDashboard, Plus, Target, BarChart3, Sparkles,
   Wallet, Download, Shield, Briefcase, Gauge, LogOut,
-  Loader2, X, Grid, User,
+  Loader2, X, Grid, User, Scan, Mic, Delete,
+  FileText, MessageSquare, List
 } from "lucide-react";
 
+// Bottom-nav order: Home | Budgets | [ADD] | AI | More
 const PRIMARY_VIEWS = [
-  { id: "dashboard",    label: "Dashboard",    Icon: LayoutDashboard },
-  { id: "transactions", label: "Transactions", Icon: Plus },
-  { id: "budgets",      label: "Budgets",      Icon: Target },
-  { id: "investments",  label: "Investments",  Icon: Briefcase },
-  { id: "credit",       label: "Health",       Icon: Gauge },
-  { id: "advisor",      label: "Amadeus AI",   Icon: Sparkles },
+  { id: "dashboard",    label: "Home",    Icon: LayoutDashboard },
+  { id: "budgets",      label: "Budgets", Icon: Target },
+  { id: "advisor",      label: "AI",      Icon: Sparkles },
 ];
 
 const SECONDARY_VIEWS = [
-  { id: "accounts",  label: "Accounts",    Icon: Wallet },
-  { id: "analytics", label: "Analytics",   Icon: BarChart3 },
-  { id: "export",    label: "Export & GST", Icon: Download },
-  { id: "audit",     label: "Audit Logs",  Icon: Shield },
+  { id: "transactions", label: "Activity",  Icon: List },
+  { id: "investments",  label: "Investments",Icon: Briefcase },
+  { id: "accounts",  label: "Accounts",     Icon: Wallet },
+  { id: "analytics", label: "Analytics",    Icon: BarChart3 },
+  { id: "credit",    label: "Credit Health", Icon: Gauge },
+  { id: "export",    label: "Export & GST",  Icon: Download },
+  { id: "audit",     label: "Audit Logs",    Icon: Shield },
 ];
+
+const PAGE_TITLES = {
+  dashboard:    "Dashboard",
+  transactions: "Transactions",
+  budgets:      "Budgets",
+  advisor:      "Amadeus AI",
+  investments:  "Investments",
+  accounts:     "Accounts",
+  analytics:    "Analytics",
+  credit:       "Credit Health",
+  export:       "Export & GST",
+  audit:        "Audit Logs",
+  profile:      "Profile",
+};
 
 const ALL_VIEWS = [...PRIMARY_VIEWS, ...SECONDARY_VIEWS];
 
@@ -121,12 +137,33 @@ export default function App() {
     setLoadingAuth(false);
 
     if (!googleSession) return undefined;
-    const expiryTimer = window.setTimeout(() => {
-      clearGoogleSession();
-      setAuthToken(null);
-      setSession(null);
-    }, Math.max(0, googleSession.expires_at - Date.now()));
-    return () => window.clearTimeout(expiryTimer);
+
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    let refreshTimer = null;
+
+    // Schedules a silent re-auth attempt. On success the session is updated
+    // transparently; only falls back to logout if Google cannot silently
+    // re-authenticate (e.g. user has signed out of Google entirely).
+    function scheduleRefresh(currentSession) {
+      const delay = msUntilRefresh(currentSession);
+      refreshTimer = window.setTimeout(async () => {
+        try {
+          const freshSession = await silentlyRefreshGoogleSession(clientId);
+          setSession(freshSession);
+          setAuthToken(freshSession.access_token);
+          // Schedule the next refresh cycle for the new token.
+          scheduleRefresh(freshSession);
+        } catch {
+          // Silent re-auth failed — user must log in manually.
+          clearGoogleSession();
+          setAuthToken(null);
+          setSession(null);
+        }
+      }, delay);
+    }
+
+    scheduleRefresh(googleSession);
+    return () => window.clearTimeout(refreshTimer);
   }, []);
 
   useEffect(() => {
@@ -157,7 +194,7 @@ export default function App() {
 
   const renderView = () => {
     switch (view) {
-      case "dashboard":    return <Dashboard />;
+      case "dashboard":    return <Dashboard userName={displayName} />;
       case "transactions": return <Transactions />;
       case "budgets":      return <Budgets />;
       case "analytics":    return <Analytics />;
@@ -168,7 +205,7 @@ export default function App() {
       case "audit":        return <AuditWebhooks />;
       case "advisor":      return <Advisor />;
       case "profile":      return <Profile onSignOut={handleSignOut} />;
-      default:             return <Dashboard />;
+      default:             return <Dashboard userName={displayName} />;
     }
   };
 
@@ -191,20 +228,20 @@ export default function App() {
   const onTouchEndHandler = () => {
     if (!touchStart || !touchEnd) return;
     const distance = touchStart - touchEnd;
-    const minSwipeDistance = 50;
+    const minSwipeDistance = 60;
     const isLeftSwipe = distance > minSwipeDistance;
     const isRightSwipe = distance < -minSwipeDistance;
 
+    // Swipe only cycles through the 5 primary bottom-nav views for predictability
     if (isLeftSwipe || isRightSwipe) {
-      const viewsList = ALL_VIEWS.map(v => v.id).concat(["profile"]);
-      const currentIndex = viewsList.indexOf(view);
-      
+      const primaryIds = PRIMARY_VIEWS.map(v => v.id);
+      const currentIndex = primaryIds.indexOf(view);
       if (currentIndex !== -1) {
-        if (isLeftSwipe && currentIndex < viewsList.length - 1) {
-          navigateTo(viewsList[currentIndex + 1]);
+        if (isLeftSwipe && currentIndex < primaryIds.length - 1) {
+          navigateTo(primaryIds[currentIndex + 1]);
         }
         if (isRightSwipe && currentIndex > 0) {
-          navigateTo(viewsList[currentIndex - 1]);
+          navigateTo(primaryIds[currentIndex - 1]);
         }
       }
     }
@@ -290,23 +327,32 @@ export default function App() {
         <header className="app-header glass">
           <div className="app-header-inner">
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <LedgerLogo size={30} />
-              <span className="sidebar-logo-name" style={{ fontSize: 20 }}>Ledger</span>
+              <LedgerLogo size={28} />
+              <span className="app-header-title">
+                Ledger
+              </span>
             </div>
-            <button
-              onClick={() => navigateTo("profile")}
-              style={{ border: "none", cursor: "pointer", background: "none" }}
-              aria-label="Profile"
-            >
-              <div style={{
-                width: 36, height: 36, borderRadius: 10, background: gradient,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                color: "white", fontWeight: 700, fontSize: 14,
-                overflow: "hidden",
-              }}>
-                {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
-              </div>
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                className="header-icon-btn"
+                onClick={() => setCmdOpen(true)}
+                aria-label="Search"
+                title="Search (Ctrl+K)"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </button>
+              <button
+                onClick={() => navigateTo("profile")}
+                style={{ border: "none", cursor: "pointer", background: "none", padding: 0 }}
+                aria-label="Profile"
+              >
+                <div className={`header-avatar${view === "profile" ? " active" : ""}`}
+                  style={{ background: gradient }}
+                >
+                  {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} /> : initials}
+                </div>
+              </button>
+            </div>
           </div>
         </header>
 
@@ -329,30 +375,67 @@ export default function App() {
 
       {/* ── Mobile Bottom Nav ── */}
       <nav className="mobile-bottom-nav glass" aria-label="Primary mobile navigation">
-        <button className={`mobile-nav-item${view === "dashboard" ? " active" : ""}`} onClick={() => navigateTo("dashboard")} aria-label="Dashboard">
-          <LayoutDashboard size={20} aria-hidden="true" />
-          <span>Home</span>
-        </button>
-        <button className={`mobile-nav-item${view === "budgets" ? " active" : ""}`} onClick={() => navigateTo("budgets")} aria-label="Budgets">
-          <Target size={20} aria-hidden="true" />
-          <span>Budgets</span>
-        </button>
-        <button className="mobile-nav-item center-add-btn" onClick={() => setSheetOpen(true)} aria-label="Add transaction">
+        {PRIMARY_VIEWS.slice(0, 2).map(({ id, label, Icon }) => {
+          const isActive = view === id;
+          return (
+            <button
+              key={id}
+              id={`mob-nav-${id}`}
+              className={`mobile-nav-item${isActive ? " active" : ""}`}
+              onClick={() => navigateTo(id)}
+              aria-label={label}
+              aria-current={isActive ? "page" : undefined}
+            >
+              <div className="mob-icon-wrap">
+                <Icon size={20} aria-hidden="true" />
+                {isActive && <span className="mob-active-pip" />}
+              </div>
+              <span>{label}</span>
+            </button>
+          );
+        })}
+
+        {/* Center Add Button */}
+        <button
+          className="mobile-nav-item center-add-btn"
+          onClick={() => setSheetOpen(true)}
+          aria-label="Add"
+        >
           <div className="center-add-icon-wrap">
             <Plus size={22} aria-hidden="true" />
           </div>
           <span>Add</span>
         </button>
-        <button className={`mobile-nav-item${view === "investments" ? " active" : ""}`} onClick={() => navigateTo("investments")} aria-label="Investments">
-          <Briefcase size={20} aria-hidden="true" />
-          <span>Invest</span>
-        </button>
+
+        {PRIMARY_VIEWS.slice(2).map(({ id, label, Icon }) => {
+          const isActive = view === id;
+          return (
+            <button
+              key={id}
+              id={`mob-nav-${id}`}
+              className={`mobile-nav-item${isActive ? " active" : ""}`}
+              onClick={() => navigateTo(id)}
+              aria-label={label}
+              aria-current={isActive ? "page" : undefined}
+            >
+              <div className="mob-icon-wrap">
+                <Icon size={20} aria-hidden="true" />
+                {isActive && <span className="mob-active-pip" />}
+              </div>
+              <span>{label}</span>
+            </button>
+          );
+        })}
         <button
+          id="mob-nav-more"
           className={`mobile-nav-item${moreDrawerOpen ? " active" : ""}`}
           onClick={() => setMoreDrawerOpen(true)}
           aria-label="More features"
         >
-          <Grid size={20} aria-hidden="true" />
+          <div className="mob-icon-wrap">
+            <Grid size={20} aria-hidden="true" />
+            {moreDrawerOpen && <span className="mob-active-pip" />}
+          </div>
           <span>More</span>
         </button>
       </nav>
@@ -370,40 +453,69 @@ export default function App() {
         aria-label="All features"
       >
         <div className="sheet-handle" />
+
+        {/* User info strip */}
         <div className="drawer-user-info">
           <div style={{
-            width: 40, height: 40, borderRadius: 12, background: gradient,
+            width: 44, height: 44, borderRadius: 14, background: gradient,
             display: "flex", alignItems: "center", justifyContent: "center",
-            color: "white", fontWeight: 700, fontSize: 15, flexShrink: 0,
+            color: "white", fontWeight: 700, fontSize: 16, flexShrink: 0,
             overflow: "hidden",
           }}>
             {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
           </div>
-          <div>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div className="drawer-user-name">{displayName}</div>
             <div className="drawer-user-email">{session?.user?.email || profileData?.email}</div>
           </div>
+          <button className="icon-btn" onClick={() => { navigateTo("profile"); setMoreDrawerOpen(false); }} aria-label="Go to profile">
+            <User size={16} />
+          </button>
         </div>
-        <div className="form-section-title" style={{ marginBottom: 16 }}>All Features</div>
+
+        {/* Quick actions */}
+        <div className="drawer-section-label">Quick Actions</div>
+        <div className="drawer-quick-actions">
+          <button className="drawer-quick-btn" onClick={() => setSheetOpen(true) || setMoreDrawerOpen(false)}>
+            <div className="drawer-quick-icon" style={{ background: "rgba(168,255,47,0.15)" }}><Plus size={18} style={{ color: "var(--primary)" }} /></div>
+            <span>Add</span>
+          </button>
+          <button className="drawer-quick-btn" onClick={() => navigateTo("advisor")}>
+            <div className="drawer-quick-icon" style={{ background: "rgba(111,96,255,0.15)" }}><Sparkles size={18} style={{ color: "var(--info)" }} /></div>
+            <span>AI Chat</span>
+          </button>
+          <button className="drawer-quick-btn" onClick={() => navigateTo("analytics")}>
+            <div className="drawer-quick-icon" style={{ background: "rgba(255,171,64,0.15)" }}><BarChart3 size={18} style={{ color: "var(--warning)" }} /></div>
+            <span>Analytics</span>
+          </button>
+          <button className="drawer-quick-btn" onClick={() => navigateTo("credit")}>
+            <div className="drawer-quick-icon" style={{ background: "rgba(255,59,48,0.15)" }}><Gauge size={18} style={{ color: "var(--negative)" }} /></div>
+            <span>Health</span>
+          </button>
+        </div>
+
+        {/* All pages */}
+        <div className="drawer-section-label">All Pages</div>
         <div className="drawer-grid">
-          {ALL_VIEWS.map(({ id, label, Icon }) => (
+          {SECONDARY_VIEWS.map(({ id, label, Icon }) => (
             <button
               key={id}
-              className={`type-btn${view === id ? " active" : ""}`}
-              style={{ justifyContent: "flex-start", padding: "12px 14px", borderRadius: 12 }}
+              className={`drawer-page-btn${view === id ? " active" : ""}`}
               onClick={() => navigateTo(id)}
             >
-              <Icon size={16} aria-hidden="true" /> {label}
+              <Icon size={16} aria-hidden="true" />
+              <span>{label}</span>
             </button>
           ))}
           <button
-            className={`type-btn${view === "profile" ? " active" : ""}`}
-            style={{ justifyContent: "flex-start", padding: "12px 14px", borderRadius: 12 }}
+            className={`drawer-page-btn${view === "profile" ? " active" : ""}`}
             onClick={() => navigateTo("profile")}
           >
-            <User size={16} aria-hidden="true" /> Profile
+            <User size={16} aria-hidden="true" />
+            <span>Profile</span>
           </button>
         </div>
+
         <button
           className="btn-secondary full-width"
           onClick={handleSignOut}
@@ -431,24 +543,116 @@ export default function App() {
 // ── Quick Add Sheet ────────────────────────────────────────────────────────────
 function QuickAddSheet({ open, onClose, onSaved }) {
   const toast = useToast();
+  const fileInputRef = React.useRef(null);
+  const statementInputRef = React.useRef(null);
   const [submitting, setSubmitting] = React.useState(false);
+  const [scanning, setScanning] = React.useState(false);
+  const [importMode, setImportMode] = React.useState("manual"); // "manual" or "sms"
+  const [smsText, setSmsText] = React.useState("");
+  const [amountStr, setAmountStr] = React.useState("0");
   const [form, setForm] = React.useState({
-    type: "expense", amount: "", category: "Groceries",
-    description: "", date: today(), source: "cash",
+    type: "expense", category: "Dining", description: "", date: today(), account: "Everyday"
   });
 
   useEffect(() => {
-    if (open) setForm({ type: "expense", amount: "", category: "Groceries", description: "", date: today(), source: "cash" });
+    if (open) {
+      setAmountStr("0");
+      setImportMode("manual");
+      setSmsText("");
+      setForm({ type: "expense", category: "Dining", description: "", date: today(), account: "Everyday" });
+    }
   }, [open]);
 
+  const handleKeypad = (val) => {
+    if (val === "back") {
+      setAmountStr((prev) => (prev.length > 1 ? prev.slice(0, -1) : "0"));
+      return;
+    }
+    if (val === ".") {
+      if (!amountStr.includes(".")) setAmountStr((prev) => prev + ".");
+      return;
+    }
+    setAmountStr((prev) => (prev === "0" ? val : prev + val));
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setScanning(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await apiFetch("/receipts/scan", { method: "POST", body: formData });
+      
+      setAmountStr(String(res.amount));
+      setForm(prev => ({
+        ...prev, 
+        type: "expense", 
+        description: res.description, 
+        category: res.category || prev.category,
+        date: res.date || prev.date
+      }));
+      toast("Receipt scanned successfully!", "success");
+    } catch (err) {
+      toast(err.message || "Failed to scan receipt", "error");
+    } finally {
+      setScanning(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleStatementChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      toast("Uploading statement...", "info");
+      await apiFetch("/imports/statement", { method: "POST", body: formData });
+      toast("Statement processing started. Check back in a few moments.", "success");
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast(err.message || "Failed to upload statement", "error");
+    } finally {
+      if (statementInputRef.current) statementInputRef.current.value = "";
+    }
+  };
+
+  const submitSms = async () => {
+    const messages = smsText.split(/\n+/).map(l => l.trim()).filter(Boolean);
+    if (!messages.length) return toast("Enter SMS text first", "error");
+    setSubmitting(true);
+    try {
+      await apiFetch("/imports/sms", { method: "POST", body: JSON.stringify({ messages }) });
+      toast("SMS imported successfully", "success");
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   async function save(e) {
-    e.preventDefault();
-    if (!form.amount || Number(form.amount) <= 0) return toast("Enter a valid amount", "error");
+    if (e) e.preventDefault();
+    const numericAmount = Number(amountStr);
+    if (!numericAmount || numericAmount <= 0) return toast("Enter a valid amount", "error");
+    
     setSubmitting(true);
     try {
       await apiFetch("/transactions", {
         method: "POST",
-        body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+        body: JSON.stringify({ 
+          type: form.type,
+          amount: numericAmount,
+          category: form.category,
+          description: form.description || "Quick Add",
+          date: form.date,
+          source: form.account === "Everyday" ? "bank" : "cash"
+        }),
       });
       onSaved();
       onClose();
@@ -459,94 +663,116 @@ function QuickAddSheet({ open, onClose, onSaved }) {
     }
   }
 
+  const activeCategories = form.type === "income" ? ["Salary", "Freelance", "Transfer", "Other"] : ["Dining", "Groceries", "Transport", "Shopping", "Health", "Housing"];
+
+  // Automatically ensure category is valid for type
+  useEffect(() => {
+    if (!activeCategories.includes(form.category)) {
+      setForm((prev) => ({ ...prev, category: activeCategories[0] }));
+    }
+  }, [form.type]);
+
   return (
     <>
       <div className={`sheet-backdrop${open ? " open" : ""}`} onClick={onClose} aria-hidden="true" />
       <section
-        className={`bottom-sheet${open ? " open" : ""}`}
+        className={`bottom-sheet add-sheet${open ? " open" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label="Add Transaction"
         aria-hidden={!open}
       >
         <div className="sheet-handle" />
-        <div className="sheet-header">
-          <div className="form-section-title" style={{ marginBottom: 0 }}>Add Transaction</div>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
-        </div>
 
-        <form onSubmit={save}>
-          {/* Type Toggle */}
-          <div className="type-toggle">
-            <button
-              type="button"
-              className={`type-btn${form.type === "expense" ? " active expense" : ""}`}
-              onClick={() => setForm({ ...form, type: "expense", category: "Groceries" })}
-            >
-              Expense
+        <div className="add-content">
+          {/* Segmented Control */}
+          <div className="add-segmented-control">
+            <button className={form.type === "expense" ? "active" : ""} onClick={() => setForm({ ...form, type: "expense" })}>Expense</button>
+            <button className={form.type === "income" ? "active" : ""} onClick={() => setForm({ ...form, type: "income" })}>Income</button>
+          </div>
+
+          {/* Amount Display */}
+          <div className="add-amount-display">
+            <span className="add-currency">₹</span>
+            {amountStr}
+          </div>
+          <div className="add-amount-hint">Tap the keypad, scan a receipt, or import</div>
+
+          {/* Action Buttons */}
+          <div className="add-action-buttons">
+            <input type="file" accept="image/*" ref={fileInputRef} style={{ display: "none" }} onChange={handleFileChange} />
+            <input type="file" accept=".csv,.xls,.xlsx,.ods,.pdf" ref={statementInputRef} style={{ display: "none" }} onChange={handleStatementChange} />
+            <button className="add-action-btn" type="button" onClick={() => { setImportMode("manual"); fileInputRef.current?.click(); }} disabled={scanning}>
+              {scanning ? <Loader2 size={16} className="spin" /> : <Scan size={16} />} 
+              {scanning ? "Scanning..." : "Receipt"}
             </button>
-            <button
-              type="button"
-              className={`type-btn${form.type === "income" ? " active income" : ""}`}
-              onClick={() => setForm({ ...form, type: "income", category: "Salary" })}
-            >
-              Income
+            <button className="add-action-btn" type="button" onClick={() => { setImportMode("manual"); statementInputRef.current?.click(); }} disabled={scanning}>
+              <FileText size={16} /> Statement
+            </button>
+            <button className={`add-action-btn ${importMode === "sms" ? "active" : ""}`} type="button" onClick={() => setImportMode(importMode === "sms" ? "manual" : "sms")} disabled={scanning}>
+              <MessageSquare size={16} /> SMS
             </button>
           </div>
 
-          {/* Amount */}
-          <div className="form-field quick-amount-field">
-            <div className="quick-amount-row">
-              <span className="quick-amount-symbol">₹</span>
-              <input
-                required
-                autoFocus={open}
-                type="number"
-                min="1"
-                step="0.01"
-                value={form.amount}
-                placeholder="0.00"
-                className="quick-amount-input"
-                inputMode="decimal"
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+          {importMode === "sms" ? (
+            <div className="sms-import-view" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <div className="add-section-label">PASTE SMS MESSAGES</div>
+              <textarea 
+                style={{ padding: "16px 20px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 20, width: "100%", height: 200, resize: "none", color: "var(--text-primary)", fontFamily: "inherit", fontSize: 15, marginBottom: 24, outline: "none" }}
+                placeholder="Paste UPI / bank SMS messages here (one per line)..."
+                value={smsText}
+                onChange={e => setSmsText(e.target.value)}
               />
+              <button className="add-submit-btn" onClick={submitSms} disabled={submitting || !smsText.trim()}>
+                {submitting ? <><Loader2 size={16} className="spin" /> Parsing…</> : "Import SMS"}
+              </button>
             </div>
-            <div className="quick-amount-underline" />
-          </div>
-
-          {/* Category + Date */}
-          <div className="form-grid-2">
-            <div className="form-field">
-              <label className="form-label">Category</label>
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-                {(form.type === "income" ? ["Salary", "Freelance", "Other"] : EXPENSE_CATEGORIES).map((c) => (
-                  <option key={c}>{c}</option>
+          ) : (
+            <>
+              {/* Categories */}
+              <div className="add-section-label">CATEGORY</div>
+              <div className="add-categories-wrap">
+                {activeCategories.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={`category-pill${form.category === cat ? " active" : ""}`}
+                    onClick={() => setForm({ ...form, category: cat })}
+                  >
+                    {cat}
+                  </button>
                 ))}
-              </select>
-            </div>
-            <div className="form-field">
-              <label className="form-label">Date</label>
-              <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-            </div>
-          </div>
+              </div>
 
-          {/* Description */}
-          <div className="form-field" style={{ marginBottom: 28 }}>
-            <label className="form-label">Description</label>
-            <input
-              required
-              placeholder="What was this for?"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-            />
-          </div>
+              {/* Form List Fields */}
+              <div className="add-form-list">
+                <label className="add-form-row">
+                  <span className="row-label">Date</span>
+                  <input type="date" className="row-input" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                </label>
+                <label className="add-form-row">
+                  <span className="row-label">Note</span>
+                  <input type="text" className="row-input placeholder-right" placeholder="Add a note" value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
+                </label>
+              </div>
 
-          <button className="btn-primary full-width" disabled={submitting} style={{ padding: "16px", justifyContent: "center" }}>
-            {submitting ? <><Loader2 size={16} className="spin" /> Saving…</> : "Save Transaction"}
-          </button>
-        </form>
+              {/* Custom Keypad */}
+              <div className="custom-keypad">
+                {["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"].map((key) => (
+                  <button key={key} type="button" className="keypad-btn" onClick={() => handleKeypad(key)}>{key}</button>
+                ))}
+                <button type="button" className="keypad-btn" onClick={() => handleKeypad("back")}>
+                  <Delete size={22} />
+                </button>
+              </div>
+
+              {/* Submit */}
+              <button className="add-submit-btn" onClick={save} disabled={submitting || amountStr === "0" || amountStr === "0."}>
+                {submitting ? <><Loader2 size={16} className="spin" /> Saving…</> : "Enter an amount"}
+              </button>
+            </>
+          )}
+        </div>
       </section>
     </>
   );

@@ -43,6 +43,8 @@ Thumbs.db
 *.log
 logs/
 
+#codex resume 01a0a50b-9685-7cf1-a624-42a6a0b84667
+
 # Docker / deployment
 *.tar
 *.pid

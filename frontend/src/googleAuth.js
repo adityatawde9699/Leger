@@ -1,5 +1,8 @@
 const STORAGE_KEY = "google-session";
 
+// How many milliseconds before expiry we attempt a silent refresh.
+const REFRESH_BEFORE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+
 function decodeIdToken(token) {
   const parts = token.split(".");
   if (parts.length !== 3) throw new Error("Google returned an invalid ID token.");
@@ -65,4 +68,53 @@ export function loadGoogleSession() {
 export function clearGoogleSession() {
   localStorage.removeItem(STORAGE_KEY);
   window.google?.accounts?.id?.disableAutoSelect();
+}
+
+/**
+ * Returns how many ms until we should attempt a silent refresh.
+ * Returns 0 if the session is already expired or within the refresh window.
+ */
+export function msUntilRefresh(session) {
+  if (!session?.expires_at) return 0;
+  return Math.max(0, session.expires_at - Date.now() - REFRESH_BEFORE_EXPIRY_MS);
+}
+
+/**
+ * Attempts a silent Google One Tap re-authentication.
+ * Resolves with a fresh session if Google can silently issue a new credential
+ * (user is still signed into their Google account).
+ * Rejects if silent re-auth is not possible (user must interact).
+ */
+export function silentlyRefreshGoogleSession(clientId) {
+  return new Promise((resolve, reject) => {
+    if (!window.google?.accounts?.id) {
+      reject(new Error("Google Identity Services not loaded"));
+      return;
+    }
+
+    window.google.accounts.id.initialize({
+      client_id: clientId,
+      callback: ({ credential, error }) => {
+        if (error || !credential) {
+          reject(new Error(error || "Silent re-auth returned no credential"));
+          return;
+        }
+        try {
+          const session = createGoogleSession(credential);
+          saveGoogleSession(session);
+          resolve(session);
+        } catch (err) {
+          reject(err);
+        }
+      },
+    });
+
+    // prompt() with a notification callback so we can detect
+    // when Google says silent re-auth isn't possible.
+    window.google.accounts.id.prompt((notification) => {
+      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+        reject(new Error("Silent re-auth not available: " + (notification.getNotDisplayedReason?.() || notification.getSkippedReason?.() || "unknown")));
+      }
+    });
+  });
 }

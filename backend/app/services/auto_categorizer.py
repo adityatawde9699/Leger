@@ -323,7 +323,7 @@ async def _llm_batch_chunk(transactions: list[dict]) -> dict[str, dict]:
 
     results = {}
     try:
-        raw = await ai_router.generate(system, messages, task_type="categorize", max_tokens=LLM_BATCH_SIZE * 30)
+        raw = await ai_router.generate(system, messages, task_type="categorize_batch", max_tokens=LLM_BATCH_SIZE * 45)
         parsed = _extract_json(raw)
 
         if not isinstance(parsed, list):

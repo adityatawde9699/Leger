@@ -363,7 +363,7 @@ async def _gemini_parse_pdf(content: bytes) -> str:
         import google.generativeai as genai
 
         genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
 
         pdf_part = {"mime_type": "application/pdf", "data": content}
         prompt = """Extract every bank statement transaction from this PDF.

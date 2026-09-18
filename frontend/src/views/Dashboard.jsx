@@ -6,6 +6,7 @@ import ProactiveInsights from "../components/ProactiveInsights";
 import {
   TrendingUp, TrendingDown, DollarSign, PiggyBank, Calendar, AlertCircle,
   BarChart3, Target, Banknote, AlertTriangle, Zap, ShoppingBag, ArrowUpRight,
+  Cpu, Eye,
 } from "lucide-react";
 import {
   BarChart, Bar, Area, AreaChart, Cell, Pie, PieChart,
@@ -23,7 +24,7 @@ const TIME_FILTERS = [
 const SEVERITY_COLOR = { high: "var(--accent)", medium: "var(--warning)", low: "var(--info)" };
 const SEVERITY_BG    = { high: "rgba(255, 59, 59, 0.1)", medium: "rgba(250, 204, 21, 0.1)", low: "rgba(56, 189, 248, 0.1)" };
 
-export default function Dashboard({ analyticsOnly = false }) {
+export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER" }) {
   const toast = useToast();
   const [summary,   setSummary]   = React.useState(null);
   const [loading,   setLoading]   = React.useState(true);
@@ -250,19 +251,36 @@ export default function Dashboard({ analyticsOnly = false }) {
         </div>
       )}
 
-      {/* Hero card */}
+      {/* Hero card (Credit Card Style) */}
       {!analyticsOnly && (
-        <div className="card hero-card" style={{ marginBottom: 24 }}>
-          <div className="hero-label">
-            <DollarSign size={16} />
-            {hasBalanceData ? "Closing Balance" : "Net Cash Flow"}
+        <div className="card hero-card cc-style" style={{ marginBottom: 24 }}>
+          {/* Top Row: Label & Eye Icon */}
+          <div className="cc-top">
+            <div className="cc-label">{hasBalanceData ? "Closing Balance" : "Net Cash Flow"}</div>
+            <Eye size={20} style={{ color: "rgba(255,255,255,0.7)" }} />
           </div>
-          <div className="hero-amount">{money(hasBalanceData ? closingBalance : net)}</div>
-          <div className={`hero-change ${net >= 0 ? "positive" : "negative"}`}>
-            {net >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-            {hasBalanceData && openingBalance !== null
-              ? `Opened at ${money(openingBalance)} · Net ${net >= 0 ? "+" : ""}${money(net)}`
-              : income > 0 ? `${savingsRate}% savings rate` : "No income recorded yet"}
+
+          {/* Balance */}
+          <div className="cc-balance">
+            {money(hasBalanceData ? closingBalance : net).replace(".00", "")}
+            <span className="cc-cents">.00</span>
+          </div>
+
+          {/* Chip Icon */}
+          <div className="cc-chip">
+            <Cpu size={32} strokeWidth={1} />
+          </div>
+
+          {/* Bottom Row: Cardholder & Expiry/Number */}
+          <div className="cc-bottom">
+            <div className="cc-cardholder">
+              <div className="cc-label">Cardholder Name</div>
+              <div className="cc-value">{userName}</div>
+            </div>
+            <div className="cc-expiry">
+              <div className="cc-label">03/28</div>
+              <div className="cc-value cc-number">4688 •••• •••• 3493</div>
+            </div>
           </div>
         </div>
       )}
