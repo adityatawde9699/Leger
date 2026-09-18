@@ -346,6 +346,12 @@ export default function Profile({ onSignOut }) {
                   <option value="GBP">🇬🇧 GBP — British Pound</option>
                   <option value="AED">🇦🇪 AED — UAE Dirham</option>
                   <option value="SGD">🇸🇬 SGD — Singapore Dollar</option>
+                  <option value="CAD">🇨🇦 CAD — Canadian Dollar</option>
+                  <option value="AUD">🇦🇺 AUD — Australian Dollar</option>
+                  <option value="JPY">🇯🇵 JPY — Japanese Yen</option>
+                  <option value="CHF">🇨🇭 CHF — Swiss Franc</option>
+                  <option value="CNY">🇨🇳 CNY — Chinese Yuan</option>
+                  <option value="HKD">🇭🇰 HKD — Hong Kong Dollar</option>
                 </select>
               </div>
             </div>
