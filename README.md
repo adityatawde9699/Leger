@@ -264,7 +264,7 @@ ruff format backend/
 pip install pytest pytest-asyncio httpx
 pytest backend/tests/ -v
 
-# Frontend build check
+# For Frontend build check 
 cd frontend && npm run build
 ```
 
