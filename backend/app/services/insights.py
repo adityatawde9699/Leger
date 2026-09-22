@@ -3,7 +3,6 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from ..models import Budget, Transaction
-from .categorizer import EXPENSE_CATEGORIES
 
 
 def _expense_value(tx: Transaction) -> Decimal:
@@ -326,7 +325,7 @@ def dynamic_budget_suggestions(transactions: list[Transaction]) -> list[dict]:
             "monthly_limit": round((totals[cat] / divisor) * Decimal("0.9"), 2),
             "strategy": f"dynamic_{len(months) or 1}mo_90",
         }
-        for cat in EXPENSE_CATEGORIES
+        for cat in sorted(totals)
         if totals[cat] > 0
     ]
 

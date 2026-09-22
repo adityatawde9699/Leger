@@ -21,6 +21,8 @@ Privacy controls now include a full portable data export and an explicit, confir
 Backend development dependencies are now declared separately and GitHub Actions runs backend lint/tests plus the frontend production build on pushes and pull requests.
 Phase 0 release safety is now documented in `docs/RELEASE-CHECKLIST.md`, and the frontend quality strategy is documented in `frontend/QUALITY.md`.
 Privacy-safe structured telemetry now records operational latency, provider/fallback, parse success, evidence validation, feedback, correction, and import/insight outcomes without raw financial text.
+Budgets now include active custom expense categories, preserve existing category budgets across taxonomy changes, accept history-based suggestions for custom categories, and show remaining daily allowance plus a clearly labeled month-end pace estimate.
+The Dashboard now selects one data-aware next step from account setup, failed imports, pending or uncategorized transactions, stale/unassigned accounts, missing budgets, or missing goals; its transaction review actions open the matching Activity filter. The Docker entrypoint now passes migration Python through a quoted heredoc, avoiding shell parsing of embedded SQL quotes, and CI tests both shell and embedded Python syntax.
 Shared data-quality metadata now also reports conservative exact-match duplicate suspects and warns users before analysis is treated as complete.
 Direct factual advisor questions now use deterministic Ledger arithmetic with evidence transaction IDs and assumptions; open-ended questions remain AI-assisted and are visibly labeled in the chat UI.
 Statement imports now persist a content fingerprint for idempotent re-uploads, while transaction row fingerprints include account and type so legitimate same-value transactions across accounts are preserved.
@@ -39,7 +41,7 @@ Import jobs now expose durable row progress and cooperative cancellation; the Da
 Import review now shows AI category confidence and stable row identities, and lets users exclude uncertain rows before the durable job is created.
 Phase 1 personalization is now implemented: merchant aliases apply across manual, edited, and statement-imported transactions while retaining the original description; custom categories are user-scoped and preserve stable built-in reporting groups; and recurring candidates can be explicitly confirmed into evidence-linked active, paused, or cancelled rules. Profile and Quick Add expose the personalization controls, while Dashboard confirmation keeps detection separate from commitment.
 
-Verification snapshot: the complete backend suite passes in the CI-targeted Python 3.12 environment with Starlette's supported `httpx2` test client (57 passed, 1 skipped), Ruff passes, the frontend production build passes, and `git diff --check` passes.
+Verification snapshot: the complete backend suite passes in the CI-targeted Python 3.12 environment with Starlette's supported `httpx2` test client (59 passed, 1 skipped), Ruff passes, the frontend production build passes, and `git diff --check` passes.
 
 The remaining unchecked items below are still planned work; completed items are marked `[x]` in their phase.
 
@@ -138,9 +140,9 @@ The roadmap should improve this loop before expanding into additional financial 
   - income, committed spend, flexible spend, and remaining safe-to-spend amount;
   - one or two high-confidence observations;
   - a single recommended action with a completion button.
-- Add an empty-state path for no data, partial data, irregular income, and no budgets. Never show a “health score” without explaining that it is provisional.
+- Add an empty-state path for no data, partial data, irregular income, and no budgets. Never show a “health score” without explaining that it is provisional. The Dashboard now handles no transactions, failed imports, pending/uncategorized rows, incomplete account linkage/reconciliation, and missing budgets/goals; explicit irregular-income and broader partial-history messaging remain open.
 - [x] Add a lightweight goal model: emergency fund, debt payoff, spending reduction, savings target, or custom goal. Track target, deadline, and current progress; contribution guidance remains open.
-- Redesign budgets around decisions: suggested baseline, user target, remaining amount, pace, and what to change—not only a red/green percentage.
+- [x] Redesign budgets around decisions: history-based suggested baseline (including custom categories), user target, remaining amount, month-end pace estimate, and a remaining daily allowance—not only a red/green percentage.
 - Add “safe to spend” only after committed bills, budgeted obligations, upcoming recurring payments, and data freshness are known. Label it as an estimate, never as a bank balance.
 - Improve mobile quick capture: amount-first entry, merchant/category suggestions, receipt attachment, split transaction, recurring toggle, and offline queue with sync status.
 - [x] Consolidate primary navigation around Home, Budgets, Goals, and Ask Ledger, with Activity and advanced areas under the secondary “More” navigation.

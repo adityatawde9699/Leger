@@ -108,6 +108,7 @@ function getInitialView() {
 export default function App() {
   const toast = useToast();
   const [view, setView] = useState(getInitialView);
+  const [transactionInitialFilter, setTransactionInitialFilter] = useState("All");
   const [cmdOpen, setCmdOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [moreDrawerOpen, setMoreDrawerOpen] = useState(false);
@@ -198,7 +199,7 @@ export default function App() {
   const renderView = () => {
     switch (view) {
       case "dashboard":    return <Dashboard userName={displayName} onNavigate={navigateTo} onAddTransaction={() => setSheetOpen(true)} />;
-      case "transactions": return <Transactions />;
+      case "transactions": return <Transactions initialFilter={transactionInitialFilter} />;
       case "budgets":      return <Budgets />;
       case "goals":        return <Goals />;
       case "analytics":    return <Analytics />;
@@ -213,8 +214,9 @@ export default function App() {
     }
   };
 
-  function navigateTo(id) {
+  function navigateTo(id, options = {}) {
     setView(id);
+    setTransactionInitialFilter(options.filter || "All");
     setMoreDrawerOpen(false);
     setSheetOpen(false);
   }

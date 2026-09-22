@@ -35,6 +35,7 @@ export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER", o
   const [anomalies, setAnomalies] = React.useState([]);
   const [forecast,  setForecast]  = React.useState(null);
   const [goals, setGoals] = React.useState([]);
+  const [budgets, setBudgets] = React.useState(null);
   const [importJobs, setImportJobs] = React.useState([]);
   const [recurringRules, setRecurringRules] = React.useState([]);
   const [confirmingRecurring, setConfirmingRecurring] = React.useState(null);
@@ -56,7 +57,8 @@ export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER", o
       apiFetch("/goals").catch(() => []),
       apiFetch("/imports/jobs?limit=10").catch(() => []),
       apiFetch("/recurring").catch(() => []),
-    ]).then(([s, all, a, f, g, jobs, rules]) => {
+      apiFetch("/budgets").catch(() => null),
+    ]).then(([s, all, a, f, g, jobs, rules, b]) => {
       setSummary(s);
       setHistorySummary(all);
       setAnomalies(Array.isArray(a) ? a : (a?.items || []));
@@ -64,6 +66,7 @@ export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER", o
       setGoals(Array.isArray(g) ? g : []);
       setImportJobs(Array.isArray(jobs) ? jobs : []);
       setRecurringRules(Array.isArray(rules) ? rules : []);
+      setBudgets(Array.isArray(b) ? b : null);
     }).catch((e) => toast(e.message, "error"))
       .finally(() => setLoading(false));
   }, [timeRange]);
@@ -158,6 +161,24 @@ export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER", o
     ? `${summary.period_start} → ${summary.period_end}`
     : "All available transactions";
   const isFirstRun = !analyticsOnly && historySummary?.data_quality?.transaction_count === 0;
+  const allQuality = historySummary?.data_quality || {};
+  const nextAction = isFirstRun
+    ? { title: "Add your first transactions", reason: "Start with a few entries or import a statement to get a useful spending picture.", label: "Add or import", run: onAddTransaction }
+    : allQuality.failed_imports > 0
+      ? { title: "Review a failed statement import", reason: `${allQuality.failed_imports} statement import${allQuality.failed_imports === 1 ? " needs" : "s need"} attention before all rows are in your ledger.`, label: "Open import & entry", run: onAddTransaction }
+      : allQuality.pending_transactions > 0
+        ? { title: "Review pending transactions", reason: `${allQuality.pending_transactions} entries are excluded from committed totals until you review them.`, label: "Review pending", run: () => onNavigate?.("transactions", { filter: "Pending" }) }
+      : allQuality.uncategorized_count > 0
+        ? { title: "Improve your categories", reason: `${allQuality.uncategorized_count} entries are uncategorized or marked Other, which makes category comparisons less useful.`, label: "Review uncategorized", run: () => onNavigate?.("transactions", { filter: "Needs review" }) }
+        : allQuality.unassigned_account_count > 0
+          ? { title: "Assign transactions to accounts", reason: `${allQuality.unassigned_account_count} non-cash entries are not linked to an account, so account balances may be incomplete.`, label: "Review accounts", run: () => onNavigate?.("accounts") }
+      : allQuality.stale_account_count > 0
+        ? { title: "Reconcile an account balance", reason: `${allQuality.stale_account_count} active account${allQuality.stale_account_count === 1 ? " has" : "s have"} no recent reconciliation.`, label: "Review accounts", run: () => onNavigate?.("accounts") }
+        : budgets?.length === 0
+          ? { title: "Set one spending target", reason: "A budget gives you a personal reference point for the next month. You can start with a suggested amount based on your history.", label: "Set a budget", run: () => onNavigate?.("budgets") }
+          : !goals.some((goal) => goal.status === "active")
+            ? { title: "Choose a financial goal", reason: "A goal turns your monthly picture into a concrete plan you can track.", label: "Create a goal", run: () => onNavigate?.("goals") }
+            : null;
 
   const closingBalance = summary?.closing_balance != null ? Number(summary.closing_balance) : null;
   const openingBalance = summary?.opening_balance != null ? Number(summary.opening_balance) : null;
@@ -293,23 +314,22 @@ export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER", o
         </div>
       )}
 
-      {isFirstRun && (
+      {nextAction && (
         <div className="card" style={{ marginBottom: 20, borderTop: "3px solid var(--primary)" }}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
             <div style={{ width: 38, height: 38, borderRadius: 12, background: "var(--positive-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <PiggyBank size={19} style={{ color: "var(--primary)" }} />
             </div>
             <div>
-              <div style={{ fontSize: 17, fontWeight: 800, color: "var(--text-primary)" }}>Start with one clear money picture</div>
+              <div style={{ fontSize: 17, fontWeight: 800, color: "var(--text-primary)" }}>Your next useful step: {nextAction.title}</div>
               <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55, marginTop: 5, maxWidth: 650 }}>
-                Add a few transactions or import a statement first. Ledger will show what it knows, what is missing, and one practical next step—without requiring an AI setup.
+                {nextAction.reason}
               </div>
             </div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
-            <button className="btn-primary" onClick={onAddTransaction}><Plus size={15} /> Add a transaction</button>
-            <button className="btn-secondary" onClick={() => onNavigate?.("accounts")}>Set up an account</button>
-            <button className="btn-secondary" onClick={() => onNavigate?.("goals")}>Create a goal</button>
+            <button className="btn-primary" onClick={nextAction.run}>{nextAction.label}</button>
+            {isFirstRun && <button className="btn-secondary" onClick={() => onNavigate?.("accounts")}>Set up an account</button>}
           </div>
         </div>
       )}

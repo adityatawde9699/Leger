@@ -8,6 +8,7 @@ Use this checklist for every release that changes financial calculations, import
 - [ ] `pytest backend/tests/ -q`
 - [ ] `npm ci` followed by `npm run build` in `frontend/`
 - [ ] `git diff --check`
+- [ ] `sh -n backend/entrypoint.sh` and the embedded migration syntax test
 
 ## Financial correctness
 

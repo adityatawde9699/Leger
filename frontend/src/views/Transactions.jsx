@@ -34,14 +34,14 @@ function groupTransactions(txs) {
   return groups;
 }
 
-export default function Transactions() {
+export default function Transactions({ initialFilter = "All" }) {
   const toast = useToast();
   const [transactions, setTransactions] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [nextCursor, setNextCursor] = React.useState(null);
   const [hasMore, setHasMore] = React.useState(false);
   const [search, setSearch] = React.useState("");
-  const [activeFilter, setActiveFilter] = React.useState("All");
+  const [activeFilter, setActiveFilter] = React.useState(initialFilter);
   const [selectedIds, setSelectedIds] = React.useState(new Set());
   const [bulkUpdating, setBulkUpdating] = React.useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = React.useState(false);
@@ -130,6 +130,7 @@ export default function Transactions() {
       if (activeFilter === "Transfers") params.set("type", "transfer");
       if (activeFilter === "Pending") params.set("status", "pending");
       if (activeFilter === "Excluded") params.set("status", "excluded");
+      if (activeFilter === "Needs review") params.set("category", "Other");
       if (!reset && nextCursor) params.set("cursor", nextCursor);
       
       const data = await apiFetch(`/transactions?${params}`);
@@ -185,7 +186,7 @@ export default function Transactions() {
         
         {/* Filters */}
         <div className="activity-filters">
-          {["All", "Expenses", "Income", "Refunds", "Reimbursements", "Transfers", "Pending", "Excluded", "Recurring"].map(f => (
+          {["All", "Expenses", "Income", "Refunds", "Reimbursements", "Transfers", "Pending", "Excluded", "Needs review", "Recurring"].map(f => (
             <button 
               key={f} 
               className={`filter-pill ${activeFilter === f ? "active" : ""}`}

@@ -64,3 +64,18 @@ def test_upsert_updates_existing(client):
     # Should still be only 1 budget
     r = client.get("/budgets", headers=AUTH_HEADER)
     assert len(r.json()) == 1
+
+
+def test_budget_suggestions_include_custom_categories(client):
+    created = client.post("/categories", json={
+        "name": "Pet Care", "kind": "expense", "reporting_group": "Household",
+    }, headers=AUTH_HEADER)
+    assert created.status_code == 201
+    transaction = client.post("/transactions", json={
+        "type": "expense", "category": "Pet Care", "amount": "1200", "description": "Vet", "date": "2026-05-12",
+    }, headers=AUTH_HEADER)
+    assert transaction.status_code == 201
+
+    suggestions = client.get("/budgets/suggestions?range=all", headers=AUTH_HEADER)
+    assert suggestions.status_code == 200
+    assert any(item["category"] == "Pet Care" for item in suggestions.json())

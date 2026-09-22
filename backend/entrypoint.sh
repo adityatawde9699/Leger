@@ -3,7 +3,7 @@
 set -e
 
 echo "Running database migrations..."
-python -c "
+python - <<'PY'
 from app.db import Base, engine
 from app.models import *  # noqa: import all models so they register
 from sqlalchemy import text, inspect
@@ -20,7 +20,7 @@ with engine.begin() as conn:
     if 'currency_preference' not in existing_cols:
         # SQLite: default handled in app; Postgres: add with default
         try:
-            conn.execute(text(\"ALTER TABLE users ADD COLUMN currency_preference VARCHAR(3) NOT NULL DEFAULT 'INR'\"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN currency_preference VARCHAR(3) NOT NULL DEFAULT 'INR'"))
         except Exception:
             conn.execute(text('ALTER TABLE users ADD COLUMN currency_preference VARCHAR(3)'))
         print('  + Added users.currency_preference')
@@ -46,10 +46,10 @@ with engine.begin() as conn:
         conn.execute(text('ALTER TABLE import_jobs ADD COLUMN total_rows INTEGER'))
         print('  + Added import_jobs.total_rows')
     if 'processed_rows' not in job_cols:
-        conn.execute(text("ALTER TABLE import_jobs ADD COLUMN processed_rows INTEGER NOT NULL DEFAULT 0"))
+        conn.execute(text('ALTER TABLE import_jobs ADD COLUMN processed_rows INTEGER NOT NULL DEFAULT 0'))
         print('  + Added import_jobs.processed_rows')
     if 'cancel_requested' not in job_cols:
-        conn.execute(text("ALTER TABLE import_jobs ADD COLUMN cancel_requested BOOLEAN NOT NULL DEFAULT FALSE"))
+        conn.execute(text('ALTER TABLE import_jobs ADD COLUMN cancel_requested BOOLEAN NOT NULL DEFAULT FALSE'))
         print('  + Added import_jobs.cancel_requested')
     if 'excluded_row_fingerprints' not in job_cols:
         conn.execute(text("ALTER TABLE import_jobs ADD COLUMN excluded_row_fingerprints TEXT"))
@@ -70,7 +70,7 @@ with engine.begin() as conn:
         print('  + Added transactions.status')
     conn.execute(text('CREATE INDEX IF NOT EXISTS ix_transactions_status ON transactions (status)'))
 print('  Migrations OK')
-"
+PY
 
 echo "Starting server..."
 exec uvicorn app.main:app \

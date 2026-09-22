@@ -1,5 +1,5 @@
 import React from "react";
-import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS } from "../lib";
+import { apiFetch, money, CATEGORY_COLORS } from "../lib";
 import { useToast, CardSkeleton } from "../components/ui";
 import { Target, AlertCircle, Sparkles, CheckCircle } from "lucide-react";
 
@@ -10,16 +10,19 @@ export default function Budgets() {
   const [draft, setDraft]       = React.useState({});
   const [loading, setLoading]   = React.useState(true);
   const [saving, setSaving]     = React.useState(false);
+  const [categories, setCategories] = React.useState([]);
 
   async function load() {
     setLoading(true);
     try {
-      const [bud, sum] = await Promise.all([
+      const [bud, sum, cats] = await Promise.all([
         apiFetch("/budgets"),
         apiFetch("/summary?range=this_month"),
+        apiFetch("/categories"),
       ]);
       setBudgets(bud);
       setSummary(sum);
+      setCategories(Array.isArray(cats) ? cats.filter((item) => item.is_active && item.kind === "expense").map((item) => item.name) : []);
       setDraft(Object.fromEntries(bud.map((b) => [b.category, Number(b.monthly_limit)])));
     } catch (e) {
       toast(e.message, "error");
@@ -35,7 +38,7 @@ export default function Budgets() {
   async function saveBudgets() {
     setSaving(true);
     try {
-      const payload = EXPENSE_CATEGORIES.map((cat) => ({
+      const payload = budgetCategories.map((cat) => ({
         category: cat,
         monthly_limit: Number(draft[cat] || 0),
         strategy: "manual",
@@ -56,6 +59,7 @@ export default function Budgets() {
       const saved = await apiFetch("/budgets", { method: "PUT", body: JSON.stringify(suggestions) });
       setBudgets(saved);
       setDraft(Object.fromEntries(saved.map((b) => [b.category, Number(b.monthly_limit)])));
+      setCategories((items) => [...new Set([...items, ...saved.map((item) => item.category)])]);
       toast("Dynamic budgets applied", "success");
     } catch (e) {
       toast(e.message, "error");
@@ -74,9 +78,10 @@ export default function Budgets() {
     );
   }
 
-  const totalBudgeted = EXPENSE_CATEGORIES.reduce((s, c) => s + (Number(draft[c]) || 0), 0);
-  const totalSpent    = EXPENSE_CATEGORIES.reduce((s, c) => s + Number(byCategory[c] || 0), 0);
-  const overCount     = EXPENSE_CATEGORIES.filter(c => {
+  const budgetCategories = [...new Set([...categories, ...budgets.map((budget) => budget.category), ...Object.keys(byCategory)])].sort();
+  const totalBudgeted = budgetCategories.reduce((s, c) => s + (Number(draft[c]) || 0), 0);
+  const totalSpent    = budgetCategories.reduce((s, c) => s + Number(byCategory[c] || 0), 0);
+  const overCount     = budgetCategories.filter(c => {
     const b = Number(draft[c] || 0); return b > 0 && Number(byCategory[c] || 0) > b;
   }).length;
 
@@ -85,7 +90,7 @@ export default function Budgets() {
       <div className="view-header">
         <div>
           <h1 className="page-title">Goals & Budgets</h1>
-          <p className="page-subtitle" style={{ marginBottom: 0 }}>Track spending limits and stay on budget</p>
+          <p className="page-subtitle" style={{ marginBottom: 0 }}>Set a target, see your pace, and decide what to adjust.</p>
         </div>
         <div className="view-header-actions">
           <button className="btn-secondary" style={{ fontSize: 14 }} onClick={applyDynamic}>
@@ -96,6 +101,10 @@ export default function Budgets() {
           </button>
         </div>
       </div>
+
+      <p style={{ color: "var(--text-muted)", fontSize: 12, margin: "-8px 0 18px" }}>
+        Pace projections extend spending so far this month across the full month. They are estimates, not a forecast of bills or account balance.
+      </p>
 
       {/* Summary strip */}
       <div className="summary-strip">
@@ -112,9 +121,15 @@ export default function Budgets() {
       </div>
 
       <div className="budget-grid">
-        {EXPENSE_CATEGORIES.map((cat) => {
+        {budgetCategories.map((cat) => {
           const spent  = Number(byCategory[cat] || 0);
           const budget = Number(draft[cat] || 0);
+          const now = new Date();
+          const dayOfMonth = now.getDate();
+          const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+          const projected = dayOfMonth ? spent / dayOfMonth * daysInMonth : spent;
+          const remainingDays = Math.max(1, daysInMonth - dayOfMonth);
+          const dailyAllowance = budget > 0 ? Math.max(0, budget - spent) / remainingDays : null;
           const pct    = budget > 0 ? Math.min(120, (spent / budget) * 100) : 0;
           const isOver = budget > 0 && spent > budget;
           const color  = CATEGORY_COLORS[cat] || "var(--text-secondary)";
@@ -184,6 +199,12 @@ export default function Budgets() {
                     : "No limit set"
                 }
               </div>
+              {budget > 0 && spent > 0 && (
+                <div style={{ borderTop: "1px solid var(--border)", marginTop: 12, paddingTop: 10, fontSize: 11, lineHeight: 1.5, color: projected > budget ? "var(--warning)" : "var(--text-muted)" }}>
+                  At this month’s pace: about {money(projected)} by month end.
+                  {dailyAllowance != null && <span> To stay near your target, average {money(dailyAllowance)}/day for the remaining {remainingDays} days.</span>}
+                </div>
+              )}
             </div>
           );
         })}
