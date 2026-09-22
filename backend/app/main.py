@@ -5,32 +5,38 @@ import json
 import logging
 import sys
 import time
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy import inspect, text
+from sqlalchemy import case, inspect, text
 from sqlalchemy.orm import Session, selectinload
 
 from .auth import get_current_user
 from .config import settings
-from .db import Base, engine, get_db
+from .db import Base, SessionLocal, engine, get_db
 from .models import (
     Account,
     AIConversation,
     AIMessage,
+    AuditLog,
     Budget,
+    CategoryCorrection,
+    Goal,
     Holding,
     ImportJob,
+    MerchantAlias,
     Portfolio,
+    RecurringRule,
     Transaction,
     User,
+    UserCategory,
     Webhook,
 )
 from .schemas import (
@@ -47,26 +53,42 @@ from .schemas import (
     CategorizeSingleResponse,
     ConversationOut,
     CreditHealthOut,
+    DataDeletionRequest,
+    GoalIn,
+    GoalOut,
     GSTReportOut,
     HoldingIn,
     HoldingOut,
     ImportJobOut,
+    ImportPreviewOut,
+    InsightFeedbackRequest,
+    MerchantAliasIn,
+    MerchantAliasOut,
     MessageOut,
     PaginatedTransactions,
     PortfolioIn,
     PortfolioOut,
     ProactiveInsight,
     ProfileStatsOut,
+    ReconciliationOut,
+    ReconciliationRequest,
+    RecurringRuleIn,
+    RecurringRuleOut,
+    ScenarioOut,
+    ScenarioRequest,
     SmsParseRequest,
     SmsWebhookRequest,
     TransactionIn,
     TransactionOut,
+    UserCategoryIn,
+    UserCategoryOut,
     UserContext,
     UserProfileIn,
     UserProfileOut,
     WebhookIn,
     WebhookOut,
 )
+from .services.advisor_facts import deterministic_answer
 from .services.ai_router import ai_router
 from .services.anomaly_detector import detect_anomalies
 from .services.audit import get_audit_trail, log_event
@@ -74,6 +96,7 @@ from .services.auto_categorizer import categorize_batch, categorize_single
 from .services.benchmarks import generate_benchmarks
 from .services.bill_negotiator import analyze_bills
 from .services.categorization_learner import get_user_overrides, record_correction
+from .services.categorizer import CATEGORIES
 from .services.credit_health import compute_credit_health
 from .services.export import export_csv, export_json, export_tally_xml
 from .services.forecaster import budget_breach_warnings, generate_forecast
@@ -81,7 +104,10 @@ from .services.gst import generate_gst_report
 from .services.insights import (
     SYSTEM_PROMPT,
     build_advisor_context,
+    build_analysis_object,
+    compare_periods,
     compute_insights,
+    data_quality,
     dynamic_budget_suggestions,
     monthly_summary,
     recurring_payments,
@@ -90,8 +116,10 @@ from .services.portfolio_analytics import compute_portfolio_analytics
 from .services.proactive_insights import generate_proactive_insights
 from .services.prompt_guard import build_safe_messages, sanitize_user_input
 from .services.receipt_ocr import parse_receipt_image
+from .services.scenarios import calculate_scenario
 from .services.sms_parser import parse_sms
 from .services.statements import parse_csv, parse_excel, parse_pdf
+from .services.telemetry import record_telemetry
 from .services.url_guard import UnsafeURLError, validate_webhook_url
 
 
@@ -172,6 +200,54 @@ if settings.run_db_bootstrap:
                 with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE users ADD COLUMN avatar_url TEXT"))
                     logger.info("Migrated: Added avatar_url to users table.")
+        if inspector.has_table("import_jobs"):
+            columns = [col["name"] for col in inspector.get_columns("import_jobs")]
+            with engine.begin() as conn:
+                if "file_extension" not in columns:
+                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN file_extension VARCHAR(8) DEFAULT ''"))
+                    logger.info("Migrated: Added import_jobs.file_extension.")
+                if "file_fingerprint" not in columns:
+                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN file_fingerprint VARCHAR(64)"))
+                    logger.info("Migrated: Added import_jobs.file_fingerprint.")
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_import_jobs_file_fingerprint ON import_jobs (file_fingerprint)"))
+                if "account_id" not in columns:
+                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN account_id VARCHAR(36)"))
+                    logger.info("Migrated: Added import_jobs.account_id.")
+                if "file_content" not in columns:
+                    blob_type = "BYTEA" if engine.dialect.name == "postgresql" else "BLOB"
+                    conn.execute(text(f"ALTER TABLE import_jobs ADD COLUMN file_content {blob_type}"))
+                    logger.info("Migrated: Added import_jobs.file_content.")
+                if "total_rows" not in columns:
+                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN total_rows INTEGER"))
+                    logger.info("Migrated: Added import_jobs.total_rows.")
+                if "processed_rows" not in columns:
+                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN processed_rows INTEGER NOT NULL DEFAULT 0"))
+                    logger.info("Migrated: Added import_jobs.processed_rows.")
+                if "cancel_requested" not in columns:
+                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN cancel_requested BOOLEAN NOT NULL DEFAULT FALSE"))
+                    logger.info("Migrated: Added import_jobs.cancel_requested.")
+                if "excluded_row_fingerprints" not in columns:
+                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN excluded_row_fingerprints TEXT"))
+                    logger.info("Migrated: Added import_jobs.excluded_row_fingerprints.")
+        if inspector.has_table("accounts"):
+            columns = [col["name"] for col in inspector.get_columns("accounts")]
+            with engine.begin() as conn:
+                if "last_reconciled_at" not in columns:
+                    conn.execute(text("ALTER TABLE accounts ADD COLUMN last_reconciled_at TIMESTAMP"))
+                    logger.info("Migrated: Added accounts.last_reconciled_at.")
+                if "last_reconciled_balance" not in columns:
+                    conn.execute(text("ALTER TABLE accounts ADD COLUMN last_reconciled_balance NUMERIC(14,2)"))
+                    logger.info("Migrated: Added accounts.last_reconciled_balance.")
+                if "reconciliation_note" not in columns:
+                    conn.execute(text("ALTER TABLE accounts ADD COLUMN reconciliation_note TEXT"))
+                    logger.info("Migrated: Added accounts.reconciliation_note.")
+        if inspector.has_table("transactions"):
+            columns = [col["name"] for col in inspector.get_columns("transactions")]
+            if "status" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE transactions ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'posted'"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_transactions_status ON transactions (status)"))
+                    logger.info("Migrated: Added transactions.status.")
     except Exception as e:
         logger.warning("Failed to auto-migrate schema: %s", e)
 
@@ -182,6 +258,27 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Ledger API", version="1.4.0", docs_url="/docs")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+_import_recovery_task: asyncio.Task | None = None
+
+
+@app.on_event("startup")
+async def start_import_recovery() -> None:
+    """Start the lightweight database-backed import worker."""
+    global _import_recovery_task
+    _import_recovery_task = asyncio.create_task(_import_recovery_loop())
+
+
+@app.on_event("shutdown")
+async def stop_import_recovery() -> None:
+    global _import_recovery_task
+    if _import_recovery_task:
+        _import_recovery_task.cancel()
+        try:
+            await _import_recovery_task
+        except asyncio.CancelledError:
+            pass
+        _import_recovery_task = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -194,8 +291,10 @@ def _month_range(month: str) -> tuple[date, date]:
     return start, end
 
 
-def _tx_query(db: Session, user_id: str, month: str | None = None):
+def _tx_query(db: Session, user_id: str, month: str | None = None, *, include_unposted: bool = False):
     q = db.query(Transaction).filter(Transaction.user_id == user_id)
+    if not include_unposted:
+        q = q.filter(Transaction.status == "posted")
     if month:
         start, end = _month_range(month)
         q = q.filter(Transaction.date >= start, Transaction.date < end)
@@ -204,6 +303,52 @@ def _tx_query(db: Session, user_id: str, month: str | None = None):
 
 def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
+
+
+def _statement_row_fingerprint(row: dict, account_id: str | None = None) -> str:
+    """Stable row identity that preserves legitimate same-value transactions across accounts."""
+    row_date = row["date"].isoformat() if hasattr(row["date"], "isoformat") else str(row["date"])
+    description = " ".join(str(row.get("description", "")).casefold().split())
+    raw = f"statement:v2|{account_id or 'unassigned'}|{row_date}|{row.get('type', 'expense')}|{row['amount']}|{description}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _merchant_key(value: str | None) -> str:
+    return " ".join((value or "").casefold().split())
+
+
+def _resolve_merchant_alias(db: Session, user_id: str, description: str, proposed: str | None = None) -> str | None:
+    """Apply a user alias while retaining the original statement description."""
+    candidates = {_merchant_key(description)}
+    if proposed:
+        candidates.add(_merchant_key(proposed))
+    alias = (
+        db.query(MerchantAlias)
+        .filter(MerchantAlias.user_id == user_id, MerchantAlias.alias_key.in_(candidates))
+        .order_by(MerchantAlias.created_at.desc())
+        .first()
+    )
+    return alias.canonical if alias else proposed
+
+
+def _recurring_payload(rule: RecurringRule) -> dict:
+    return {
+        "id": rule.id,
+        "description": rule.description,
+        "category": rule.category,
+        "cadence": rule.cadence,
+        "average_amount": rule.average_amount,
+        "minimum_amount": rule.minimum_amount,
+        "maximum_amount": rule.maximum_amount,
+        "next_expected": rule.next_expected,
+        "confidence": rule.confidence,
+        "status": rule.status,
+        "confirmed": rule.confirmed,
+        "evidence_transaction_ids": json.loads(rule.evidence_transaction_ids or "[]"),
+        "confirmed_at": rule.confirmed_at,
+        "created_at": rule.created_at,
+        "updated_at": rule.updated_at,
+    }
 
 
 def _get_balance_at(
@@ -230,6 +375,7 @@ def _get_balance_at(
     # ── Step 1: find the anchor row ──
     anchor_q = db.query(Transaction).filter(
         Transaction.user_id == user_id,
+        Transaction.status == "posted",
         Transaction.running_balance.isnot(None),
         Transaction.source != "cash",
     )
@@ -267,15 +413,17 @@ def _get_balance_at(
         ),
     )
 
-    # Single SQL aggregate (income - expense) instead of pulling every row into
+    # Single SQL aggregate (income + refund - expense) instead of pulling every row into
     # Python and summing. Avoids O(n²) work when this is called per-row during
     # statement import, and keeps memory flat regardless of history size.
     signed_amount = case(
-        (Transaction.type == "income", Transaction.amount),
-        else_=-Transaction.amount,
+        (Transaction.type.in_(("income", "refund", "reimbursement")), Transaction.amount),
+        (Transaction.type == "expense", -Transaction.amount),
+        else_=0,
     )
     net_q = db.query(func.coalesce(func.sum(signed_amount), 0)).filter(
         Transaction.user_id == user_id,
+        Transaction.status == "posted",
         Transaction.id != anchor.id,
         Transaction.source != "cash",
         after_filter,
@@ -329,7 +477,7 @@ def _wants_overspending(question: str) -> bool:
 
 
 def _format_transaction(tx: Transaction) -> str:
-    direction = "income" if tx.type == "income" else "expense"
+    direction = {"income": "income", "expense": "expense", "refund": "refund", "transfer": "transfer"}.get(tx.type, tx.type)
     return (
         f"Your latest transaction is {direction} of INR {tx.amount} on {tx.date.isoformat()} "
         f"for {tx.description} in {tx.category}."
@@ -357,6 +505,27 @@ def _format_overspending(transactions: list[Transaction]) -> str:
         f"You are spending most{period} in {top[0]}: INR {top[1]['amount']:.0f} "
         f"across {top[1]['count']} transactions.{extra}"
     )
+
+
+def _transaction_snapshot(tx: Transaction) -> dict:
+    """Serialize the editable transaction fields for an auditable one-step undo."""
+    return {
+        "date": tx.date.isoformat(),
+        "type": tx.type,
+        "status": getattr(tx, "status", "posted"),
+        "category": tx.category,
+        "amount": str(tx.amount),
+        "description": tx.description,
+        "merchant_normalized": tx.merchant_normalized,
+        "confidence": tx.confidence,
+        "source": tx.source,
+        "source_ref": tx.source_ref,
+        "account_id": tx.account_id,
+        "tags": tx.tags,
+        "notes": tx.notes,
+        "running_balance": str(tx.running_balance) if tx.running_balance is not None else None,
+        "stmt_seq": tx.stmt_seq,
+    }
 
 
 # ── Keep-alive ping (Render free tier cold-start prevention) ─────────────────
@@ -414,10 +583,15 @@ def get_profile_stats(
     # SQLite-compatible separate aggregate queries
     total_txns = db.query(func.count(Transaction.id)).filter(Transaction.user_id == user.id).scalar() or 0
     total_income = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
-        Transaction.user_id == user.id, Transaction.type == "income"
+        Transaction.user_id == user.id, Transaction.status == "posted", Transaction.type == "income"
     ).scalar() or Decimal("0")
-    total_expenses = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
-        Transaction.user_id == user.id, Transaction.type == "expense"
+    signed_expense = case(
+        (Transaction.type == "expense", Transaction.amount),
+        (Transaction.type.in_(("refund", "reimbursement")), -Transaction.amount),
+        else_=0,
+    )
+    total_expenses = db.query(func.coalesce(func.sum(signed_expense), 0)).filter(
+        Transaction.user_id == user.id, Transaction.status == "posted", Transaction.type.in_(("expense", "refund", "reimbursement"))
     ).scalar() or Decimal("0")
     accounts_count = (
         db.query(func.count(Account.id)).filter(Account.user_id == user.id, Account.is_active.is_(True)).scalar() or 0
@@ -434,6 +608,200 @@ def get_profile_stats(
     )
 
 
+# ── Personalization ─────────────────────────────────────────────────────────
+@app.get("/merchant-aliases", response_model=list[MerchantAliasOut])
+def list_merchant_aliases(user: UserContext = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.query(MerchantAlias).filter(MerchantAlias.user_id == user.id).order_by(MerchantAlias.alias_key).all()
+
+
+@app.post("/merchant-aliases", response_model=MerchantAliasOut, status_code=201)
+def upsert_merchant_alias(
+    payload: MerchantAliasIn,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    alias_key = _merchant_key(payload.alias)
+    canonical = " ".join(payload.canonical.strip().split())
+    if not alias_key or _merchant_key(canonical) == alias_key:
+        raise HTTPException(status_code=400, detail="Alias and canonical merchant must be different")
+    alias = db.query(MerchantAlias).filter(MerchantAlias.user_id == user.id, MerchantAlias.alias_key == alias_key).first()
+    action = "update" if alias else "create"
+    if alias:
+        alias.canonical = canonical
+    else:
+        alias = MerchantAlias(user_id=user.id, alias_key=alias_key, canonical=canonical)
+        db.add(alias)
+    matching = db.query(Transaction).filter(Transaction.user_id == user.id).all()
+    applied = 0
+    for tx in matching:
+        if _merchant_key(tx.description) == alias_key or _merchant_key(tx.merchant_normalized) == alias_key:
+            tx.merchant_normalized = canonical
+            applied += 1
+    db.flush()
+    log_event(db, user_id=user.id, action=action, resource_type="merchant_alias", resource_id=alias.id,
+              details={"applied_transaction_count": applied}, ip_address=_client_ip(request))
+    db.commit()
+    db.refresh(alias)
+    return alias
+
+
+@app.delete("/merchant-aliases/{alias_id}")
+def delete_merchant_alias(
+    alias_id: str,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    alias = db.get(MerchantAlias, alias_id)
+    if not alias or alias.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Merchant alias not found")
+    db.delete(alias)
+    log_event(db, user_id=user.id, action="delete", resource_type="merchant_alias", resource_id=alias_id,
+              ip_address=_client_ip(request))
+    db.commit()
+    return {"deleted": True}
+
+
+def _category_payload(name: str, kind: str, reporting_group: str, *, is_custom: bool, category_id: str) -> dict:
+    return {"id": category_id, "name": name, "kind": kind, "reporting_group": reporting_group,
+            "is_active": True, "is_custom": is_custom}
+
+
+@app.get("/categories", response_model=list[UserCategoryOut])
+def list_categories(user: UserContext = Depends(get_current_user), db: Session = Depends(get_db)):
+    builtins = [
+        _category_payload(name, "income" if name in {"Salary", "Freelance"} else "expense", name,
+                          is_custom=False, category_id=f"default:{name}")
+        for name in CATEGORIES
+    ]
+    custom = db.query(UserCategory).filter(UserCategory.user_id == user.id, UserCategory.is_active.is_(True)).order_by(UserCategory.name).all()
+    return builtins + [_category_payload(c.name, c.kind, c.reporting_group, is_custom=True, category_id=c.id) for c in custom]
+
+
+@app.post("/categories", response_model=UserCategoryOut, status_code=201)
+def create_category(
+    payload: UserCategoryIn,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    name = " ".join(payload.name.strip().split())
+    if name.casefold() in {value.casefold() for value in CATEGORIES}:
+        raise HTTPException(status_code=409, detail="That category is already built in")
+    existing = db.query(UserCategory).filter(UserCategory.user_id == user.id, UserCategory.name.ilike(name), UserCategory.kind == payload.kind).first()
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            existing.reporting_group = payload.reporting_group
+        else:
+            raise HTTPException(status_code=409, detail="That category already exists")
+        category = existing
+    else:
+        category = UserCategory(user_id=user.id, name=name, kind=payload.kind, reporting_group=payload.reporting_group)
+        db.add(category)
+    db.flush()
+    log_event(db, user_id=user.id, action="create", resource_type="category", resource_id=category.id, ip_address=_client_ip(request))
+    db.commit()
+    return _category_payload(category.name, category.kind, category.reporting_group, is_custom=True, category_id=category.id)
+
+
+@app.delete("/categories/{category_id}")
+def deactivate_category(
+    category_id: str,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    category = db.get(UserCategory, category_id)
+    if not category or category.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Custom category not found")
+    category.is_active = False
+    log_event(db, user_id=user.id, action="deactivate", resource_type="category", resource_id=category.id, ip_address=_client_ip(request))
+    db.commit()
+    return {"deleted": True}
+
+
+@app.get("/recurring", response_model=list[RecurringRuleOut])
+def list_recurring_rules(user: UserContext = Depends(get_current_user), db: Session = Depends(get_db)):
+    rules = db.query(RecurringRule).filter(RecurringRule.user_id == user.id).order_by(RecurringRule.status, RecurringRule.next_expected).all()
+    return [_recurring_payload(rule) for rule in rules]
+
+
+def _validated_evidence_ids(db: Session, user_id: str, ids: list[str]) -> list[str]:
+    if not ids:
+        return []
+    rows = db.query(Transaction.id).filter(Transaction.user_id == user_id, Transaction.id.in_(ids), Transaction.status == "posted").all()
+    valid = {row[0] for row in rows}
+    invalid = [value for value in ids if value not in valid]
+    if invalid:
+        raise HTTPException(status_code=400, detail="Recurring evidence must reference posted transactions owned by this user")
+    return list(dict.fromkeys(ids))
+
+
+@app.post("/recurring", response_model=RecurringRuleOut, status_code=201)
+def create_recurring_rule(
+    payload: RecurringRuleIn,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    values = payload.model_dump()
+    evidence = _validated_evidence_ids(db, user.id, values.pop("evidence_transaction_ids"))
+    confirmed = values.get("confirmed", False)
+    rule = RecurringRule(user_id=user.id, **values, evidence_transaction_ids=json.dumps(evidence), confirmed_at=datetime.now(UTC) if confirmed else None)
+    db.add(rule)
+    db.flush()
+    log_event(db, user_id=user.id, action="create", resource_type="recurring_rule", resource_id=rule.id, ip_address=_client_ip(request))
+    db.commit()
+    db.refresh(rule)
+    return _recurring_payload(rule)
+
+
+@app.put("/recurring/{rule_id}", response_model=RecurringRuleOut)
+def update_recurring_rule(
+    rule_id: str,
+    payload: RecurringRuleIn,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rule = db.get(RecurringRule, rule_id)
+    if not rule or rule.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Recurring rule not found")
+    values = payload.model_dump()
+    evidence = _validated_evidence_ids(db, user.id, values.pop("evidence_transaction_ids"))
+    for key, value in values.items():
+        if key != "confirmed":
+            setattr(rule, key, value)
+    rule.confirmed = values["confirmed"]
+    rule.evidence_transaction_ids = json.dumps(evidence)
+    if rule.confirmed and not rule.confirmed_at:
+        rule.confirmed_at = datetime.now(UTC)
+    if not rule.confirmed:
+        rule.confirmed_at = None
+    log_event(db, user_id=user.id, action="update", resource_type="recurring_rule", resource_id=rule.id, ip_address=_client_ip(request))
+    db.commit()
+    db.refresh(rule)
+    return _recurring_payload(rule)
+
+
+@app.delete("/recurring/{rule_id}")
+def delete_recurring_rule(
+    rule_id: str,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rule = db.get(RecurringRule, rule_id)
+    if not rule or rule.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Recurring rule not found")
+    db.delete(rule)
+    log_event(db, user_id=user.id, action="delete", resource_type="recurring_rule", resource_id=rule_id, ip_address=_client_ip(request))
+    db.commit()
+    return {"deleted": True}
+
+
 # ── Transactions ──────────────────────────────────────────────────────────────
 @app.get("/transactions", response_model=PaginatedTransactions)
 def list_transactions(
@@ -443,6 +811,7 @@ def list_transactions(
     category: str | None = Query(None),
     search: str | None = Query(None),
     tx_type: str | None = Query(None, alias="type"),
+    tx_status: str | None = Query(None, alias="status", pattern="^(posted|pending|excluded)$"),
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -453,8 +822,12 @@ def list_transactions(
         q = q.filter(Transaction.date >= start, Transaction.date < end)
     if category:
         q = q.filter(Transaction.category == category)
-    if tx_type and tx_type in ("income", "expense"):
+    if tx_type and tx_type in ("income", "expense", "refund", "reimbursement", "transfer"):
         q = q.filter(Transaction.type == tx_type)
+    if tx_status:
+        q = q.filter(Transaction.status == tx_status)
+    else:
+        q = q.filter(Transaction.status == "posted")
     if search:
         pattern = f"%{search.lower()}%"
         q = q.filter(Transaction.description.ilike(pattern))
@@ -487,7 +860,12 @@ def create_transaction(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if payload.account_id:
+        account = db.get(Account, payload.account_id)
+        if not account or account.user_id != user.id or not account.is_active:
+            raise HTTPException(status_code=400, detail="Account is not available for this user")
     tx = Transaction(user_id=user.id, **payload.model_dump())
+    tx.merchant_normalized = _resolve_merchant_alias(db, user.id, tx.description, tx.merchant_normalized)
     db.add(tx)
     db.flush()  # assign tx.id before backfill query
 
@@ -496,9 +874,9 @@ def create_transaction(
     if tx.running_balance is None and tx.source != "cash":
         prior_balance = _get_balance_at(db, user.id, as_of_date=None, exclude_id=tx.id)
         if prior_balance is not None:
-            if tx.type == "income":
+            if tx.type in ("income", "refund", "reimbursement") and tx.status == "posted":
                 tx.running_balance = prior_balance + tx.amount
-            else:
+            elif tx.type == "expense" and tx.status == "posted":
                 tx.running_balance = prior_balance - tx.amount
 
     db.commit()
@@ -566,6 +944,72 @@ def list_budgets(
     return db.query(Budget).filter(Budget.user_id == user.id).order_by(Budget.category).all()
 
 
+# ── Goals ────────────────────────────────────────────────────────────────────
+@app.get("/goals", response_model=list[GoalOut])
+def list_goals(
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return db.query(Goal).filter(Goal.user_id == user.id).order_by(Goal.status, Goal.deadline, Goal.created_at).all()
+
+
+@app.post("/goals", response_model=GoalOut, status_code=201)
+def create_goal(
+    payload: GoalIn,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    values = payload.model_dump()
+    if values["current_amount"] >= values["target_amount"] and values["status"] == "active":
+        values["status"] = "completed"
+    goal = Goal(user_id=user.id, **values)
+    db.add(goal)
+    db.flush()
+    log_event(db, user_id=user.id, action="create", resource_type="goal", resource_id=goal.id, ip_address=_client_ip(request))
+    db.commit()
+    db.refresh(goal)
+    return goal
+
+
+@app.put("/goals/{goal_id}", response_model=GoalOut)
+def update_goal(
+    goal_id: str,
+    payload: GoalIn,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    goal = db.get(Goal, goal_id)
+    if not goal or goal.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    values = payload.model_dump()
+    if values["current_amount"] >= values["target_amount"] and values["status"] == "active":
+        values["status"] = "completed"
+    for key, value in values.items():
+        setattr(goal, key, value)
+    log_event(db, user_id=user.id, action="update", resource_type="goal", resource_id=goal.id, ip_address=_client_ip(request))
+    db.commit()
+    db.refresh(goal)
+    return goal
+
+
+@app.delete("/goals/{goal_id}")
+def delete_goal(
+    goal_id: str,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    goal = db.get(Goal, goal_id)
+    if not goal or goal.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    db.delete(goal)
+    log_event(db, user_id=user.id, action="delete", resource_type="goal", resource_id=goal.id, ip_address=_client_ip(request))
+    db.commit()
+    return {"deleted": True}
+
+
 @app.put("/budgets", response_model=list[BudgetOut])
 def upsert_budgets(
     payload: list[BudgetIn],
@@ -601,7 +1045,7 @@ def budget_suggestions(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Transaction).filter(Transaction.user_id == user.id, Transaction.type == "expense")
+    q = db.query(Transaction).filter(Transaction.user_id == user.id, Transaction.status == "posted", Transaction.type == "expense")
     start = _history_start(range)
     if start:
         q = q.filter(Transaction.date >= start)
@@ -625,6 +1069,50 @@ def get_summary(
     transactions = q.all()
     budgets = db.query(Budget).filter(Budget.user_id == user.id).all()
     summary = monthly_summary(transactions)
+    quality = data_quality(transactions)
+    quality.update(
+        {
+            "unassigned_account_count": db.query(Transaction.id).filter(
+                Transaction.user_id == user.id,
+                Transaction.source != "cash",
+                Transaction.account_id.is_(None),
+            ).count(),
+            "active_accounts": db.query(Account.id).filter(
+                Account.user_id == user.id, Account.is_active.is_(True)
+            ).count(),
+            "reconciled_accounts": db.query(Account.id).filter(
+                Account.user_id == user.id,
+                Account.is_active.is_(True),
+                Account.last_reconciled_at.isnot(None),
+            ).count(),
+            "pending_imports": db.query(ImportJob.id).filter(
+                ImportJob.user_id == user.id, ImportJob.status.in_(("pending", "processing"))
+            ).count(),
+            "failed_imports": db.query(ImportJob.id).filter(
+                ImportJob.user_id == user.id, ImportJob.status == "failed"
+            ).count(),
+            "pending_transactions": db.query(Transaction.id).filter(
+                Transaction.user_id == user.id, Transaction.status == "pending"
+            ).count(),
+            "excluded_transactions": db.query(Transaction.id).filter(
+                Transaction.user_id == user.id, Transaction.status == "excluded"
+            ).count(),
+        }
+    )
+    quality["stale_account_count"] = max(0, quality["active_accounts"] - quality["reconciled_accounts"])
+    quality["account_balance_quality"] = (
+        "none" if quality["active_accounts"] == 0 else
+        "reconciled" if quality["stale_account_count"] == 0 else
+        "mixed_or_unreconciled"
+    )
+    if quality["unassigned_account_count"]:
+        quality["warnings"].append("Assign imported transactions to an account for reliable balances")
+    if quality["failed_imports"]:
+        quality["warnings"].append("Review failed statement imports")
+    if quality["pending_transactions"]:
+        quality["warnings"].append("Review pending transactions before relying on committed totals")
+    if quality["stale_account_count"]:
+        quality["warnings"].append("Reconcile active account balances for a stronger balance picture")
 
     summary["closing_balance"] = _get_balance_at(db, user.id, as_of_date=None)
     summary["opening_balance"] = None
@@ -637,10 +1125,14 @@ def get_summary(
         if period_start_d:
             summary["opening_balance"] = _get_balance_at(db, user.id, as_of_date=period_start_d)
 
+    summary["analysis"] = build_analysis_object(transactions, summary, quality)
+    summary["analysis"]["comparison"] = compare_periods(transactions, days=30)
+
     return {
         **summary,
         "insights": compute_insights(transactions, budgets),
         "recurring": recurring_payments(transactions),
+        "data_quality": quality,
     }
 
 
@@ -759,11 +1251,338 @@ async def import_sms_webhook(
 
 
 # ── Statement Import (async job) ──────────────────────────────────────────────
+@app.post("/imports/statement/preview", response_model=ImportPreviewOut)
+@limiter.limit(settings.import_rate_limit)
+async def preview_statement_import(
+    request: Request,
+    file: UploadFile = File(...),
+    account_id: str | None = Form(default=None),
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Parse a statement without writing transactions so the user can review it."""
+    started = time.perf_counter()
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+    ext = file.filename.lower().rsplit(".", 1)[-1]
+    if ext not in ("csv", "pdf", "xls", "xlsx", "ods"):
+        raise HTTPException(status_code=400, detail="Upload a CSV, Excel, OpenDocument, or PDF statement")
+    if account_id:
+        account = db.get(Account, account_id)
+        if not account or account.user_id != user.id or not account.is_active:
+            raise HTTPException(status_code=400, detail="Account is not available for this user")
+    content = await file.read()
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=400, detail=f"File too large (max {settings.max_upload_mb}MB)")
+
+    if ext == "csv":
+        rows = parse_csv(content)
+    elif ext in ("xls", "xlsx", "ods"):
+        rows = parse_excel(content, ext)
+    else:
+        rows = await parse_pdf(content)
+
+    if len(rows) > settings.max_import_rows:
+        raise HTTPException(status_code=400, detail=f"Statement has more than {settings.max_import_rows} rows")
+
+    fingerprints = [_statement_row_fingerprint(row, account_id) for row in rows]
+    existing_refs = {
+        ref for (ref,) in db.query(Transaction.source_ref).filter(
+            Transaction.user_id == user.id,
+            Transaction.source == "statement",
+            Transaction.source_ref.in_(fingerprints or ["__none__"]),
+        ).all()
+    }
+    seen: set[str] = set()
+    duplicate_count = 0
+    category_results = {}
+    if rows:
+        try:
+            user_overrides = get_user_overrides(db, user.id)
+            category_results = {
+                str(result.get("id")): result
+                for result in await categorize_batch(
+                    [
+                        {"id": str(index), "description": row["description"], "type": row.get("type", "expense")}
+                        for index, row in enumerate(rows)
+                    ],
+                    user_overrides=user_overrides,
+                )
+            }
+        except Exception as ai_err:
+            logger.warning("Statement preview AI categorization failed: %s", ai_err)
+    preview_rows = []
+    for index, (row, fingerprint) in enumerate(zip(rows, fingerprints, strict=True)):
+        duplicate = fingerprint in existing_refs or fingerprint in seen
+        if duplicate:
+            duplicate_count += 1
+        seen.add(fingerprint)
+        category_result = category_results.get(str(index), {})
+        preview_rows.append({
+            "fingerprint": fingerprint,
+            "date": row["date"],
+            "type": row["type"],
+            "amount": row["amount"],
+            "description": row["description"],
+            "category": category_result.get("category") or row.get("category", "Other"),
+            "category_confidence": category_result.get("confidence"),
+            "merchant_normalized": category_result.get("merchant"),
+            "duplicate": duplicate,
+        })
+
+    warnings = []
+    if not rows:
+        warnings.append("No transactions could be extracted from this file")
+    if duplicate_count:
+        warnings.append(f"{duplicate_count} row(s) already exist or repeat within this file and will be skipped")
+    if not account_id:
+        warnings.append("No account selected; imported rows will not contribute to an account balance")
+    if ext == "pdf" and rows:
+        warnings.append("PDF imports use parsed text; review dates, amounts, and debit/credit direction before confirming")
+
+    result = {
+        "file_name": file.filename,
+        "row_count": len(rows),
+        "duplicate_count": duplicate_count,
+        "preview": preview_rows[:100],
+        "warnings": warnings,
+    }
+    record_telemetry(
+        "import.preview",
+        user_id=user.id,
+        latency_ms=(time.perf_counter() - started) * 1000,
+        parse_success=bool(rows),
+        metadata={"count": len(rows), "warning_count": len(warnings)},
+    )
+    return result
+
+
+async def _process_import_job(job_id: str) -> None:
+    """Process one stored import job using a fresh session.
+
+    Keeping the payload and processing metadata in the database means a worker
+    restart can recover a job instead of losing the request closure.
+    """
+    worker_db = SessionLocal()
+    worker_job = None
+    try:
+        claimed = worker_db.query(ImportJob).filter(
+            ImportJob.id == job_id,
+            ImportJob.status == "pending",
+        ).update({ImportJob.status: "processing"}, synchronize_session=False)
+        worker_db.commit()
+        if not claimed:
+            return
+        worker_job = worker_db.get(ImportJob, job_id)
+        if not worker_job:
+            logger.error("import.worker_missing_job job=%s", job_id)
+            return
+        if not worker_job.file_content:
+            worker_job.status = "failed"
+            worker_job.error_message = "Import payload is unavailable; please upload the statement again."
+            worker_db.commit()
+            logger.error("import.worker_missing_payload job=%s", job_id)
+            return
+        if worker_job.status == "done":
+            return
+        worker_job.status = "processing"
+        worker_db.commit()
+
+        content = worker_job.file_content
+        ext = worker_job.file_extension
+        user_id = worker_job.user_id
+        account_id = worker_job.account_id
+        try:
+            excluded_fingerprints = set(json.loads(worker_job.excluded_row_fingerprints or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            excluded_fingerprints = set()
+        if ext == "csv":
+            rows = parse_csv(content)
+        elif ext in ("xls", "xlsx", "ods"):
+            rows = parse_excel(content, ext)
+        else:
+            rows = await parse_pdf(content)
+
+        if len(rows) > settings.max_import_rows:
+            worker_job.status = "failed"
+            worker_job.error_message = (
+                f"Statement has {len(rows)} rows, over the {settings.max_import_rows}-row limit. "
+                "Split the file and re-upload."
+            )
+            worker_db.commit()
+            return
+
+        worker_job.total_rows = len(rows)
+        worker_job.processed_rows = 0
+        worker_db.commit()
+        if worker_job.cancel_requested:
+            worker_job.status = "cancelled"
+            worker_job.error_message = "Import cancelled before transactions were saved."
+            worker_db.commit()
+            return
+
+        if rows:
+            user_overrides = get_user_overrides(worker_db, user_id)
+            batch_input = [
+                {"id": str(i), "description": r["description"], "type": r.get("type", "expense")}
+                for i, r in enumerate(rows)
+            ]
+            try:
+                ai_results = await categorize_batch(batch_input, user_overrides=user_overrides)
+                for res in ai_results:
+                    idx = int(res["id"])
+                    if res.get("confidence", 0) >= 0.6 and res.get("category", "Other") != "Other":
+                        rows[idx]["category"] = res["category"]
+                        rows[idx]["ai_confidence"] = res["confidence"]
+                    if res.get("merchant"):
+                        rows[idx]["merchant_normalized"] = res["merchant"]
+            except Exception as ai_err:
+                logger.warning("Statement AI categorization pass failed: %s", ai_err)
+
+        prepared = []
+        for seq, row in enumerate(rows):
+            row["stmt_seq"] = seq
+            merchant_norm = row.pop("merchant_normalized", None)
+            ai_confidence = row.pop("ai_confidence", None)
+            validated = TransactionIn(**row).model_dump()
+            if account_id:
+                validated["account_id"] = account_id
+            fingerprint = _statement_row_fingerprint(validated, account_id)
+            validated["source_ref"] = fingerprint
+            prepared.append((validated, merchant_norm, ai_confidence, fingerprint))
+
+        existing_refs: set[str] = set()
+        if prepared:
+            fingerprints = [fp for _, _, _, fp in prepared]
+            existing_refs = {
+                ref for (ref,) in worker_db.query(Transaction.source_ref).filter(
+                    Transaction.user_id == user_id,
+                    Transaction.source == "statement",
+                    Transaction.source_ref.in_(fingerprints),
+                ).all()
+            }
+
+        prior_bal = _get_balance_at(worker_db, user_id, as_of_date=None)
+        saved_count = 0
+        seen: set[str] = set()
+        pending = 0
+        for validated, merchant_norm, ai_confidence, fingerprint in prepared:
+            cancel_requested = worker_db.query(ImportJob.cancel_requested).filter(ImportJob.id == job_id).scalar()
+            if cancel_requested:
+                worker_job.status = "cancelled"
+                worker_job.cancel_requested = True
+                worker_job.row_count = saved_count
+                worker_job.processed_rows = min(worker_job.total_rows or 0, saved_count)
+                worker_job.error_message = "Import cancelled; already processed rows remain safe and can be retried."
+                worker_db.commit()
+                return
+            if fingerprint in existing_refs or fingerprint in seen:
+                worker_job.processed_rows += 1
+                continue
+            if fingerprint in excluded_fingerprints:
+                worker_job.processed_rows += 1
+                continue
+            seen.add(fingerprint)
+            new_tx = Transaction(user_id=user_id, **validated)
+            new_tx.merchant_normalized = _resolve_merchant_alias(worker_db, user_id, new_tx.description, merchant_norm)
+            if ai_confidence is not None:
+                new_tx.confidence = ai_confidence
+            if new_tx.running_balance is None and new_tx.source != "cash" and prior_bal is not None:
+                if new_tx.type in ("income", "refund", "reimbursement") and new_tx.status == "posted":
+                    new_tx.running_balance = prior_bal + new_tx.amount
+                elif new_tx.type == "expense" and new_tx.status == "posted":
+                    new_tx.running_balance = prior_bal - new_tx.amount
+            worker_db.add(new_tx)
+            saved_count += 1
+            pending += 1
+            worker_job.processed_rows += 1
+            if pending >= 100:
+                worker_db.commit()
+                pending = 0
+
+        worker_job.status = "failed" if not rows else "done"
+        worker_job.processed_rows = len(rows)
+        worker_job.row_count = saved_count if rows else None
+        if not rows:
+            worker_job.error_message = (
+                "No transactions could be extracted from this file. If this is a scanned/image PDF, "
+                "export a digital PDF or CSV from your bank and re-upload."
+            )
+        else:
+            worker_job.error_message = None
+            worker_job.file_content = None
+        worker_db.commit()
+        record_telemetry(
+            "import.completed",
+            user_id=user_id,
+            parse_success=bool(rows),
+            outcome=worker_job.status,
+            metadata={"count": saved_count, "status": worker_job.status},
+        )
+        logger.info("import.finished job=%s status=%s rows=%s", job_id, worker_job.status, saved_count)
+    except Exception as exc:
+        worker_db.rollback()
+        worker_job = worker_db.get(ImportJob, job_id)
+        if worker_job:
+            worker_job.status = "failed"
+            worker_job.error_message = str(exc)[:500]
+            worker_db.commit()
+            record_telemetry(
+                "import.completed",
+                user_id=worker_job.user_id,
+                parse_success=False,
+                outcome="failed",
+                metadata={"status": "failed"},
+            )
+        logger.exception("import.failed job=%s", job_id)
+    finally:
+        worker_db.close()
+
+
+async def _import_recovery_loop() -> None:
+    """Recover pending jobs after a process restart."""
+    await asyncio.sleep(1)
+    while True:
+        recovery_db = SessionLocal()
+        try:
+            job = recovery_db.query(ImportJob).filter(
+                ImportJob.status == "pending",
+                ImportJob.file_content.isnot(None),
+            ).order_by(ImportJob.created_at).first()
+            if not job:
+                stale_before = datetime.now(UTC) - timedelta(minutes=5)
+                job = recovery_db.query(ImportJob).filter(
+                    ImportJob.status == "processing",
+                    ImportJob.updated_at < stale_before,
+                    ImportJob.file_content.isnot(None),
+                ).order_by(ImportJob.updated_at).first()
+                if job:
+                    job.status = "pending"
+                    recovery_db.commit()
+            if job:
+                job_id = job.id
+            else:
+                job_id = None
+        except Exception:
+            recovery_db.rollback()
+            logger.exception("import.recovery.poll_failed")
+            job_id = None
+        finally:
+            recovery_db.close()
+        if job_id:
+            await _process_import_job(job_id)
+        else:
+            await asyncio.sleep(5)
+
+
 @app.post("/imports/statement", response_model=ImportJobOut, status_code=202)
 @limiter.limit(settings.import_rate_limit)
 async def import_statement(
     request: Request,
     file: UploadFile = File(...),
+    account_id: str | None = Form(default=None),
+    excluded_row_fingerprints: str | None = Form(default=None),
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -777,148 +1596,76 @@ async def import_statement(
     # below since UploadFile.size is often None.
     if file.size and file.size > max_bytes:
         raise HTTPException(status_code=400, detail=f"File too large (max {settings.max_upload_mb}MB)")
+    if account_id:
+        account = db.get(Account, account_id)
+        if not account or account.user_id != user.id or not account.is_active:
+            raise HTTPException(status_code=400, detail="Account is not available for this user")
 
     content = await file.read()
     if len(content) > max_bytes:
         raise HTTPException(status_code=400, detail=f"File too large (max {settings.max_upload_mb}MB)")
 
-    # Create import job record
-    job = ImportJob(user_id=user.id, file_name=file.filename, status="processing")
+    file_fingerprint = hashlib.sha256(content).hexdigest()
+    excluded_fingerprints: list[str] = []
+    if excluded_row_fingerprints:
+        try:
+            parsed_exclusions = json.loads(excluded_row_fingerprints)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Invalid excluded import rows") from exc
+        if not isinstance(parsed_exclusions, list) or not all(isinstance(item, str) for item in parsed_exclusions):
+            raise HTTPException(status_code=400, detail="Invalid excluded import rows")
+        excluded_fingerprints = sorted(set(parsed_exclusions))[: settings.max_import_rows]
+    existing_job = (
+        db.query(ImportJob)
+        .filter(
+            ImportJob.user_id == user.id,
+            ImportJob.account_id == account_id,
+            ImportJob.file_fingerprint == file_fingerprint,
+        )
+        .order_by(ImportJob.created_at.desc())
+        .first()
+    )
+    if existing_job:
+        logger.info("import.idempotent_reupload user=%s job=%s status=%s", user.id, existing_job.id, existing_job.status)
+        return existing_job
+
+    # Persist the payload before scheduling work so a process restart can
+    # recover the import from the database.
+    job = ImportJob(
+        user_id=user.id,
+        file_name=file.filename,
+        file_extension=ext,
+        file_fingerprint=file_fingerprint,
+        account_id=account_id,
+        file_content=content,
+        processed_rows=0,
+        cancel_requested=False,
+        excluded_row_fingerprints=json.dumps(excluded_fingerprints),
+        status="pending",
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
 
-    # Process synchronously for now (Celery in Phase 2)
-    # Run in thread pool to avoid blocking event loop
-    async def _process():
-        try:
-            if ext == "csv":
-                rows = parse_csv(content)
-            elif ext in ("xls", "xlsx", "ods"):
-                rows = parse_excel(content, ext)
-            else:
-                rows = await parse_pdf(content)
-
-            # Cap row count so a pathological file can't exhaust the 512MB worker.
-            if len(rows) > settings.max_import_rows:
-                job.status = "failed"
-                job.error_message = (
-                    f"Statement has {len(rows)} rows, over the "
-                    f"{settings.max_import_rows}-row limit. Split the file and re-upload."
-                )
-                db.commit()
-                return
-
-            # ── AI Categorization upgrade pass ────────────────────────────────
-            # The parsers use a fast keyword-rules categorizer; now run the full
-            # 4-tier pipeline (user overrides → rules → embedding cache → LLM)
-            # over all rows so ambiguous/generic UPI descriptions get the best
-            # possible category instead of falling back to "Other".
-            if rows:
-                user_overrides = get_user_overrides(db, user.id)
-                batch_input = [
-                    {"id": str(i), "description": r["description"], "type": r.get("type", "expense")}
-                    for i, r in enumerate(rows)
-                ]
-                try:
-                    ai_results = await categorize_batch(batch_input, user_overrides=user_overrides)
-                    for res in ai_results:
-                        idx = int(res["id"])
-                        if res.get("confidence", 0) >= 0.6 and res.get("category", "Other") != "Other":
-                            rows[idx]["category"] = res["category"]
-                            rows[idx]["ai_confidence"] = res["confidence"]  # carried through prepared
-                        if res.get("merchant"):
-                            rows[idx]["merchant_normalized"] = res["merchant"]
-                except Exception as ai_err:
-                    logger.warning("Statement AI categorization pass failed: %s", ai_err)
-
-            # in a single IN(...) query instead of one query per row.
-            prepared = []  # list[(validated_dict, merchant_normalized, ai_confidence, fingerprint)]
-            for seq, row in enumerate(rows):
-                row["stmt_seq"] = seq  # preserve bank statement row order
-                # merchant_normalized and ai_confidence are set by the AI pass but are
-                # NOT TransactionIn fields — extract them before schema validation.
-                merchant_norm = row.pop("merchant_normalized", None)
-                ai_confidence = row.pop("ai_confidence", None)
-                validated = TransactionIn(**row).model_dump()
-                # SHA-256 dedup on date+amount+description
-                fingerprint = hashlib.sha256(
-                    f"{validated['date']}{validated['amount']}{validated['description']}".encode()
-                ).hexdigest()
-                validated["source_ref"] = fingerprint
-                prepared.append((validated, merchant_norm, ai_confidence, fingerprint))
-
-            existing_refs: set[str] = set()
-            if prepared:
-                fingerprints = [fp for _, fp in prepared]
-                existing_refs = {
-                    ref
-                    for (ref,) in db.query(Transaction.source_ref)
-                    .filter(
-                        Transaction.user_id == user.id,
-                        Transaction.source == "statement",
-                        Transaction.source_ref.in_(fingerprints),
-                    )
-                    .all()
-                }
-
-            # Backfill anchor balance is computed once: the session has
-            # autoflush=False, so freshly-added (un-flushed) rows are invisible to
-            # _get_balance_at — every per-row call in the old loop returned this
-            # same value. Computing it once is equivalent and avoids N queries.
-            prior_bal = _get_balance_at(db, user.id, as_of_date=None)
-
-            saved_count = 0
-            seen: set[str] = set()
-            pending = 0
-            for validated, merchant_norm, ai_confidence, fingerprint in prepared:
-                if fingerprint in existing_refs or fingerprint in seen:
-                    continue  # skip DB duplicates and in-file repeats
-                seen.add(fingerprint)
-                new_tx = Transaction(user_id=user.id, **validated)
-                # Apply AI-resolved metadata if available.
-                if merchant_norm:
-                    new_tx.merchant_normalized = merchant_norm
-                if ai_confidence is not None:
-                    new_tx.confidence = ai_confidence
-                # Backfill running_balance for rows where the parsed PDF/CSV
-                # had no Balance column (e.g. receipt PDFs, Spotify invoices).
-                if new_tx.running_balance is None and new_tx.source != "cash" and prior_bal is not None:
-                    if new_tx.type == "income":
-                        new_tx.running_balance = prior_bal + new_tx.amount
-                    else:
-                        new_tx.running_balance = prior_bal - new_tx.amount
-                db.add(new_tx)
-                saved_count += 1
-                pending += 1
-                # Flush+commit in chunks so the session's pending set stays bounded
-                # instead of holding every row in memory until one final commit.
-                if pending >= 500:
-                    db.commit()
-                    pending = 0
-
-            db.commit()
-            if not rows:
-                job.status = "failed"
-                job.error_message = (
-                    "No transactions could be extracted from this file. "
-                    "If this is a scanned/image PDF, export a digital (text-layer) PDF "
-                    "or a CSV from your bank instead, then re-upload."
-                )
-            else:
-                job.status = "done"
-                job.row_count = saved_count
-
-        except Exception as e:
-            job.status = "failed"
-            job.error_message = str(e)[:500]
-            logger.exception("import.failed job=%s", job.id)
-        finally:
-            db.commit()
-
-    asyncio.create_task(_process())
+    asyncio.create_task(_process_import_job(job.id))
     logger.info("import.started user=%s job=%s file=%s", user.id, job.id, file.filename)
     return job
+
+
+@app.get("/imports/jobs", response_model=list[ImportJobOut])
+def list_import_jobs(
+    limit: int = Query(20, ge=1, le=100),
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List recent statement jobs so users can recover failed imports."""
+    return (
+        db.query(ImportJob)
+        .filter(ImportJob.user_id == user.id)
+        .order_by(ImportJob.created_at.desc())
+        .limit(limit)
+        .all()
+    )
 
 
 @app.get("/imports/jobs/{job_id}", response_model=ImportJobOut)
@@ -930,6 +1677,54 @@ def get_import_job(
     job = db.get(ImportJob, job_id)
     if not job or job.user_id != user.id:
         raise HTTPException(status_code=404, detail="Import job not found")
+    return job
+
+
+@app.post("/imports/jobs/{job_id}/retry", response_model=ImportJobOut)
+@limiter.limit(settings.import_rate_limit)
+def retry_import(
+    request: Request,
+    job_id: str,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Requeue a failed import while its stored payload is still available."""
+    job = db.get(ImportJob, job_id)
+    if not job or job.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Import job not found")
+    if job.status not in ("failed", "cancelled"):
+        raise HTTPException(status_code=409, detail="Only failed or cancelled imports can be retried")
+    if not job.file_content:
+        raise HTTPException(status_code=410, detail="Import payload has expired; upload the statement again")
+    job.status = "pending"
+    job.row_count = None
+    job.processed_rows = 0
+    job.cancel_requested = False
+    job.error_message = None
+    db.commit()
+    db.refresh(job)
+    asyncio.create_task(_process_import_job(job.id))
+    return job
+
+
+@app.post("/imports/jobs/{job_id}/cancel", response_model=ImportJobOut)
+def cancel_import(
+    job_id: str,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Request cancellation of a pending or processing import."""
+    job = db.get(ImportJob, job_id)
+    if not job or job.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Import job not found")
+    if job.status not in ("pending", "processing"):
+        raise HTTPException(status_code=409, detail="Only pending or processing imports can be cancelled")
+    job.cancel_requested = True
+    if job.status == "pending":
+        job.status = "cancelled"
+        job.error_message = "Import cancelled before processing started."
+    db.commit()
+    db.refresh(job)
     return job
 
 
@@ -945,12 +1740,40 @@ async def advisor_stream(
     question = sanitize_user_input(payload.question)
     transactions = _tx_query(db, user.id).limit(500).all()
     budgets = db.query(Budget).filter(Budget.user_id == user.id).all()
+    advisor_quality = data_quality(transactions)
+    advisor_meta = {
+        "type": "meta",
+        "answer_type": "ai",
+        "cloud_ai_configured": bool(ai_router.configured_providers()),
+        "configured_providers": ai_router.configured_providers(),
+        "period_start": advisor_quality.get("period_start"),
+        "period_end": advisor_quality.get("period_end"),
+        "transaction_count": advisor_quality.get("transaction_count", len(transactions)),
+        "coverage": advisor_quality.get("coverage", "none"),
+        "warnings": advisor_quality.get("warnings", []),
+    }
+
+    fact_answer = deterministic_answer(question, transactions, budgets)
+    if fact_answer:
+        advisor_meta.update({k: v for k, v in fact_answer.items() if k != "answer"})
+
+        async def deterministic_event_generator():
+            yield f"data: {json.dumps(advisor_meta)}\n\n"
+            yield f"data: {json.dumps(fact_answer['answer'])}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            deterministic_event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     if _wants_last_transaction(question):
         latest = transactions[0] if transactions else None
         answer = _format_transaction(latest) if latest else "No transactions were found for this signed-in account."
 
         async def last_tx_event_generator():
+            yield f"data: {json.dumps(advisor_meta)}\n\n"
             yield f"data: {json.dumps(answer)}\n\n"
             yield "data: [DONE]\n\n"
 
@@ -964,6 +1787,7 @@ async def advisor_stream(
         answer = _format_overspending(transactions)
 
         async def overspending_event_generator():
+            yield f"data: {json.dumps(advisor_meta)}\n\n"
             yield f"data: {json.dumps(answer)}\n\n"
             yield "data: [DONE]\n\n"
 
@@ -1024,6 +1848,7 @@ async def advisor_stream(
         logger.info("Cache hit for advisor stream.")
 
         async def cached_event_generator():
+            yield f"data: {json.dumps(advisor_meta)}\n\n"
             # Yield cached string fully — JSON-encoded so embedded newlines
             # (markdown bullet points, paragraphs) survive SSE line parsing.
             yield f"data: {json.dumps(cached_reply)}\n\n"
@@ -1049,6 +1874,7 @@ async def advisor_stream(
     async def event_generator():
         full_reply = []
         try:
+            yield f"data: {json.dumps(advisor_meta)}\n\n"
             async for token in ai_router.stream(SYSTEM_PROMPT, messages):
                 full_reply.append(token)
                 yield f"data: {json.dumps(token)}\n\n"
@@ -1182,6 +2008,46 @@ def update_account(
     return acct
 
 
+@app.post("/accounts/{account_id}/reconcile", response_model=ReconciliationOut)
+def reconcile_account(
+    account_id: str,
+    payload: ReconciliationRequest,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Record a real-world balance check and make the account balance current."""
+    acct = db.get(Account, account_id)
+    if not acct or acct.user_id != user.id or not acct.is_active:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    previous_balance = Decimal(str(acct.balance or 0))
+    observed_balance = payload.observed_balance
+    reconciled_at = datetime.now(UTC)
+    acct.balance = observed_balance
+    acct.last_reconciled_at = reconciled_at
+    acct.last_reconciled_balance = observed_balance
+    acct.reconciliation_note = payload.note
+    log_event(
+        db, user_id=user.id, action="reconcile", resource_type="account",
+        resource_id=account_id, details={
+            "previous_balance": str(previous_balance),
+            "observed_balance": str(observed_balance),
+            "difference": str(observed_balance - previous_balance),
+        }, ip_address=_client_ip(request),
+    )
+    db.commit()
+    db.refresh(acct)
+    return {
+        "account_id": acct.id,
+        "previous_balance": previous_balance,
+        "observed_balance": observed_balance,
+        "difference": observed_balance - previous_balance,
+        "reconciled_at": reconciled_at,
+        "note": payload.note,
+    }
+
+
 @app.delete("/accounts/{account_id}")
 def delete_account(
     account_id: str,
@@ -1264,15 +2130,82 @@ def update_transaction(
     tx = db.get(Transaction, transaction_id)
     if not tx or tx.user_id != user.id:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if payload.account_id:
+        account = db.get(Account, payload.account_id)
+        if not account or account.user_id != user.id or not account.is_active:
+            raise HTTPException(status_code=400, detail="Account is not available for this user")
+    before = _transaction_snapshot(tx)
     for k, v in payload.model_dump().items():
         setattr(tx, k, v)
+    tx.merchant_normalized = _resolve_merchant_alias(db, user.id, tx.description, tx.merchant_normalized)
+    after = _transaction_snapshot(tx)
     log_event(
         db, user_id=user.id, action="update", resource_type="transaction",
-        resource_id=tx.id, ip_address=_client_ip(request),
+        resource_id=tx.id, details={"before": before, "after": after}, ip_address=_client_ip(request),
     )
     db.commit()
     db.refresh(tx)
     logger.info("transaction.updated user=%s id=%s", user.id, tx.id)
+    return tx
+
+
+@app.post("/transactions/{transaction_id}/undo", response_model=TransactionOut)
+def undo_transaction_update(
+    transaction_id: str,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Restore the latest transaction update, if it has not already been undone."""
+    tx = db.get(Transaction, transaction_id)
+    if not tx or tx.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    latest_event = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.user_id == user.id,
+            AuditLog.resource_type == "transaction",
+            AuditLog.resource_id == transaction_id,
+        )
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .first()
+    )
+    if not latest_event or latest_event.action != "update" or not latest_event.details:
+        raise HTTPException(status_code=409, detail="No reversible transaction update is available")
+    try:
+        details = json.loads(latest_event.details)
+        before = details["before"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=409, detail="The latest transaction update cannot be reversed") from exc
+
+    try:
+        restored = TransactionIn(**before).model_dump()
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="The saved transaction version is invalid") from exc
+    if restored.get("account_id"):
+        account = db.get(Account, restored["account_id"])
+        if not account or account.user_id != user.id:
+            raise HTTPException(status_code=409, detail="The saved account is no longer available")
+    for key, value in restored.items():
+        setattr(tx, key, value)
+    # These fields are intentionally not accepted from ordinary user edits, but
+    # they are part of the exact version being restored after a category fix.
+    tx.merchant_normalized = before.get("merchant_normalized")
+    tx.confidence = before.get("confidence")
+    log_event(
+        db,
+        user_id=user.id,
+        action="undo",
+        resource_type="transaction",
+        resource_id=tx.id,
+        details={"source_audit_id": latest_event.id},
+        ip_address=_client_ip(request),
+    )
+    db.commit()
+    db.refresh(tx)
+    llm_cache.invalidate_user(user.id)
+    logger.info("transaction.undo user=%s id=%s source_audit=%s", user.id, tx.id, latest_event.id)
     return tx
 
 
@@ -1368,6 +2301,10 @@ def export_data(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Keep the legacy parameterized route compatible with the static full-data
+    # export even when route registration order puts this handler first.
+    if fmt == "full":
+        return export_full_data(user, db)
     transactions = _tx_query(db, user.id, month).all()
     if not transactions:
         raise HTTPException(status_code=404, detail="No transactions to export")
@@ -1395,6 +2332,147 @@ def export_data(
         )
     else:
         raise HTTPException(status_code=400, detail="Format must be csv, json, or tally")
+
+
+@app.get("/export/full")
+def export_full_data(
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Export the user's portable data without secrets or uploaded statement payloads."""
+    db_user = db.get(User, user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    transactions = _tx_query(db, user.id, include_unposted=True).order_by(Transaction.date.asc()).all()
+    conversations = db.query(AIConversation).filter(AIConversation.user_id == user.id).all()
+    payload = {
+        "export_version": 1,
+        "exported_at": datetime.now(UTC).isoformat(),
+        "profile": {
+            "id": db_user.id,
+            "email": db_user.email,
+            "display_name": db_user.display_name,
+            "avatar_url": db_user.avatar_url,
+            "currency_preference": db_user.currency_preference,
+            "created_at": db_user.created_at.isoformat() if db_user.created_at else None,
+        },
+        "accounts": [
+            {
+                "id": a.id, "name": a.name, "account_type": a.account_type,
+                "institution": a.institution, "balance": str(a.balance), "currency": a.currency,
+                "is_active": a.is_active, "last_reconciled_at": a.last_reconciled_at.isoformat() if a.last_reconciled_at else None,
+                "last_reconciled_balance": str(a.last_reconciled_balance) if a.last_reconciled_balance is not None else None,
+                "reconciliation_note": a.reconciliation_note,
+            }
+            for a in db.query(Account).filter(Account.user_id == user.id).all()
+        ],
+        "transactions": json.loads(export_json(transactions))["transactions"],
+        "budgets": [
+            {"id": b.id, "category": b.category, "monthly_limit": str(b.monthly_limit), "strategy": b.strategy}
+            for b in db.query(Budget).filter(Budget.user_id == user.id).all()
+        ],
+        "merchant_aliases": [
+            {"id": a.id, "alias": a.alias_key, "canonical": a.canonical,
+             "created_at": a.created_at.isoformat() if a.created_at else None}
+            for a in db.query(MerchantAlias).filter(MerchantAlias.user_id == user.id).all()
+        ],
+        "categories": [
+            {"id": c.id, "name": c.name, "kind": c.kind, "reporting_group": c.reporting_group,
+             "is_active": c.is_active, "created_at": c.created_at.isoformat() if c.created_at else None}
+            for c in db.query(UserCategory).filter(UserCategory.user_id == user.id).all()
+        ],
+        "recurring_rules": [_recurring_payload(rule) for rule in db.query(RecurringRule).filter(RecurringRule.user_id == user.id).all()],
+        "goals": [
+            {"id": g.id, "name": g.name, "goal_type": g.goal_type, "target_amount": str(g.target_amount),
+             "current_amount": str(g.current_amount), "deadline": g.deadline.isoformat() if g.deadline else None, "status": g.status}
+            for g in db.query(Goal).filter(Goal.user_id == user.id).all()
+        ],
+        "portfolios": [
+            {"id": p.id, "name": p.name, "portfolio_type": p.portfolio_type,
+             "holdings": [
+                 {"id": h.id, "symbol": h.symbol, "name": h.name, "quantity": str(h.quantity),
+                  "buy_price": str(h.buy_price), "current_price": str(h.current_price), "asset_type": h.asset_type,
+                  "purchase_date": h.purchase_date.isoformat() if h.purchase_date else None, "notes": h.notes}
+                 for h in p.holdings
+             ]}
+            for p in db.query(Portfolio).filter(Portfolio.user_id == user.id).all()
+        ],
+        "conversations": [
+            {"id": c.id, "title": c.title, "created_at": c.created_at.isoformat() if c.created_at else None,
+             "messages": [{"id": m.id, "role": m.role, "content": m.content,
+                           "created_at": m.created_at.isoformat() if m.created_at else None} for m in c.messages]}
+            for c in conversations
+        ],
+        "imports": [
+            {"id": j.id, "status": j.status, "file_name": j.file_name, "file_extension": j.file_extension,
+             "account_id": j.account_id, "row_count": j.row_count, "error_message": j.error_message,
+             "created_at": j.created_at.isoformat() if j.created_at else None,
+             "updated_at": j.updated_at.isoformat() if j.updated_at else None}
+            for j in db.query(ImportJob).filter(ImportJob.user_id == user.id).all()
+        ],
+        "webhooks": [
+            {"id": w.id, "url": w.url, "events": w.events, "is_active": w.is_active,
+             "last_triggered": w.last_triggered.isoformat() if w.last_triggered else None,
+             "failure_count": w.failure_count, "created_at": w.created_at.isoformat() if w.created_at else None}
+            for w in db.query(Webhook).filter(Webhook.user_id == user.id).all()
+        ],
+        "category_corrections": [
+            {"description_hash": c.description_hash, "category": c.category, "correction_count": c.correction_count}
+            for c in db.query(CategoryCorrection).filter(CategoryCorrection.user_id == user.id).all()
+        ],
+        "audit_log": [
+            {"action": a.action, "resource_type": a.resource_type, "resource_id": a.resource_id,
+             "details": a.details, "created_at": a.created_at.isoformat() if a.created_at else None}
+            for a in db.query(AuditLog).filter(AuditLog.user_id == user.id).order_by(AuditLog.created_at.asc()).all()
+        ],
+    }
+    return Response(
+        content=json.dumps(payload, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=ledger_full_export.json"},
+    )
+
+
+@app.delete("/profile/data")
+def delete_all_user_data(
+    payload: DataDeletionRequest,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Permanently erase all Ledger data for the signed-in user after explicit confirmation."""
+    db_user = db.get(User, user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    # Delete dependents explicitly so this remains safe on databases without
+    # database-level ON DELETE CASCADE configuration.
+    portfolio_ids = [p.id for p in db.query(Portfolio.id).filter(Portfolio.user_id == user.id).all()]
+    if portfolio_ids:
+        db.query(Holding).filter(Holding.portfolio_id.in_(portfolio_ids)).delete(synchronize_session=False)
+    conversation_ids = [c.id for c in db.query(AIConversation.id).filter(AIConversation.user_id == user.id).all()]
+    if conversation_ids:
+        db.query(AIMessage).filter(AIMessage.conversation_id.in_(conversation_ids)).delete(synchronize_session=False)
+    counts = {
+        "transactions": db.query(Transaction).filter(Transaction.user_id == user.id).delete(synchronize_session=False),
+        "accounts": db.query(Account).filter(Account.user_id == user.id).delete(synchronize_session=False),
+        "budgets": db.query(Budget).filter(Budget.user_id == user.id).delete(synchronize_session=False),
+        "merchant_aliases": db.query(MerchantAlias).filter(MerchantAlias.user_id == user.id).delete(synchronize_session=False),
+        "categories": db.query(UserCategory).filter(UserCategory.user_id == user.id).delete(synchronize_session=False),
+        "recurring_rules": db.query(RecurringRule).filter(RecurringRule.user_id == user.id).delete(synchronize_session=False),
+        "goals": db.query(Goal).filter(Goal.user_id == user.id).delete(synchronize_session=False),
+        "imports": db.query(ImportJob).filter(ImportJob.user_id == user.id).delete(synchronize_session=False),
+        "webhooks": db.query(Webhook).filter(Webhook.user_id == user.id).delete(synchronize_session=False),
+        "portfolios": db.query(Portfolio).filter(Portfolio.user_id == user.id).delete(synchronize_session=False),
+        "conversations": db.query(AIConversation).filter(AIConversation.user_id == user.id).delete(synchronize_session=False),
+        "category_corrections": db.query(CategoryCorrection).filter(CategoryCorrection.user_id == user.id).delete(synchronize_session=False),
+        "audit_logs": db.query(AuditLog).filter(AuditLog.user_id == user.id).delete(synchronize_session=False),
+    }
+    db.delete(db_user)
+    db.commit()
+    llm_cache.invalidate_user(user.id)
+    logger.info("profile.data_deleted user=%s counts=%s", user.id, counts)
+    return {"deleted": True, "counts": counts}
 
 
 # ── Portfolios ────────────────────────────────────────────────────────────────
@@ -1603,14 +2681,36 @@ def get_anomalies(
         return cached
 
     start = _history_start(range)
-    q = db.query(Transaction).filter(Transaction.user_id == user.id)
+    q = db.query(Transaction).filter(
+        Transaction.user_id == user.id,
+        Transaction.status == "posted",
+    )
     if start:
         q = q.filter(Transaction.date >= start)
     transactions = q.order_by(Transaction.date.desc()).all()
 
     anomalies = detect_anomalies(transactions)
-    llm_cache.put(cache_key, anomalies, ttl=1800)  # 30-min cache
-    return anomalies
+    quality = data_quality(transactions)
+    result = {
+        "items": anomalies,
+        "analysis": {
+            "period_start": quality.get("period_start"),
+            "period_end": quality.get("period_end"),
+            "transaction_count": quality.get("transaction_count", 0),
+            "coverage": quality.get("coverage", "none"),
+            "sufficient": quality.get("coverage") not in ("none", "limited"),
+            "warnings": quality.get("warnings", []),
+        },
+    }
+    record_telemetry(
+        "analysis.anomalies",
+        user_id=user.id,
+        parse_success=True,
+        evidence_valid=all(bool(item.get("transaction_id")) for item in anomalies),
+        metadata={"count": len(anomalies), "coverage": quality.get("coverage", "none"), "warning_count": len(quality.get("warnings", []))},
+    )
+    llm_cache.put(cache_key, result, ttl=1800)  # 30-min cache
+    return result
 
 
 # ── Spending Forecast ─────────────────────────────────────────────────────────
@@ -1630,9 +2730,56 @@ def get_forecast(
     forecast = generate_forecast(transactions)
     warnings = budget_breach_warnings(transactions, budgets)
     result = {**forecast, "budget_warnings": warnings}
+    record_telemetry(
+        "analysis.forecast",
+        user_id=user.id,
+        parse_success=True,
+        evidence_valid=True,
+        metadata={
+            "count": len(forecast.get("by_category", {})),
+            "coverage": forecast.get("analysis", {}).get("sufficient", False),
+            "warning_count": len(forecast.get("analysis", {}).get("warnings", [])),
+        },
+    )
 
     llm_cache.put(cache_key, result, ttl=3600)
     return result
+
+
+@app.post("/analytics/scenario", response_model=ScenarioOut)
+def run_scenario(
+    payload: ScenarioRequest,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Run a deterministic what-if against the user's recent 90-day history."""
+    start = date.today() - timedelta(days=90)
+    transactions = (
+        _tx_query(db, user.id)
+        .filter(Transaction.date >= start)
+        .order_by(Transaction.date.asc())
+        .all()
+    )
+    return calculate_scenario(
+        transactions,
+        category=payload.category,
+        reduction_pct=payload.reduction_pct,
+        income_change_pct=payload.income_change_pct,
+        one_time_expense=payload.one_time_expense,
+        horizon_months=payload.horizon_months,
+    )
+
+
+@app.get("/analytics/compare")
+def analytics_compare(
+    days: int = Query(30, ge=7, le=365),
+    end: date | None = None,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Compare two equal-length periods with evidence and sufficiency metadata."""
+    transactions = _tx_query(db, user.id).all()
+    return compare_periods(transactions, end_date=end, days=days)
 
 
 # ── Portfolio Analytics ───────────────────────────────────────────────────────
@@ -1677,9 +2824,49 @@ async def proactive_insights_v2(
     anomalies = detect_anomalies(transactions)
     forecast = generate_forecast(transactions)
 
+    started = time.perf_counter()
     result = await generate_proactive_insights(transactions, budgets, anomalies, forecast)
+    record_telemetry(
+        "insights.generated",
+        user_id=user.id,
+        latency_ms=(time.perf_counter() - started) * 1000,
+        provider="ai" if any(item.get("source") == "model" for item in result) else "rules",
+        fallback=not any(item.get("source") == "model" for item in result),
+        parse_success=True,
+        evidence_valid=all(bool(item.get("evidence")) for item in result),
+        metadata={"count": len(result), "evidence_count": sum(len(item.get("evidence", [])) for item in result)},
+    )
     llm_cache.put(cache_key, result, ttl=settings.insight_cache_ttl_hours * 3600)
     return result
+
+
+@app.post("/insights/feedback")
+def insight_feedback(
+    payload: InsightFeedbackRequest,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Record lightweight insight feedback for quality measurement and learning."""
+    log_event(
+        db,
+        user_id=user.id,
+        action="feedback",
+        resource_type="insight",
+        resource_id=payload.insight_id,
+        # Keep the audit signal useful without retaining a free-form note that
+        # could accidentally contain merchant names or other financial text.
+        details={"feedback": payload.feedback, "has_note": bool(payload.note)},
+        ip_address=_client_ip(request),
+    )
+    record_telemetry(
+        "insight.feedback",
+        user_id=user.id,
+        outcome=payload.feedback,
+        metadata={"feedback": payload.feedback, "has_note": bool(payload.note)},
+    )
+    db.commit()
+    return {"ok": True, "insight_id": payload.insight_id, "feedback": payload.feedback}
 
 
 # ── Category Correction (user feedback for learning) ─────────────────────────
@@ -1687,6 +2874,7 @@ async def proactive_insights_v2(
 def correct_transaction_category(
     transaction_id: str,
     payload: CategoryCorrectionRequest,
+    request: Request,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1696,8 +2884,20 @@ def correct_transaction_category(
         raise HTTPException(status_code=404, detail="Transaction not found")
 
     old_category = tx.category
+    before = _transaction_snapshot(tx)
     tx.category = payload.category
     tx.confidence = 1.0  # User correction = full confidence
+    after = _transaction_snapshot(tx)
+    log_event(
+        db,
+        user_id=user.id,
+        action="update",
+        resource_type="transaction",
+        resource_id=tx.id,
+        details={"before": before, "after": after, "reason": "category_correction"},
+        ip_address=_client_ip(request),
+    )
+    record_telemetry("transaction.correction", user_id=user.id, outcome="category", metadata={"status": "completed"})
     db.commit()
 
     # Record correction for learning pipeline

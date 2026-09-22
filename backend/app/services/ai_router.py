@@ -15,6 +15,7 @@ import logging
 from collections.abc import AsyncIterator
 
 from ..config import settings
+from .telemetry import record_telemetry
 
 logger = logging.getLogger("ledger.ai_router")
 
@@ -296,6 +297,20 @@ class AIRouter:
             ("OpenRouter", OpenRouterAdapter()),
         ]
 
+    def configured_providers(self) -> list[str]:
+        """Return provider names with configured credentials, never the credentials."""
+        return [
+            name
+            for name, adapter in self.adapters
+            if (
+                (name == "Groq" and settings.groq_api_key)
+                or (name == "Cerebras" and settings.cerebras_api_key)
+                or (name == "Gemini" and settings.gemini_api_key)
+                or (name == "Cohere" and settings.cohere_api_key)
+                or (name == "OpenRouter" and settings.openrouter_api_key)
+            )
+        ]
+
     async def stream(
         self,
         system: str,
@@ -308,9 +323,11 @@ class AIRouter:
         effective_tokens = TASK_TOKENS.get(task_type, max_tokens)
 
         last_error = None
+        attempts = 0
         for name, adapter in self.adapters:
             if not await adapter.is_available():
                 continue
+            attempts += 1
             try:
                 logger.debug("Streaming with %s (task=%s, tokens=%d)", name, task_type, effective_tokens)
                 iterator = adapter.stream(system, messages, effective_tokens)
@@ -322,6 +339,14 @@ class AIRouter:
                 yield first_token
                 async for token in iterator:
                     yield token
+                record_telemetry(
+                    "ai.provider",
+                    provider=name,
+                    fallback=attempts > 1,
+                    parse_success=True,
+                    outcome="success",
+                    metadata={"task": task_type},
+                )
                 return
 
             except Exception as e:
@@ -332,6 +357,14 @@ class AIRouter:
                 else:
                     logger.warning("%s stream failed status=%s: %s", name, status, str(e)[:120])
                     last_error = e
+                record_telemetry(
+                    "ai.provider",
+                    provider=name,
+                    fallback=True,
+                    parse_success=False,
+                    outcome="error",
+                    metadata={"task": task_type},
+                )
                 continue
 
         if last_error:
@@ -361,13 +394,23 @@ class AIRouter:
         effective_tokens = TASK_TOKENS.get(task_type, max_tokens)
 
         last_error = None
+        attempts = 0
         for name, adapter in self.adapters:
             if not await adapter.is_available():
                 continue
+            attempts += 1
             try:
                 logger.debug("Generating with %s (task=%s, tokens=%d)", name, task_type, effective_tokens)
                 result = await adapter.generate(system, messages, effective_tokens)
                 if result:
+                    record_telemetry(
+                        "ai.provider",
+                        provider=name,
+                        fallback=attempts > 1,
+                        parse_success=True,
+                        outcome="success",
+                        metadata={"task": task_type},
+                    )
                     return result
             except Exception as e:
                 status = _status_code(e)
@@ -377,6 +420,14 @@ class AIRouter:
                 else:
                     logger.warning("%s generate failed: %s", name, str(e)[:120])
                     last_error = e
+                record_telemetry(
+                    "ai.provider",
+                    provider=name,
+                    fallback=True,
+                    parse_success=False,
+                    outcome="error",
+                    metadata={"task": task_type},
+                )
                 continue
 
         err_msg = str(last_error)[:100] if last_error else "No API keys configured"

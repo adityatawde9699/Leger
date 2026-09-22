@@ -14,6 +14,7 @@ const PRIORITY_LABEL = { 5: "Critical", 4: "Important", 3: "Notable", 2: "Inform
 export default function ProactiveInsights({ onNavigate }) {
   const [insights,   setInsights]   = React.useState([]);
   const [loading,    setLoading]    = React.useState(true);
+  const [feedback,   setFeedback]   = React.useState({});
   const [dismissed,  setDismissed]  = React.useState(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("dismissed_insights") || "{}");
@@ -41,6 +42,19 @@ export default function ProactiveInsights({ onNavigate }) {
     const next = { ...dismissed, [key]: Date.now() };
     setDismissed(next);
     localStorage.setItem("dismissed_insights", JSON.stringify(next));
+  };
+
+  const sendFeedback = async (insight, value) => {
+    if (!insight.id || feedback[insight.id]) return;
+    setFeedback((current) => ({ ...current, [insight.id]: value }));
+    try {
+      await apiFetch("/insights/feedback", {
+        method: "POST",
+        body: JSON.stringify({ insight_id: insight.id, feedback: value }),
+      });
+    } catch {
+      // Feedback should never block or make the financial workflow noisy.
+    }
   };
 
   const visible = insights.filter((ins, i) => !dismissed[`${ins.text}_${i}`]);
@@ -115,9 +129,29 @@ export default function ProactiveInsights({ onNavigate }) {
                 <p style={{ fontSize: 13, lineHeight: 1.55, margin: 0, color: "var(--text-primary)", fontWeight: 500 }}>
                   {ins.text}
                 </p>
+                {ins.action && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.4 }}>
+                    <strong>Next step:</strong> {ins.action}
+                  </div>
+                )}
+                {(ins.evidence?.length > 0 || ins.data_quality?.coverage) && (
+                  <details style={{ marginTop: 7, fontSize: 11, color: "var(--text-muted)" }}>
+                    <summary style={{ cursor: "pointer", userSelect: "none" }}>Why am I seeing this?</summary>
+                    <div style={{ paddingTop: 5, lineHeight: 1.5 }}>
+                      {ins.evidence?.length > 0 && (
+                        <div>Based on {ins.evidence.length} transaction{ins.evidence.length === 1 ? "" : "s"}
+                          {ins.category ? ` in ${ins.category}` : ""}.</div>
+                      )}
+                      {ins.data_quality?.period_start && (
+                        <div>Data: {ins.data_quality.period_start} → {ins.data_quality.period_end} · {ins.data_quality.coverage} coverage.</div>
+                      )}
+                      <div>Confidence: {ins.confidence || "medium"} · {ins.source === "ai" ? "AI explanation" : "Ledger calculation"}.</div>
+                    </div>
+                  </details>
+                )}
                 {ins.category && (
                   <button
-                    onClick={() => onNavigate?.(`/transactions?category=${ins.category}`)}
+                    onClick={() => onNavigate?.("transactions")}
                     style={{
                       marginTop: 6, fontSize: 11, color: cfg.color, background: "none",
                       border: "none", padding: 0, cursor: "pointer", display: "flex",
@@ -126,6 +160,22 @@ export default function ProactiveInsights({ onNavigate }) {
                   >
                     View {ins.category} <ChevronRight size={10} />
                   </button>
+                )}
+                {ins.id && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 8, fontSize: 10, color: "var(--text-muted)" }}>
+                    {feedback[ins.id] ? (
+                      <span>Thanks — marked {feedback[ins.id].replace("_", " ")}</span>
+                    ) : (
+                      <>
+                        <span>Useful?</span>
+                        {[["helpful", "Yes"], ["inaccurate", "Needs correction"], ["too_generic", "Too generic"]].map(([value, label]) => (
+                          <button key={value} onClick={() => sendFeedback(ins, value)} style={{ border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-secondary)", borderRadius: 5, padding: "2px 5px", fontSize: 10, cursor: "pointer" }}>
+                            {label}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -140,7 +190,7 @@ export default function ProactiveInsights({ onNavigate }) {
               </span>
 
               {/* Dismiss button */}
-              <button onClick={() => dismiss(key)}
+              <button onClick={() => { dismiss(key); sendFeedback(ins, "dismissed"); }}
                 style={{
                   background: "none", border: "none", color: "var(--text-muted)",
                   cursor: "pointer", padding: "0 2px", flexShrink: 0, fontSize: 14,

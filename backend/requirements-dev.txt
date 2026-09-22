@@ -1,0 +1,7 @@
+# Development and test dependencies. Runtime dependencies remain in requirements.txt.
+-r requirements.txt
+pytest>=8.3.0,<9.0.0
+pytest-asyncio>=0.24.0,<1.0.0
+ruff>=0.8.0,<1.0.0
+# Starlette's supported test client; avoids the deprecated httpx fallback.
+httpx2>=2.0.0,<3.0.0

@@ -4,8 +4,8 @@
 
 **AI-Native Personal Finance Platform**
 
-Track expenses, automate categorization, scan receipts, manage investments,
-and get AI-powered financial insights — all with local-first privacy.
+Track expenses, income, refunds, and transfers; automate categorization, scan receipts, manage investments,
+and get evidence-backed financial insights — with deterministic features working without AI and explicit provider disclosure when cloud AI is enabled.
 
 [![CI](https://github.com/adityatawde9699/Leger/actions/workflows/ci.yml/badge.svg)](https://github.com/adityatawde9699/Leger/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -56,7 +56,7 @@ and get AI-powered financial insights — all with local-first privacy.
 
 | Category | Features |
 |---|---|
-| **Core** | Transactions, multi-account management, budgets & goals, recurring payment detection |
+| **Core** | Transactions, multi-account management, budgets, savings/debt/emergency-fund goals, recurring payment detection, account reconciliation |
 | **AI** | Auto-categorization (rules + LLM), proactive insights, Amadeus AI chat (SSE), receipt OCR, bill negotiation |
 | **Analytics** | Dashboard KPIs (w/ time filters), category breakdowns, credit health score (300-900), community benchmarks |
 | **Investments** | Portfolio tracking (stocks/MF/crypto/FD/gold), holdings with live P&L |
@@ -260,8 +260,8 @@ pip install ruff
 ruff check backend/ --fix
 ruff format backend/
 
-# Backend tests
-pip install pytest pytest-asyncio httpx
+# Backend tests and linting
+pip install -r backend/requirements-dev.txt
 pytest backend/tests/ -v
 
 # For Frontend build check 

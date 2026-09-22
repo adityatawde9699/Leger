@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -41,6 +42,7 @@ class User(Base):
     accounts: Mapped[list["Account"]] = relationship(back_populates="user")
     webhooks: Mapped[list["Webhook"]] = relationship(back_populates="user")
     portfolios: Mapped[list["Portfolio"]] = relationship(back_populates="user")
+    goals: Mapped[list["Goal"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Account(Base):
@@ -53,6 +55,9 @@ class Account(Base):
     balance: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
     currency: Mapped[str] = mapped_column(String(3), default="INR")
     is_active: Mapped[bool] = mapped_column(default=True)
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_reconciled_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    reconciliation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     user: Mapped["User"] = relationship(back_populates="accounts")
@@ -65,7 +70,10 @@ class Transaction(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id"), nullable=True, index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
-    type: Mapped[str] = mapped_column(String(16))
+    type: Mapped[str] = mapped_column(String(20))
+    # posted = included in balances/analysis; pending = visible but excluded
+    # from committed numbers; excluded = intentionally ignored but retained.
+    status: Mapped[str] = mapped_column(String(16), default="posted", index=True)
     category: Mapped[str] = mapped_column(String(64), index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     description: Mapped[str] = mapped_column(Text)
@@ -103,12 +111,88 @@ class Budget(Base):
     __table_args__ = (UniqueConstraint("user_id", "category", name="uq_budget_user_category"),)
 
 
+class MerchantAlias(Base):
+    """User-owned mapping from a noisy statement label to a canonical merchant."""
+
+    __tablename__ = "merchant_aliases"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    alias_key: Mapped[str] = mapped_column(String(128))
+    canonical: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint("user_id", "alias_key", name="uq_merchant_alias_user_key"),)
+
+
+class UserCategory(Base):
+    """A personal category layered over Ledger's stable built-in taxonomy."""
+
+    __tablename__ = "user_categories"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(16), default="expense")
+    reporting_group: Mapped[str] = mapped_column(String(64), default="Other")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint("user_id", "name", "kind", name="uq_user_category_name_kind"),)
+
+
+class RecurringRule(Base):
+    """A user-confirmed or user-managed recurring cash-flow obligation."""
+
+    __tablename__ = "recurring_rules"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    description: Mapped[str] = mapped_column(String(128))
+    category: Mapped[str] = mapped_column(String(64))
+    cadence: Mapped[str] = mapped_column(String(16))
+    average_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    minimum_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    maximum_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    next_expected: Mapped[date | None] = mapped_column(Date, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    evidence_transaction_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Goal(Base):
+    """A user-owned financial target tracked independently from budgets."""
+
+    __tablename__ = "goals"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    goal_type: Mapped[str] = mapped_column(String(32), default="custom")
+    target_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    current_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
+    deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    user: Mapped["User"] = relationship(back_populates="goals")
+
+
 class ImportJob(Base):
     __tablename__ = "import_jobs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     file_name: Mapped[str] = mapped_column(String(255))
+    file_extension: Mapped[str] = mapped_column(String(8), default="")
+    file_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    account_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Encrypted-at-rest storage is deployment-specific; successful jobs clear
+    # this payload immediately after processing to minimize sensitive retention.
+    file_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    total_rows: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    processed_rows: Mapped[int] = mapped_column(Integer, default=0)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    # JSON array of statement row fingerprints intentionally excluded during review.
+    excluded_row_fingerprints: Mapped[str | None] = mapped_column(Text, nullable=True)
     row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

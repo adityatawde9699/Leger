@@ -134,7 +134,7 @@ def _monthly_buckets(transactions: list[Transaction]) -> dict[str, dict[str, flo
     """
     buckets: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for tx in transactions:
-        if tx.type == "expense":
+        if tx.type == "expense" and getattr(tx, "status", "posted") == "posted":
             month_key = tx.date.strftime("%Y-%m")
             buckets[tx.category][month_key] += float(tx.amount)
     return buckets
@@ -168,8 +168,27 @@ def generate_forecast(transactions: list[Transaction]) -> dict[str, Any]:
             "total_projected_60d": 0.0,
             "total_projected_90d": 0.0,
             "generated_at": date.today().isoformat(),
+            "analysis": {
+                "period_start": None,
+                "period_end": None,
+                "months_covered": 0,
+                "transaction_count": 0,
+                "sufficient": False,
+                "warnings": ["Add transaction history before relying on a forecast"],
+            },
         }
 
+    committed = [tx for tx in transactions if getattr(tx, "status", "posted") == "posted"]
+    dates = [tx.date for tx in committed]
+    months_covered = len({tx.date.strftime("%Y-%m") for tx in committed})
+    forecast_analysis = {
+        "period_start": min(dates).isoformat() if dates else None,
+        "period_end": max(dates).isoformat() if dates else None,
+        "months_covered": months_covered,
+        "transaction_count": len(committed),
+        "sufficient": months_covered >= 2,
+        "warnings": [] if months_covered >= 2 else ["Forecast uses less than two months of history"],
+    }
     buckets = _monthly_buckets(transactions)
     by_category: dict[str, dict[str, Any]] = {}
 
@@ -223,6 +242,7 @@ def generate_forecast(transactions: list[Transaction]) -> dict[str, Any]:
         "total_projected_60d": round(total_60d, 2),
         "total_projected_90d": round(total_90d, 2),
         "generated_at": date.today().isoformat(),
+        "analysis": forecast_analysis,
     }
 
 

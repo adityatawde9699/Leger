@@ -2,10 +2,10 @@
 
 ## Overview
 
-Ledger uses a hybrid AI architecture that prioritizes speed, cost, and high availability. Every AI operation follows a robust fallback chain using a custom multi-provider AI router:
+Ledger uses a hybrid architecture that prioritizes deterministic financial calculations, graceful degradation, and explicit provider disclosure. AI is optional. When configured, the backend uses a custom multi-provider cloud router:
 
 ```text
-Request → Rule Engine/Regex → PaddleOCR (if image) → Multi-Provider AI Router (Groq → Cerebras → Gemini → Cohere → OpenRouter) → Graceful Fallback
+Request → deterministic service/rules → (optional) Multi-Provider AI Router (Groq → Cerebras → Gemini → Cohere → OpenRouter) → Graceful Fallback
 ```
 
 ## Layer 1: Rule Engine
@@ -23,7 +23,7 @@ Zero-latency deterministic rules handle ~70% of operations:
 
 ## Layer 2: Multi-Provider AI Router (`services/ai_router.py`)
 
-For operations that need language understanding, Ledger uses a custom AI router that cascades through free-tier AI providers. This ensures high availability and zero cost by falling back seamlessly if one provider is down or rate-limited.
+For operations that need language understanding, Ledger uses a custom AI router that cascades through configured providers. The router does not silently claim local processing: advisor metadata discloses the configured cloud provider names, while deterministic questions bypass the router entirely.
 
 **Fallback Chain:**
 1. **Groq** (`llama-3.1-8b-instant`) — Extremely fast, primary choice for extraction and categorization.
@@ -49,6 +49,14 @@ For operations that need language understanding, Ledger uses a custom AI router 
 - Advisor returns "AI unavailable" message
 - Receipt OCR returns error details
 
+## AI trust contract
+
+Direct factual advisor questions are routed through `backend/app/services/advisor_facts.py` before any model call. Ledger performs the arithmetic, returns evidence transaction IDs and assumptions, and the UI labels the response “Calculated by Ledger.” Open-ended interpretation and planning remain AI-assisted and are labeled “Explained by AI.”
+
+AI-generated proactive insights are accepted only when they cite at least one transaction ID that exists in the current user dataset. The API returns the cited evidence, confidence, source (`rules` or `ai`), action, and data-quality metadata. The system asks for *at most* five insights and may return fewer when the data does not support more.
+
+Direct factual questions should be answered from deterministic Ledger calculations whenever possible. Cloud-model output is explanatory and must not invent balances, transactions, market data, or tax conclusions.
+
 ## AI Services
 
 ### Auto-Categorizer (`services/auto_categorizer.py`)
@@ -68,6 +76,8 @@ Generates 4 insight types from spending data:
 - 💡 **Tip** — Cost-saving opportunities
 - ✅ **Positive** — Good financial habits
 - ℹ️ **Info** — Interesting trends
+
+Recurring-payment detection is deterministic and now reports cadence, amount range, active/stale status, confidence, and transaction evidence. Repeated descriptions are treated as leads, not confirmed subscriptions.
 
 ### Receipt OCR (`services/receipt_ocr.py` & `services/statements.py`)
 

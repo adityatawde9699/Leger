@@ -32,6 +32,8 @@ export default function Accounts() {
   const [accounts, setAccounts] = React.useState([]);
   const [loading,  setLoading]  = React.useState(true);
   const [showForm, setShowForm] = React.useState(false);
+  const [reconcileId, setReconcileId] = React.useState(null);
+  const [reconcileForm, setReconcileForm] = React.useState({ observed_balance: "", note: "" });
   const [form, setForm] = React.useState({
     name: "", account_type: "savings", institution: "", balance: "", currency: "INR",
   });
@@ -73,6 +75,28 @@ export default function Accounts() {
       await apiFetch(`/accounts/${id}`, { method: "DELETE" });
       setAccounts((a) => a.filter((x) => x.id !== id));
       toast("Account removed", "success");
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  }
+
+  async function reconcile(e) {
+    e.preventDefault();
+    if (!reconcileId || reconcileForm.observed_balance === "") return;
+    try {
+      const result = await apiFetch(`/accounts/${reconcileId}/reconcile`, {
+        method: "POST",
+        body: JSON.stringify({
+          observed_balance: Number(reconcileForm.observed_balance),
+          note: reconcileForm.note.trim() || null,
+        }),
+      });
+      setAccounts((current) => current.map((account) => account.id === reconcileId
+        ? { ...account, balance: result.observed_balance, last_reconciled_at: result.reconciled_at, last_reconciled_balance: result.observed_balance, reconciliation_note: result.note }
+        : account));
+      toast(result.difference === 0 ? "Account reconciled" : `Balance updated · difference ${money(result.difference)}`, "success");
+      setReconcileId(null);
+      setReconcileForm({ observed_balance: "", note: "" });
     } catch (e) {
       toast(e.message, "error");
     }
@@ -147,9 +171,45 @@ export default function Accounts() {
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>
                   {acct.currency} · {acct.account_type.toUpperCase()}
                 </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 14 }}>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    {acct.last_reconciled_at ? `Checked ${new Date(acct.last_reconciled_at).toLocaleDateString("en-IN")}` : "Not reconciled"}
+                  </span>
+                  <button className="btn-secondary" style={{ padding: "5px 9px", fontSize: 11 }} onClick={() => {
+                    setReconcileId(acct.id);
+                    setReconcileForm({ observed_balance: String(acct.balance ?? ""), note: acct.reconciliation_note || "" });
+                  }}>Reconcile</button>
+                </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {reconcileId && (
+        <div className="card" style={{ marginTop: 8, marginBottom: 24 }}>
+          <div className="form-section-title">Reconcile account</div>
+          <p style={{ margin: "-4px 0 16px", color: "var(--text-muted)", fontSize: 13 }}>
+            Enter the balance shown by your bank, wallet, or card. Ledger will record the difference and update the account balance.
+          </p>
+          <form onSubmit={reconcile}>
+            <div className="form-grid-2">
+              <div className="form-field">
+                <label className="form-label">Observed balance</label>
+                <div className="input-prefix-wrap"><span className="input-prefix">₹</span>
+                  <input required type="number" step="0.01" value={reconcileForm.observed_balance} onChange={(e) => setReconcileForm({ ...reconcileForm, observed_balance: e.target.value })} />
+                </div>
+              </div>
+              <div className="form-field">
+                <label className="form-label">Note</label>
+                <input placeholder="e.g. Checked after September statement" value={reconcileForm.note} onChange={(e) => setReconcileForm({ ...reconcileForm, note: e.target.value })} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+              <button type="submit" className="btn-primary">Save reconciliation</button>
+              <button type="button" className="btn-secondary" onClick={() => setReconcileId(null)}>Cancel</button>
+            </div>
+          </form>
         </div>
       )}
 

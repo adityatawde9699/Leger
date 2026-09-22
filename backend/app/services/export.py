@@ -19,6 +19,7 @@ def export_csv(transactions: list[Transaction]) -> str:
         [
             "Date",
             "Type",
+            "Status",
             "Category",
             "Amount",
             "Description",
@@ -37,6 +38,7 @@ def export_csv(transactions: list[Transaction]) -> str:
             [
                 tx.date.isoformat(),
                 tx.type,
+                getattr(tx, "status", "posted"),
                 tx.category,
                 str(tx.amount),
                 tx.description,
@@ -62,6 +64,7 @@ def export_json(transactions: list[Transaction]) -> str:
                 "id": tx.id,
                 "date": tx.date.isoformat(),
                 "type": tx.type,
+                "status": getattr(tx, "status", "posted"),
                 "category": tx.category,
                 "amount": float(tx.amount),
                 "description": tx.description,

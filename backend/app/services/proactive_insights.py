@@ -1,14 +1,13 @@
-"""
-Proactive AI Insights v2 — generates financial observations using LLM.
+"""Proactive AI Insights v2 — evidence-backed observations using rules and optional AI.
 
-Fixes over v1:
-- Removed Anthropic-key gate (was always falling back to rules)
-- Upgraded prompt: returns 5-7 insights with priority field
-- Adds anomaly-driven and forecast-driven insights
-- Adds per-user daily caching to avoid repeated LLM calls
-- Sorts by priority before returning
+Behavior:
+- Returns at most five insights and may fall back to deterministic rules
+- Requires evidence for model-generated insights
+- Includes anomaly-driven and forecast-driven context
+- Uses per-user caching and sorts by priority
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -19,22 +18,68 @@ from typing import Any
 
 from ..models import Budget, Transaction
 from .ai_router import ai_router
-from .insights import monthly_summary, recurring_payments
+from .insights import data_quality, monthly_summary, recurring_payments
 
 logger = logging.getLogger("ledger.proactive")
 
 # ── System Prompt (v2) ────────────────────────────────────────────────────────
 PROACTIVE_SYSTEM = """You are a financial analyst generating PROACTIVE insights for a personal finance app.
-Analyze the data and generate exactly 5-7 SHORT, actionable observations.
+Analyze the data and generate at most 5 SHORT, actionable observations. Return fewer if the data does not support more.
 
 Rules:
 - Each insight: ONE sentence, max 25 words, specific numbers only from the provided data
 - Types: "warning" (risk/overspend), "tip" (action to take), "positive" (celebrate), "info" (neutral fact)
 - Priority 1-5: 5=critical (over budget/anomaly), 4=important, 3=notable, 2=informational, 1=minor tip
 - Include "category" field: the relevant spending category, or null
+- Include "evidence_ids": a list containing only transaction IDs from the provided data that support the insight
+- Include "action": one concrete next step, or null when no action is warranted
 - Return ONLY a JSON array:
-  [{"type": "warning|tip|positive|info", "priority": 1-5, "text": "...", "category": "...|null"}]
+  [{"type": "warning|tip|positive|info", "priority": 1-5, "text": "...", "category": "...|null", "evidence_ids": ["..."], "action": "...|null"}]
 - No explanation outside the JSON array."""
+
+
+def _data_quality(transactions: list[Transaction]) -> dict[str, Any]:
+    """Describe how much trustworthy data supports an insight."""
+    quality = data_quality(transactions)
+    return {
+        **quality,
+        "transactions": quality["transaction_count"],
+        "expenses": quality["expense_count"],
+        "income": quality["income_count"],
+        "months": quality["months_covered"],
+        "uncategorized": quality["uncategorized_count"],
+    }
+
+
+def _evidence(transactions: list[Transaction], category: str | None = None, limit: int = 5) -> list[dict[str, Any]]:
+    """Return compact, linkable facts for a rule-based insight."""
+    matching = [
+        tx for tx in transactions
+        if tx.type == "expense" and (category is None or tx.category == category)
+    ]
+    matching.sort(key=lambda tx: (tx.date, tx.amount), reverse=True)
+    return [
+        {"transaction_id": tx.id, "date": tx.date.isoformat(), "amount": float(tx.amount), "category": tx.category,
+         "merchant": tx.merchant_normalized or tx.description[:80]}
+        for tx in matching[:limit]
+    ]
+
+
+def _decorate(insight: dict[str, Any], transactions: list[Transaction], source: str = "rules") -> dict[str, Any]:
+    """Apply a consistent trust contract to every proactive insight."""
+    if not insight.get("id"):
+        stable_key = "|".join(
+            str(insight.get(value) or "") for value in ("type", "category", "text", "action_type")
+        )
+        insight["id"] = f"insight_{hashlib.sha256(stable_key.encode()).hexdigest()[:16]}"
+    evidence = insight.get("evidence") or _evidence(transactions, insight.get("category"))
+    insight["evidence"] = evidence
+    insight["source"] = source
+    insight["confidence"] = insight.get("confidence") or ("high" if evidence else "low")
+    insight["data_quality"] = _data_quality(transactions)
+    insight.setdefault("action", None)
+    insight.setdefault("action_type", "view_transactions" if evidence else None)
+    return insight
 
 
 def _build_proactive_context(
@@ -160,6 +205,10 @@ def _rule_based_insights(
                     "priority": 5,
                     "text": f"Unusual transaction detected: ₹{a['amount']:.0f} in {a['category']} — {a['message'][:50]}",
                     "category": a.get("category"),
+                    "evidence": [{"transaction_id": a.get("transaction_id"), "date": a.get("date"),
+                                  "amount": a.get("amount"), "category": a.get("category")}],
+                    "action": "Review this unusual transaction",
+                    "action_type": "view_transaction",
                 }
             )
 
@@ -176,6 +225,8 @@ def _rule_based_insights(
                     "priority": 5,
                     "text": f"{cat} is ₹{float(spent - limit):.0f} over budget — ₹{float(spent):.0f} vs ₹{float(limit):.0f} limit.",
                     "category": cat,
+                    "action": f"Review {cat} transactions and adjust the budget or pause discretionary spending",
+                    "action_type": "view_category",
                 }
             )
         elif ratio >= 0.9:
@@ -186,6 +237,8 @@ def _rule_based_insights(
                     "priority": 4,
                     "text": f"{cat} at {int(ratio * 100)}% of budget with ~{days_left} days remaining this month.",
                     "category": cat,
+                    "action": f"Review {cat} transactions before spending more this month",
+                    "action_type": "view_category",
                 }
             )
 
@@ -197,6 +250,8 @@ def _rule_based_insights(
                 "priority": 4,
                 "text": f"Overall spending up {trend_pct:.0f}% vs last month — review your top categories.",
                 "category": None,
+                "action": "Review your top spending categories",
+                "action_type": "view_analytics",
             }
         )
     elif trend_pct < -15:
@@ -206,6 +261,8 @@ def _rule_based_insights(
                 "priority": 3,
                 "text": f"Spending down {abs(trend_pct):.0f}% vs last month — great financial discipline!",
                 "category": None,
+                "action": "Keep the current spending pattern and check your goal progress",
+                "action_type": "view_goals",
             }
         )
 
@@ -220,6 +277,8 @@ def _rule_based_insights(
                 "priority": 3,
                 "text": f"Savings rate of {savings_rate:.0f}% is excellent — you're building wealth consistently.",
                 "category": None,
+                "action": "Set a savings goal and review your largest flexible categories",
+                "action_type": "view_budgets",
             }
         )
     elif savings_rate < 5 and income > 0:
@@ -229,6 +288,8 @@ def _rule_based_insights(
                 "priority": 4,
                 "text": f"Savings rate is only {savings_rate:.0f}% — target 20% by reducing top spending categories.",
                 "category": None,
+                "action": "Review recurring payments for services you no longer use",
+                "action_type": "view_transactions",
             }
         )
 
@@ -244,9 +305,10 @@ def _rule_based_insights(
             }
         )
 
+    insights = [_decorate(item, transactions) for item in insights]
     # Sort by priority descending
     insights.sort(key=lambda x: x["priority"], reverse=True)
-    return insights[:7]
+    return insights[:5]
 
 
 async def generate_proactive_insights(
@@ -260,14 +322,21 @@ async def generate_proactive_insights(
     Always tries LLM first (via ai_router), falls back to rule-based.
     """
     if not transactions:
-        return [
-            {"type": "info", "priority": 1, "text": "Add transactions to get personalized insights.", "category": None}
-        ]
+        return [_decorate({
+            "type": "info", "priority": 1, "text": "Add transactions to get personalized insights.",
+            "category": None, "confidence": "low", "source": "rules", "evidence": [],
+            "action": "Add your first transaction", "action_type": "add_transaction",
+        }, [])]
 
     context = _build_proactive_context(transactions, budgets, anomalies, forecast)
 
-    # Always try LLM (removed Anthropic gate)
+    # Try the configured router; deterministic rules remain the fallback.
     try:
+        # Include IDs in the context so the model can cite facts instead of inventing them.
+        context += "\nEvidence transaction IDs:\n" + "\n".join(
+            f"  {tx.id} | {tx.date.isoformat()} | ₹{tx.amount} | {tx.category} | {tx.merchant_normalized or tx.description[:50]}"
+            for tx in transactions[:100]
+        )
         messages = [{"role": "user", "content": context}]
         raw = await ai_router.generate(PROACTIVE_SYSTEM, messages, task_type="insights")
         parsed = _extract_json_array(raw)
@@ -278,18 +347,34 @@ async def generate_proactive_insights(
             for item in parsed:
                 if not isinstance(item, dict):
                     continue
+                raw_ids = item.get("evidence_ids", [])
+                if not isinstance(raw_ids, list):
+                    raw_ids = []
+                evidence_ids = {str(tx.id) for tx in transactions}
+                cited = [str(tx_id) for tx_id in raw_ids if str(tx_id) in evidence_ids]
+                evidence = [
+                    {"transaction_id": tx.id, "date": tx.date.isoformat(), "amount": float(tx.amount),
+                     "category": tx.category, "merchant": tx.merchant_normalized or tx.description[:80]}
+                    for tx in transactions if str(tx.id) in cited
+                ]
                 insight = {
                     "type": item.get("type", "info"),
-                    "priority": int(item.get("priority", 2)),
+                    "priority": max(1, min(5, int(item.get("priority", 2)))),
                     "text": str(item.get("text", ""))[:200],
                     "category": item.get("category"),
+                    "evidence": evidence,
+                    "action": str(item.get("action"))[:200] if item.get("action") else None,
+                    "action_type": "view_transactions" if evidence else None,
+                    "confidence": "medium" if evidence else "low",
                 }
-                if insight["text"] and insight["type"] in ("warning", "tip", "positive", "info"):
+                # Do not surface model-generated filler without at least one verifiable fact.
+                if insight["text"] and evidence and insight["type"] in ("warning", "tip", "positive", "info"):
+                    insight = _decorate(insight, transactions, source="ai")
                     valid.append(insight)
             if valid:
                 valid.sort(key=lambda x: x["priority"], reverse=True)
                 logger.info("Generated %d LLM proactive insights", len(valid))
-                return valid[:7]
+                return valid[:5]
 
     except Exception as e:
         logger.warning("Proactive LLM insights failed: %s", str(e)[:100])

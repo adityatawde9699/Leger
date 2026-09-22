@@ -69,19 +69,20 @@ The app is available at **http://127.0.0.1:5173**.
 2. The app will use `AUTH_PROVIDER=dev` by default (accepts any Bearer token)
 3. Try adding a transaction, setting a budget, or asking the Amadeus AI
 
-## Optional: Local AI with llama-cpp-python
+## Optional: cloud AI providers
 
-Ledger natively embeds `llama-cpp-python` for local, offline AI.
-
-1. Download a text GGUF model (e.g., Qwen2.5-1.5B-Instruct).
-2. Set the variables in `backend/.env`:
+Ledger's core ledger, import, analytics, goals, and deterministic advisor facts work without an AI key. To enable open-ended advisor explanations, set one or more supported provider keys in `backend/.env`:
 
 ```bash
-LLAMA_ENABLED=true
-LLAMA_MODEL_PATH="C:\absolute\path\to\qwen2.5-1.5b-instruct-q4_k_m.gguf"
+GROQ_API_KEY=...
+# Optional fallbacks:
+CEREBRAS_API_KEY=...
+GEMINI_API_KEY=...
+COHERE_API_KEY=...
+OPENROUTER_API_KEY=...
 ```
 
-The FastAPI backend will automatically load the model into memory on the first AI request!
+The advisor discloses configured provider names in its metadata. Do not describe a deployment as local/offline AI unless a separate local provider has actually been deployed; the current router is cloud-provider based.
 
 ## Troubleshooting
 
@@ -91,4 +92,4 @@ The FastAPI backend will automatically load the model into memory on the first A
 | Port 8000 in use | Change port: `uvicorn app.main:app --port 8001` |
 | Database connection error | Check PostgreSQL is running: `docker compose ps` |
 | Frontend blank page | Check browser console for CORS errors. Verify `CORS_ORIGINS` in `.env` |
-| AI features not working | Enable `LLAMA_ENABLED=true` or set `ANTHROPIC_API_KEY` |
+| AI features not working | Set at least one supported provider key; direct factual answers still work without AI |

@@ -9,16 +9,19 @@ Welcome to the Ledger Wiki. This is the central knowledge base for the AI-Native
 | [Getting Started](Getting-Started.md) | Installation, setup, first steps |
 | [API Reference](API-Reference.md) | Complete endpoint documentation |
 | [AI System](AI-System.md) | How the hybrid AI architecture works |
+| [Data Dictionary](Data-Dictionary.md) | Transaction semantics and calculation contract |
 | [Database Schema](Database-Schema.md) | Models, relationships, migrations |
 | [Deployment Guide](Deployment-Guide.md) | Production deployment checklist |
+| [Release Checklist](../RELEASE-CHECKLIST.md) | Financial correctness and release-safety checklist |
 
 ## Architecture
 
 ```
 Frontend (Vite + React) → Backend (FastAPI) → PostgreSQL
                                     ↓
-                           AI Router → llama.cpp (local)
-                                    → Anthropic (cloud)
+                    deterministic services / Ledger facts
+                                    ↓
+                    optional configured cloud AI router
 ```
 
 ## Contributing

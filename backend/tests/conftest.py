@@ -66,4 +66,4 @@ def setup_db():
 @pytest.fixture()
 def client():
     """FastAPI test client."""
-    return TestClient(app)
+    return TestClient(fastapi_app)

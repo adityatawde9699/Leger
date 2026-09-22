@@ -97,6 +97,14 @@ export default function Advisor() {
           // (markdown bullet points, paragraphs) survive SSE line parsing.
           let data;
           try { data = JSON.parse(raw); } catch { data = raw; }
+          if (data?.type === "meta") {
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[updated.length - 1] = { ...updated[updated.length - 1], meta: data };
+              return updated;
+            });
+            continue;
+          }
           setMessages((prev) => {
             const updated = [...prev];
             updated[updated.length - 1] = {
@@ -267,6 +275,21 @@ export default function Advisor() {
                 <div className="chat-text">
                   {m.text || (streaming && i === messages.length - 1 ? <TypingDots /> : "")}
                 </div>
+                {m.role === "assistant" && m.meta && (
+                  <div style={{ marginTop: 8, fontSize: 10, color: "var(--text-muted)", lineHeight: 1.45 }}>
+                    {m.meta.answer_type === "deterministic" && (
+                      <div style={{ color: "var(--positive)", fontWeight: 700, marginBottom: 3 }}>
+                        Calculated by Ledger · no AI call · {m.meta.evidence?.length || 0} evidence row{m.meta.evidence?.length === 1 ? "" : "s"}
+                      </div>
+                    )}
+                    {m.meta.answer_type !== "deterministic" && <div>Explained by AI · {m.meta.cloud_ai_configured ? `configured: ${m.meta.configured_providers.join(", ")}` : "no cloud provider configured"}</div>}
+                    Based on {m.meta.transaction_count} transaction{m.meta.transaction_count === 1 ? "" : "s"}
+                    {m.meta.period_start && ` · ${m.meta.period_start} → ${m.meta.period_end}`}
+                    {m.meta.coverage && ` · ${m.meta.coverage} coverage`}
+                    {m.meta.warnings?.length > 0 && <div style={{ color: "var(--warning)", marginTop: 3 }}>{m.meta.warnings.join(" · ")}</div>}
+                    {m.meta.assumptions?.length > 0 && <div style={{ marginTop: 3 }}>Assumptions: {m.meta.assumptions.join(" · ")}</div>}
+                  </div>
+                )}
               </div>
             ))}
           </div>

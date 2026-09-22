@@ -11,9 +11,10 @@ Auth: `Authorization: Bearer <token>` on all endpoints.
 ## Transactions
 | Method | Endpoint | Body | Response |
 |---|---|---|---|
-| `GET` | `/transactions?page=1&size=20&q=&category=&month=` | — | `PaginatedTransactions` |
+| `GET` | `/transactions?cursor=&limit=&search=&category=&month=&type=&status=` | — | `PaginatedTransactions`; `status` may be `posted`, `pending`, or `excluded` |
 | `POST` | `/transactions` | `TransactionIn` | `TransactionOut` |
 | `PUT` | `/transactions/{id}` | `TransactionIn` | `TransactionOut` |
+| `POST` | `/transactions/{id}/undo` | — | `TransactionOut`; restores the latest update when it has not already been undone |
 | `DELETE` | `/transactions/{id}` | — | `{"deleted": true}` |
 
 ## Accounts
@@ -32,30 +33,68 @@ Auth: `Authorization: Bearer <token>` on all endpoints.
 | `PUT` | `/budgets/{id}` | `BudgetIn` | `BudgetOut` |
 | `DELETE` | `/budgets/{id}` | — | `{"deleted": true}` |
 
+## Goals
+| Method | Endpoint | Body | Response |
+|---|---|---|---|
+| `GET` | `/goals` | — | `GoalOut[]` |
+| `POST` | `/goals` | `GoalIn` | `GoalOut` |
+| `PUT` | `/goals/{id}` | `GoalIn` | `GoalOut` |
+| `DELETE` | `/goals/{id}` | — | `{"deleted": true}` |
+
+## Personalization
+| Method | Endpoint | Body | Response |
+|---|---|---|---|
+| `GET` | `/categories` | — | built-in and active user categories |
+| `POST` | `/categories` | `UserCategoryIn` | custom category |
+| `DELETE` | `/categories/{id}` | — | deactivates a custom category without rewriting history |
+| `GET` | `/merchant-aliases` | — | user-scoped alias list |
+| `POST` | `/merchant-aliases` | `MerchantAliasIn` | creates/updates an alias and applies it to matching transactions |
+| `DELETE` | `/merchant-aliases/{id}` | — | `{"deleted": true}` |
+| `GET` | `/recurring` | — | confirmed recurring rules with evidence IDs |
+| `POST` | `/recurring` | `RecurringRuleIn` | confirmed or pending user rule |
+| `PUT` | `/recurring/{id}` | `RecurringRuleIn` | updated rule |
+| `DELETE` | `/recurring/{id}` | — | `{"deleted": true}` |
+
 ## Import
 | Method | Endpoint | Body | Response |
 |---|---|---|---|
-| `POST` | `/sms/parse` | `SmsParseRequest` | `TransactionOut[]` |
-| `POST` | `/import/csv` | `multipart/form-data` | `ImportJobOut` |
-| `POST` | `/import/pdf` | `multipart/form-data` | `ImportJobOut` |
+| `POST` | `/imports/sms` | `SmsParseRequest` | `TransactionOut[]` |
+| `POST` | `/imports/sms/webhook` | `SmsWebhookRequest` | `TransactionOut[]` |
+| `POST` | `/imports/statement` | `multipart/form-data` (`file`, optional `account_id`, optional JSON `excluded_row_fingerprints`) | `ImportJobOut` (`202`); byte-identical re-uploads return the existing job |
+| `GET` | `/imports/jobs?limit=` | 1–100 recent jobs | `ImportJobOut[]` |
+| `POST` | `/imports/statement/preview` | `multipart/form-data` (`file`, optional `account_id`) | `ImportPreviewOut` with row fingerprints and category confidence |
+| `GET` | `/imports/jobs/{id}` | — | `ImportJobOut` |
+| `POST` | `/imports/jobs/{id}/retry` | — | `ImportJobOut` |
+| `POST` | `/imports/jobs/{id}/cancel` | — | `ImportJobOut`; cancellation is cooperative and preserves already processed rows |
 
 ## AI Services
 | Method | Endpoint | Body | Response |
 |---|---|---|---|
 | `POST` | `/categorize` | `CategorizeSingleRequest` | `CategorizeSingleResponse` |
 | `POST` | `/categorize/batch` | `CategorizeBatchRequest` | `TransactionOut[]` |
-| `POST` | `/receipt/scan` | `multipart/form-data` | `ReceiptResult` |
+| `POST` | `/receipts/scan` | `multipart/form-data` | `ReceiptResult` |
 | `GET` | `/insights/proactive` | — | `ProactiveInsight[]` |
 | `GET` | `/bills/negotiate` | — | `NegotiationResult[]` |
-| `POST` | `/advisor` | `AdvisorRequest` | SSE stream |
+| `POST` | `/advisor/stream` | `AdvisorRequest` | SSE stream; first event is metadata describing period, coverage, transaction count, answer type, and (for deterministic answers) evidence/assumptions |
 
 ## Analytics
 | Method | Endpoint | Params | Response |
 |---|---|---|---|
-| `GET` | `/summary?month=` | month (YYYY-MM) | `SummaryOut` |
+| `GET` | `/summary?month=&range=` | month (YYYY-MM) or `30d`, `3m`, `1y`, `all` | `SummaryOut` plus `data_quality` and shared evidence-bearing `analysis.claims` |
+| `GET` | `/analytics/anomalies?range=` | `this_month`, `30d`, `3m`, `1y`, `all` | `{items, analysis}` with anomaly evidence, covered period, and sufficiency metadata |
+| `GET` | `/analytics/forecast` | — | spending forecast plus budget warnings and covered-period/sufficiency metadata |
+| `GET` | `/analytics/compare?days=30&end=YYYY-MM-DD` | equal-length comparison window | current vs previous period facts, category changes, evidence IDs, and insufficiency warnings |
+| `POST` | `/analytics/scenario` | category, reduction/income change percentages, one-time expense, horizon | deterministic what-if with baseline, projected cash flow, and data quality |
+| `POST` | `/insights/feedback` | `{insight_id, feedback, note?}` | auditable quality feedback without storing raw financial text |
 | `GET` | `/credit-health` | — | `CreditHealthOut` |
 | `GET` | `/benchmarks` | — | `BenchmarkOut` |
 | `GET` | `/gst/report?month=` | month (YYYY-MM) | `GSTReportOut` |
+
+## Privacy and data control
+| Method | Endpoint | Body | Response |
+|---|---|---|---|
+| `GET` | `/export/full` | — | downloadable JSON containing portable user data (never secrets or statement payloads) |
+| `DELETE` | `/profile/data` | `{"confirmation":"DELETE"}` | deletion counts; permanently removes the signed-in user's Ledger data |
 
 ## Investments
 | Method | Endpoint | Body | Response |

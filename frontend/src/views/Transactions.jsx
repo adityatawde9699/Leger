@@ -1,6 +1,6 @@
 import React from "react";
 import { apiFetch, money, CATEGORY_COLORS, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../lib";
-import { Search, CheckSquare, Tag, X, Loader2 } from "lucide-react";
+import { Search, CheckSquare, Tag, X, Loader2, Undo2 } from "lucide-react";
 import { useToast } from "../components/ui";
 
 const ALL_CATEGORIES = [...new Set([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES, "Subscriptions"])];
@@ -29,7 +29,7 @@ function groupTransactions(txs) {
       groups.push(currentGroup);
     }
     currentGroup.items.push(tx);
-    currentGroup.sum += (tx.type === "income" ? Number(tx.amount) : -Number(tx.amount));
+    currentGroup.sum += ((tx.status || "posted") !== "posted" ? 0 : (["income", "refund", "reimbursement"].includes(tx.type) ? Number(tx.amount) : (["transfer"].includes(tx.type) ? 0 : -Number(tx.amount))));
   }
   return groups;
 }
@@ -45,6 +45,8 @@ export default function Transactions() {
   const [selectedIds, setSelectedIds] = React.useState(new Set());
   const [bulkUpdating, setBulkUpdating] = React.useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = React.useState(false);
+  const [undoIds, setUndoIds] = React.useState([]);
+  const [undoing, setUndoing] = React.useState(false);
 
   const toggleSelect = (id) => {
     setSelectedIds(prev => {
@@ -64,16 +66,50 @@ export default function Transactions() {
         method: "PUT",
         body: JSON.stringify({ 
           type: tx.type, 
+          status: tx.status || "posted",
           amount: tx.amount, 
           category: newCategory, 
           description: tx.description, 
           date: tx.date, 
-          source: tx.source 
+          source: tx.source,
+          account_id: tx.account_id || null,
+          running_balance: tx.running_balance || null,
         })
       })));
       toast(`Updated ${selectedIds.size} transactions`, "success");
+      setUndoIds([...selectedIds]);
       setSelectedIds(new Set());
       setShowCategoryMenu(false);
+      loadTransactions(true);
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
+
+  const handleBulkStatus = async (status) => {
+    if (!selectedIds.size) return;
+    setBulkUpdating(true);
+    try {
+      const txsToUpdate = transactions.filter(tx => selectedIds.has(tx.id));
+      await Promise.all(txsToUpdate.map(tx => apiFetch(`/transactions/${tx.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          type: tx.type,
+          status,
+          amount: tx.amount,
+          category: tx.category,
+          description: tx.description,
+          date: tx.date,
+          source: tx.source,
+          account_id: tx.account_id || null,
+          running_balance: tx.running_balance || null,
+        }),
+      })));
+      toast(status === "posted" ? "Transactions confirmed" : "Transactions excluded from totals", "success");
+      setUndoIds([...selectedIds]);
+      setSelectedIds(new Set());
       loadTransactions(true);
     } catch (e) {
       toast(e.message, "error");
@@ -89,6 +125,11 @@ export default function Transactions() {
       if (search) params.set("search", search);
       if (activeFilter === "Expenses") params.set("type", "expense");
       if (activeFilter === "Income") params.set("type", "income");
+      if (activeFilter === "Refunds") params.set("type", "refund");
+      if (activeFilter === "Reimbursements") params.set("type", "reimbursement");
+      if (activeFilter === "Transfers") params.set("type", "transfer");
+      if (activeFilter === "Pending") params.set("status", "pending");
+      if (activeFilter === "Excluded") params.set("status", "excluded");
       if (!reset && nextCursor) params.set("cursor", nextCursor);
       
       const data = await apiFetch(`/transactions?${params}`);
@@ -112,6 +153,21 @@ export default function Transactions() {
 
   const groups = groupTransactions(transactions);
 
+  const undoLastBulkChange = async () => {
+    if (!undoIds.length) return;
+    setUndoing(true);
+    try {
+      await Promise.all(undoIds.map((id) => apiFetch(`/transactions/${id}/undo`, { method: "POST" })));
+      toast(`Undid changes to ${undoIds.length} transaction${undoIds.length === 1 ? "" : "s"}`, "success");
+      setUndoIds([]);
+      loadTransactions(true);
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setUndoing(false);
+    }
+  };
+
   return (
     <div className="view-transactions-activity">
       <div style={{ padding: "0 20px" }}>
@@ -129,7 +185,7 @@ export default function Transactions() {
         
         {/* Filters */}
         <div className="activity-filters">
-          {["All", "Expenses", "Income", "Recurring"].map(f => (
+          {["All", "Expenses", "Income", "Refunds", "Reimbursements", "Transfers", "Pending", "Excluded", "Recurring"].map(f => (
             <button 
               key={f} 
               className={`filter-pill ${activeFilter === f ? "active" : ""}`}
@@ -176,17 +232,20 @@ export default function Transactions() {
                     </div>
                     
                     <div className="tx-details">
-                      <div className="tx-merchant">
+                      <div className="tx-merchant" title={tx.merchant_normalized && tx.merchant_normalized !== tx.description ? tx.description : undefined}>
                         {tx.merchant_normalized || tx.description}
                         {tx.category === "Subscriptions" && <span className="tx-repeats-badge">REPEATS</span>}
                       </div>
+                      {tx.merchant_normalized && tx.merchant_normalized !== tx.description && (
+                        <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>Original: {tx.description}</div>
+                      )}
                       <div className="tx-meta">
-                        {tx.category} · {tx.source === "bank" ? "Everyday" : "Cash Wallet"}
+                        {tx.category} · {tx.source === "bank" ? "Everyday" : "Cash Wallet"} · {tx.status || "posted"}
                       </div>
                     </div>
                     
-                    <div className={`tx-amount ${tx.type === "expense" ? "expense" : "income"}`}>
-                      {tx.type === "expense" ? "−" : "+"}{money(tx.amount)}
+                    <div className={`tx-amount ${(tx.status || "posted") !== "posted" ? "muted" : (tx.type === "expense" ? "expense" : (tx.type === "transfer" ? "muted" : "income"))}`}>
+                      {tx.type === "expense" ? "−" : (tx.type === "transfer" ? "↔" : "+")}{money(tx.amount)}
                     </div>
                   </div>
                 );
@@ -202,6 +261,17 @@ export default function Transactions() {
         )}
       </div>
 
+      {undoIds.length > 0 && selectedIds.size === 0 && (
+        <div className="floating-undo-bar" role="status">
+          <Undo2 size={17} style={{ color: "var(--primary)" }} />
+          <span>Last bulk change applied to {undoIds.length} transaction{undoIds.length === 1 ? "" : "s"}</span>
+          <button className="btn-undo" onClick={undoLastBulkChange} disabled={undoing}>
+            {undoing ? "Undoing…" : "Undo"}
+          </button>
+          <button className="btn-clear-selection" onClick={() => setUndoIds([])} aria-label="Dismiss undo message"><X size={16} /></button>
+        </div>
+      )}
+
       {/* Floating bulk action bar */}
       {selectedIds.size > 0 && (
         <div className="floating-action-bar" style={{ flexDirection: "column", alignItems: "stretch", padding: showCategoryMenu ? "16px" : "14px 22px" }}>
@@ -211,6 +281,12 @@ export default function Transactions() {
               <span style={{ flex: 1 }}>{selectedIds.size} selected</span>
               <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); setShowCategoryMenu(true); }} style={{ padding: "6px 14px", display: "flex", alignItems: "center", gap: 6 }}>
                 <Tag size={14} /> Fix Category
+              </button>
+              <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); handleBulkStatus("posted"); }} disabled={bulkUpdating} style={{ padding: "6px 14px" }}>
+                Confirm
+              </button>
+              <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); handleBulkStatus("excluded"); }} disabled={bulkUpdating} style={{ padding: "6px 14px" }}>
+                Exclude
               </button>
               <button className="btn-clear-selection" onClick={(e) => { e.stopPropagation(); setSelectedIds(new Set()); }}>
                 <X size={16} />

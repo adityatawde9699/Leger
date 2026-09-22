@@ -7,6 +7,8 @@ import {
   TrendingUp, TrendingDown, DollarSign, PiggyBank, Calendar, AlertCircle,
   BarChart3, Target, Banknote, AlertTriangle, Zap, ShoppingBag, ArrowUpRight,
   Cpu, Eye,
+  RefreshCw,
+  Plus,
 } from "lucide-react";
 import {
   BarChart, Bar, Area, AreaChart, Cell, Pie, PieChart,
@@ -24,13 +26,20 @@ const TIME_FILTERS = [
 const SEVERITY_COLOR = { high: "var(--accent)", medium: "var(--warning)", low: "var(--info)" };
 const SEVERITY_BG    = { high: "rgba(255, 59, 59, 0.1)", medium: "rgba(250, 204, 21, 0.1)", low: "rgba(56, 189, 248, 0.1)" };
 
-export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER" }) {
+export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER", onNavigate, onAddTransaction }) {
   const toast = useToast();
   const [summary,   setSummary]   = React.useState(null);
+  const [historySummary, setHistorySummary] = React.useState(null);
   const [loading,   setLoading]   = React.useState(true);
   const [timeRange, setTimeRange] = React.useState("30d");
   const [anomalies, setAnomalies] = React.useState([]);
   const [forecast,  setForecast]  = React.useState(null);
+  const [goals, setGoals] = React.useState([]);
+  const [importJobs, setImportJobs] = React.useState([]);
+  const [recurringRules, setRecurringRules] = React.useState([]);
+  const [confirmingRecurring, setConfirmingRecurring] = React.useState(null);
+  const [retryingImport, setRetryingImport] = React.useState(null);
+  const [cancellingImport, setCancellingImport] = React.useState(null);
   const [showAllAnomalies, setShowAllAnomalies] = React.useState(false);
   const [dismissedAnomalies, setDismissedAnomalies] = React.useState(() => {
     try { return JSON.parse(localStorage.getItem("dismissed_anomalies") || "[]"); }
@@ -41,20 +50,86 @@ export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER" })
     setLoading(true);
     Promise.all([
       apiFetch(`/summary?range=${timeRange}`),
+      apiFetch("/summary?range=all").catch(() => null),
       apiFetch(`/analytics/anomalies?range=${timeRange}`).catch(() => []),
       apiFetch(`/analytics/forecast`).catch(() => null),
-    ]).then(([s, a, f]) => {
+      apiFetch("/goals").catch(() => []),
+      apiFetch("/imports/jobs?limit=10").catch(() => []),
+      apiFetch("/recurring").catch(() => []),
+    ]).then(([s, all, a, f, g, jobs, rules]) => {
       setSummary(s);
-      setAnomalies(Array.isArray(a) ? a : []);
+      setHistorySummary(all);
+      setAnomalies(Array.isArray(a) ? a : (a?.items || []));
       setForecast(f);
+      setGoals(Array.isArray(g) ? g : []);
+      setImportJobs(Array.isArray(jobs) ? jobs : []);
+      setRecurringRules(Array.isArray(rules) ? rules : []);
     }).catch((e) => toast(e.message, "error"))
       .finally(() => setLoading(false));
   }, [timeRange]);
+
+  React.useEffect(() => {
+    if (!importJobs.some((job) => ["pending", "processing"].includes(job.status))) return undefined;
+    const timer = setInterval(() => {
+      apiFetch("/imports/jobs?limit=10").then((jobs) => {
+        if (Array.isArray(jobs)) setImportJobs(jobs);
+      }).catch(() => {});
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [importJobs]);
 
   const dismissAnomaly = (txId) => {
     const next = [...dismissedAnomalies, txId];
     setDismissedAnomalies(next);
     localStorage.setItem("dismissed_anomalies", JSON.stringify(next));
+  };
+
+  const retryImport = async (jobId) => {
+    setRetryingImport(jobId);
+    try {
+      const updated = await apiFetch(`/imports/jobs/${jobId}/retry`, { method: "POST" });
+      setImportJobs((jobs) => jobs.map((job) => job.id === jobId ? updated : job));
+      toast("Import retry started", "success");
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setRetryingImport(null);
+    }
+  };
+
+  const cancelImport = async (jobId) => {
+    setCancellingImport(jobId);
+    try {
+      const updated = await apiFetch(`/imports/jobs/${jobId}/cancel`, { method: "POST" });
+      setImportJobs((jobs) => jobs.map((job) => job.id === jobId ? updated : job));
+      toast("Import cancellation requested", "info");
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setCancellingImport(null);
+    }
+  };
+
+  const confirmRecurring = async (payment) => {
+    setConfirmingRecurring(payment.description);
+    try {
+      const rule = await apiFetch("/recurring", { method: "POST", body: JSON.stringify({
+        description: payment.description,
+        category: payment.category,
+        cadence: payment.cadence,
+        average_amount: payment.average_amount,
+        minimum_amount: payment.minimum_amount,
+        maximum_amount: payment.maximum_amount,
+        next_expected: payment.next_expected,
+        confidence: payment.confidence,
+        status: "active",
+        confirmed: true,
+        evidence_transaction_ids: (payment.evidence || []).map((item) => item.transaction_id),
+      }) });
+      setRecurringRules((rules) => [...rules, rule]);
+      toast("Recurring payment confirmed", "success");
+    } catch (e) { toast(e.message, "error"); }
+    finally { setConfirmingRecurring(null); }
   };
 
   if (loading) {
@@ -82,10 +157,15 @@ export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER" })
   const periodLabel  = summary?.period_start && summary?.period_end
     ? `${summary.period_start} → ${summary.period_end}`
     : "All available transactions";
+  const isFirstRun = !analyticsOnly && historySummary?.data_quality?.transaction_count === 0;
 
   const closingBalance = summary?.closing_balance != null ? Number(summary.closing_balance) : null;
   const openingBalance = summary?.opening_balance != null ? Number(summary.opening_balance) : null;
   const hasBalanceData = closingBalance !== null;
+  const nextGoal = goals.find((goal) => goal.status === "active");
+  const nextGoalProgress = nextGoal && Number(nextGoal.target_amount) > 0
+    ? Math.min(100, Math.max(0, Number(nextGoal.current_amount) / Number(nextGoal.target_amount) * 100))
+    : 0;
 
   const byCategory  = summary?.by_category || {};
   const pieRows     = Object.entries(byCategory)
@@ -197,6 +277,127 @@ export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER" })
           ))}
         </div>
       </div>
+
+      {/* Make analytical limits visible before showing recommendations. */}
+      {summary?.data_quality?.warnings?.length > 0 && (
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", marginBottom: 20,
+          borderRadius: 12, background: "rgba(250,204,21,0.10)", border: "1px solid rgba(250,204,21,0.28)",
+          color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.5,
+        }}>
+          <Eye size={16} style={{ color: "var(--warning)", flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <strong style={{ color: "var(--text-primary)" }}>Analysis confidence: {summary.data_quality.coverage}</strong>
+            <div>{summary.data_quality.warnings.join(" · ")}. Insights are based only on the data currently in Ledger.</div>
+          </div>
+        </div>
+      )}
+
+      {isFirstRun && (
+        <div className="card" style={{ marginBottom: 20, borderTop: "3px solid var(--primary)" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 12, background: "var(--positive-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <PiggyBank size={19} style={{ color: "var(--primary)" }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 800, color: "var(--text-primary)" }}>Start with one clear money picture</div>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55, marginTop: 5, maxWidth: 650 }}>
+                Add a few transactions or import a statement first. Ledger will show what it knows, what is missing, and one practical next step—without requiring an AI setup.
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+            <button className="btn-primary" onClick={onAddTransaction}><Plus size={15} /> Add a transaction</button>
+            <button className="btn-secondary" onClick={() => onNavigate?.("accounts")}>Set up an account</button>
+            <button className="btn-secondary" onClick={() => onNavigate?.("goals")}>Create a goal</button>
+          </div>
+        </div>
+      )}
+
+      {importJobs.some((job) => ["failed", "cancelled", "pending", "processing"].includes(job.status)) && (
+        <div className="card" style={{ marginBottom: 20, borderLeft: "3px solid var(--warning)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <RefreshCw size={16} style={{ color: "var(--warning)" }} />
+            <strong style={{ color: "var(--text-primary)", fontSize: 14 }}>Statement imports</strong>
+            <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Review processing status</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {importJobs.filter((job) => ["failed", "cancelled", "pending", "processing"].includes(job.status)).slice(0, 5).map((job) => (
+              <div key={job.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: "1px solid var(--border)" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{job.file_name}</div>
+                  <div style={{ fontSize: 11, color: job.status === "failed" ? "var(--negative)" : "var(--text-muted)", marginTop: 2 }}>
+                    {job.status === "failed" ? (job.error_message || "Import failed") : job.status === "cancelled" ? (job.error_message || "Import cancelled") : job.status === "processing" ? `Processing ${job.processed_rows || 0}/${job.total_rows || "…"} rows…` : "Waiting to process…"}
+                  </div>
+                  {job.total_rows > 0 && ["pending", "processing"].includes(job.status) && (
+                    <div style={{ height: 4, background: "var(--surface-secondary)", borderRadius: 99, overflow: "hidden", marginTop: 6 }}>
+                      <div style={{ width: `${Math.min(100, Math.round(((job.processed_rows || 0) / job.total_rows) * 100))}%`, height: "100%", background: "var(--info)" }} />
+                    </div>
+                  )}
+                </div>
+                {job.status === "failed" && (
+                  <button className="btn-secondary" style={{ padding: "6px 10px", fontSize: 11 }} disabled={retryingImport === job.id} onClick={() => retryImport(job.id)}>
+                    <RefreshCw size={12} /> {retryingImport === job.id ? "Retrying…" : "Retry"}
+                  </button>
+                )}
+                {job.status === "cancelled" && (
+                  <button className="btn-secondary" style={{ padding: "6px 10px", fontSize: 11 }} disabled={retryingImport === job.id} onClick={() => retryImport(job.id)}>
+                    <RefreshCw size={12} /> Retry
+                  </button>
+                )}
+                {["pending", "processing"].includes(job.status) && (
+                  <button className="btn-secondary" style={{ padding: "6px 10px", fontSize: 11 }} disabled={cancellingImport === job.id} onClick={() => cancelImport(job.id)}>
+                    {cancellingImport === job.id ? "Cancelling…" : "Cancel"}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {nextGoal && (
+        <button onClick={() => onNavigate?.("goals")} style={{ width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid var(--border)", marginBottom: 20, padding: "14px 16px", borderRadius: 14, background: "var(--surface)", color: "inherit" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Target size={17} style={{ color: "var(--primary)" }} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", flex: 1 }}>Next goal: {nextGoal.name}</span>
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{nextGoalProgress.toFixed(0)}%</span>
+          </div>
+          <div style={{ height: 7, background: "var(--surface-secondary)", borderRadius: 99, overflow: "hidden", marginTop: 10 }}><div style={{ width: `${nextGoalProgress}%`, height: "100%", background: "var(--primary)" }} /></div>
+          <div style={{ marginTop: 7, fontSize: 11, color: "var(--text-muted)" }}>{money(nextGoal.current_amount)} of {money(nextGoal.target_amount)} · Open goals to update progress</div>
+        </button>
+      )}
+
+      {summary?.recurring?.length > 0 && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
+            <Calendar size={16} style={{ color: "var(--info)" }} />
+            <strong style={{ fontSize: 14, color: "var(--text-primary)" }}>Likely recurring payments</strong>
+            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-muted)" }}>Review before treating as subscriptions</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {summary.recurring.slice(0, 4).map((payment) => (
+              <div key={`${payment.description}-${payment.category}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: "1px solid var(--border)" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{payment.description}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{payment.cadence} · {payment.count} matches · {payment.status}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text-primary)" }}>{money(payment.average_amount)}/mo</div>
+                  <div style={{ fontSize: 10, color: payment.confidence >= 0.75 ? "var(--positive)" : "var(--warning)" }}>{Math.round(payment.confidence * 100)}% confidence</div>
+                  {recurringRules.some((rule) => rule.description === payment.description && rule.category === payment.category) ? (
+                    <div style={{ fontSize: 10, color: "var(--positive)", marginTop: 4 }}>Confirmed</div>
+                  ) : (
+                    <button className="btn-secondary" style={{ padding: "3px 7px", fontSize: 10, marginTop: 4 }} onClick={() => confirmRecurring(payment)} disabled={confirmingRecurring === payment.description}>
+                      {confirmingRecurring === payment.description ? "Saving…" : "Confirm"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Anomaly Alert Banner ─────────────────────────────────────────── */}
       {visibleAnomalies.length > 0 && (
@@ -497,7 +698,7 @@ export default function Dashboard({ analyticsOnly, userName = "LEDGER MEMBER" })
       )}
 
       {/* AI Insights */}
-      {!analyticsOnly && <ProactiveInsights />}
+      {!analyticsOnly && <ProactiveInsights onNavigate={onNavigate} />}
 
       {/* Rule-based insights */}
       {(summary?.insights || []).length > 0 && (

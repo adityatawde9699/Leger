@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { apiFetch, money } from "../lib";
+import { API_BASE, apiFetch, authHeaders, money } from "../lib";
 import { useToast } from "../components/ui";
 import {
   User, Mail, Calendar, TrendingUp, TrendingDown,
   DollarSign, CreditCard, Target, Edit3, Check, X,
   LogOut, AlertTriangle, Shield, Wallet, BarChart3,
-  Loader2, RefreshCw, Camera
+  Loader2, RefreshCw, Camera, Download, Trash2
 } from "lucide-react";
 
 // ── Avatar helpers ────────────────────────────────────────────────────────────
@@ -49,16 +49,27 @@ export default function Profile({ onSignOut }) {
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [form, setForm] = useState({ display_name: "", currency_preference: "INR" });
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [exportingData, setExportingData] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deletingData, setDeletingData] = useState(false);
+  const [customCategories, setCustomCategories] = useState([]);
+  const [merchantAliases, setMerchantAliases] = useState([]);
+  const [categoryName, setCategoryName] = useState("");
+  const [aliasForm, setAliasForm] = useState({ alias: "", canonical: "" });
 
   const loadProfile = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, s] = await Promise.all([
+      const [p, s, categories, aliases] = await Promise.all([
         apiFetch("/profile"),
         apiFetch("/profile/stats"),
+        apiFetch("/categories"),
+        apiFetch("/merchant-aliases"),
       ]);
       setProfile(p);
       setStats(s);
+      setCustomCategories((categories || []).filter((item) => item.is_custom));
+      setMerchantAliases(aliases || []);
       setForm({ display_name: p.display_name || "", currency_preference: p.currency_preference || "INR" });
     } catch (e) {
       toast(e.message, "error");
@@ -66,6 +77,31 @@ export default function Profile({ onSignOut }) {
       setLoading(false);
     }
   }, [toast]);
+
+  const addCategory = async () => {
+    if (!categoryName.trim()) return;
+    try {
+      const category = await apiFetch("/categories", { method: "POST", body: JSON.stringify({ name: categoryName.trim(), kind: "expense", reporting_group: "Other" }) });
+      setCustomCategories((items) => [...items, category]);
+      setCategoryName("");
+      toast("Category added", "success");
+    } catch (e) { toast(e.message, "error"); }
+  };
+
+  const addAlias = async () => {
+    if (!aliasForm.alias.trim() || !aliasForm.canonical.trim()) return;
+    try {
+      const alias = await apiFetch("/merchant-aliases", { method: "POST", body: JSON.stringify(aliasForm) });
+      setMerchantAliases((items) => [...items.filter((item) => item.id !== alias.id), alias]);
+      setAliasForm({ alias: "", canonical: "" });
+      toast("Merchant alias saved", "success");
+    } catch (e) { toast(e.message, "error"); }
+  };
+
+  const removeAlias = async (id) => {
+    try { await apiFetch(`/merchant-aliases/${id}`, { method: "DELETE" }); setMerchantAliases((items) => items.filter((item) => item.id !== id)); }
+    catch (e) { toast(e.message, "error"); }
+  };
 
   useEffect(() => { loadProfile(); }, [loadProfile]);
 
@@ -92,6 +128,42 @@ export default function Profile({ onSignOut }) {
   const handleCancelEdit = () => {
     setForm({ display_name: profile?.display_name || "", currency_preference: profile?.currency_preference || "INR" });
     setEditing(false);
+  };
+
+  const handleFullExport = async () => {
+    setExportingData(true);
+    try {
+      const res = await fetch(`${API_BASE}/export/full`, { headers: authHeaders() });
+      if (!res.ok) throw new Error("Could not prepare your data export");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "ledger_full_export.json";
+      link.click();
+      URL.revokeObjectURL(url);
+      toast("Full data export downloaded", "success");
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setExportingData(false);
+    }
+  };
+
+  const handleDeleteData = async () => {
+    if (deleteConfirmation !== "DELETE") return;
+    setDeletingData(true);
+    try {
+      await apiFetch("/profile/data", {
+        method: "DELETE",
+        body: JSON.stringify({ confirmation: deleteConfirmation }),
+      });
+      toast("Your Ledger data was permanently deleted", "success");
+      onSignOut();
+    } catch (e) {
+      toast(e.message, "error");
+      setDeletingData(false);
+    }
   };
 
   const handleAvatarClick = () => {
@@ -388,6 +460,39 @@ export default function Profile({ onSignOut }) {
         </div>
       </div>
 
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="settings-section">
+          <h2 className="settings-title"><Wallet size={18} /> Personalize your ledger</h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.6 }}>Keep your categories and merchant names consistent without changing the original bank description.</p>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input className="premium-input" placeholder="New expense category" value={categoryName} onChange={(e) => setCategoryName(e.target.value)} />
+            <button className="btn-secondary" onClick={addCategory}>Add category</button>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input className="premium-input" placeholder="Bank name / alias" value={aliasForm.alias} onChange={(e) => setAliasForm((v) => ({ ...v, alias: e.target.value }))} />
+            <input className="premium-input" placeholder="Canonical merchant" value={aliasForm.canonical} onChange={(e) => setAliasForm((v) => ({ ...v, canonical: e.target.value }))} />
+            <button className="btn-secondary" onClick={addAlias}>Save alias</button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {customCategories.map((item) => <span key={item.id} className="category-pill active">{item.name}</span>)}
+            {merchantAliases.map((item) => <button key={item.id} className="category-pill" onClick={() => removeAlias(item.id)} title="Remove alias">{item.alias_key} → {item.canonical} ×</button>)}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Privacy & Data ───────────────────────────────────────────── */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="settings-section">
+          <h2 className="settings-title"><Shield size={18} /> Privacy & your data</h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.6, margin: "0 0 16px" }}>
+            Export a portable copy of your profile, accounts, transactions, goals, investments, conversations, and category corrections. Uploaded statement files and webhook secrets are never included.
+          </p>
+          <button className="btn-secondary" onClick={handleFullExport} disabled={exportingData}>
+            <Download size={15} /> {exportingData ? "Preparing export…" : "Download all my data"}
+          </button>
+        </div>
+      </div>
+
       {/* ── Danger Zone ──────────────────────────────────────────────── */}
       <div className="card profile-danger-card">
         <div className="danger-content">
@@ -416,6 +521,23 @@ export default function Profile({ onSignOut }) {
               </button>
             </div>
           )}
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--border)", marginTop: 20, paddingTop: 20 }}>
+          <div className="danger-content">
+            <div className="danger-icon-wrap"><Trash2 size={20} className="danger-icon" /></div>
+            <div className="danger-text">
+              <h2 className="danger-title">Delete all Ledger data</h2>
+              <p className="danger-desc">This permanently removes your financial history, accounts, goals, investments, AI conversations, and profile. Download an export first if you may need it later.</p>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 14 }}>
+            <input aria-label="Type DELETE to confirm" placeholder="Type DELETE to confirm" value={deleteConfirmation}
+              onChange={e => setDeleteConfirmation(e.target.value)} style={{ maxWidth: 220 }} />
+            <button className="btn-danger-premium" onClick={handleDeleteData} disabled={deleteConfirmation !== "DELETE" || deletingData}>
+              {deletingData ? "Deleting…" : "Permanently delete data"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

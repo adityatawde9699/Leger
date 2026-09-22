@@ -24,6 +24,10 @@ class UserProfileIn(BaseModel):
     currency_preference: str = Field(default="INR", pattern="^[A-Z]{3}$")
 
 
+class DataDeletionRequest(BaseModel):
+    confirmation: str = Field(pattern="^DELETE$", description="Type DELETE to permanently erase account data")
+
+
 class UserProfileOut(BaseModel):
     id: str
     email: str | None
@@ -60,8 +64,25 @@ class AccountOut(AccountIn):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    last_reconciled_at: datetime | None = None
+    last_reconciled_balance: Decimal | None = None
+    reconciliation_note: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ReconciliationRequest(BaseModel):
+    observed_balance: Decimal
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ReconciliationOut(BaseModel):
+    account_id: str
+    previous_balance: Decimal
+    observed_balance: Decimal
+    difference: Decimal
+    reconciled_at: datetime
+    note: str | None = None
 
 
 # ── Transactions ─────────────────────────────────────────────────────────────
@@ -69,7 +90,8 @@ class AccountOut(AccountIn):
 
 class TransactionIn(BaseModel):
     date: date
-    type: str = Field(pattern="^(income|expense)$")
+    type: str = Field(pattern="^(income|expense|refund|reimbursement|transfer)$")
+    status: str = Field(default="posted", pattern="^(posted|pending|excluded)$")
     category: str
     amount: Decimal = Field(gt=0)
     description: str = Field(min_length=1, max_length=500)
@@ -86,6 +108,7 @@ class TransactionOut(BaseModel):
     id: str
     date: date
     type: str
+    status: str = "posted"
     category: str
     amount: Decimal
     description: str
@@ -129,6 +152,75 @@ class BudgetOut(BudgetIn):
     model_config = {"from_attributes": True}
 
 
+class MerchantAliasIn(BaseModel):
+    alias: str = Field(min_length=1, max_length=128)
+    canonical: str = Field(min_length=1, max_length=128)
+
+
+class MerchantAliasOut(BaseModel):
+    id: str
+    alias_key: str
+    canonical: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class UserCategoryIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    kind: str = Field(default="expense", pattern="^(expense|income)$")
+    reporting_group: str = Field(default="Other", min_length=1, max_length=64)
+
+
+class UserCategoryOut(UserCategoryIn):
+    id: str
+    is_active: bool
+    is_custom: bool = True
+
+
+class RecurringRuleIn(BaseModel):
+    description: str = Field(min_length=1, max_length=128)
+    category: str = Field(min_length=1, max_length=64)
+    cadence: str = Field(pattern="^(weekly|biweekly|monthly|quarterly|irregular)$")
+    average_amount: Decimal = Field(gt=0)
+    minimum_amount: Decimal = Field(gt=0)
+    maximum_amount: Decimal = Field(gt=0)
+    next_expected: date | None = None
+    confidence: float = Field(ge=0, le=1)
+    status: str = Field(default="active", pattern="^(active|paused|cancelled)$")
+    confirmed: bool = False
+    evidence_transaction_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
+class RecurringRuleOut(RecurringRuleIn):
+    id: str
+    confirmed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Goals ────────────────────────────────────────────────────────────────────
+
+
+class GoalIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    goal_type: str = Field(default="custom", pattern="^(emergency_fund|debt_payoff|savings|spending_reduction|custom)$")
+    target_amount: Decimal = Field(gt=0)
+    current_amount: Decimal = Field(default=Decimal("0"), ge=0)
+    deadline: date | None = None
+    status: str = Field(default="active", pattern="^(active|paused|completed)$")
+
+
+class GoalOut(GoalIn):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ── Imports ───────────────────────────────────────────────────────────────────
 
 
@@ -145,11 +237,24 @@ class ImportJobOut(BaseModel):
     id: str
     status: str
     file_name: str
+    file_fingerprint: str | None = None
+    total_rows: int | None = None
+    processed_rows: int = 0
+    cancel_requested: bool = False
+    excluded_row_fingerprints: str | None = None
     row_count: int | None = None
     error_message: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ImportPreviewOut(BaseModel):
+    file_name: str
+    row_count: int
+    duplicate_count: int = 0
+    preview: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 # ── AI Advisor ────────────────────────────────────────────────────────────────
@@ -201,8 +306,23 @@ class CategorizeBatchRequest(BaseModel):
 
 
 class ProactiveInsight(BaseModel):
+    id: str = ""
     type: str  # warning | tip | positive | info
     text: str
+    priority: int = Field(default=2, ge=1, le=5)
+    category: str | None = None
+    confidence: str = "medium"  # high | medium | low
+    source: str = "rules"  # rules | ai
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    action: str | None = None
+    action_type: str | None = None
+    data_quality: dict[str, Any] = Field(default_factory=dict)
+
+
+class InsightFeedbackRequest(BaseModel):
+    insight_id: str = Field(min_length=1, max_length=256)
+    feedback: str = Field(pattern="^(helpful|inaccurate|irrelevant|too_generic|unsafe|completed_action|dismissed|snoozed)$")
+    note: str | None = Field(default=None, max_length=300)
 
 
 # ── Receipt ──────────────────────────────────────────────────────────────────
@@ -230,6 +350,39 @@ class SummaryOut(BaseModel):
     by_day: dict[str, Any]
     insights: list[str]
     recurring: list[dict[str, Any]]
+    data_quality: dict[str, Any] = Field(default_factory=dict)
+    analysis: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScenarioRequest(BaseModel):
+    category: str | None = Field(default=None, max_length=128)
+    reduction_pct: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    income_change_pct: Decimal = Field(default=Decimal("0"), ge=-100, le=100)
+    one_time_expense: Decimal = Field(default=Decimal("0"), ge=0)
+    horizon_months: int = Field(default=1, ge=1, le=12)
+
+
+class ScenarioOut(BaseModel):
+    category: str | None
+    reduction_pct: Decimal
+    income_change_pct: Decimal
+    one_time_expense: Decimal
+    horizon_months: int
+    period_start: date | None
+    period_end: date | None
+    months_observed: int
+    transaction_count: int
+    baseline_monthly_income: Decimal
+    baseline_monthly_expenses: Decimal
+    baseline_monthly_net: Decimal
+    category_monthly_spend: Decimal
+    monthly_savings: Decimal
+    projected_monthly_income: Decimal
+    projected_monthly_expenses: Decimal
+    projected_monthly_net: Decimal
+    first_month_net_after_one_time: Decimal
+    horizon_net_change: Decimal
+    data_quality: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────

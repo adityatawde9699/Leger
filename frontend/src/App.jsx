@@ -8,6 +8,7 @@ import CommandPalette from "./components/CommandPalette";
 const Dashboard     = lazy(() => import("./views/Dashboard"));
 const Transactions  = lazy(() => import("./views/Transactions"));
 const Budgets       = lazy(() => import("./views/Budgets"));
+const Goals         = lazy(() => import("./views/Goals"));
 const Advisor       = lazy(() => import("./views/Advisor"));
 const Accounts      = lazy(() => import("./views/Accounts"));
 const ExportGST     = lazy(() => import("./views/ExportGST"));
@@ -28,6 +29,7 @@ import {
 const PRIMARY_VIEWS = [
   { id: "dashboard",    label: "Home",    Icon: LayoutDashboard },
   { id: "budgets",      label: "Budgets", Icon: Target },
+  { id: "goals",        label: "Goals",   Icon: Target },
   { id: "advisor",      label: "AI",      Icon: Sparkles },
 ];
 
@@ -45,6 +47,7 @@ const PAGE_TITLES = {
   dashboard:    "Dashboard",
   transactions: "Transactions",
   budgets:      "Budgets",
+  goals:        "Goals",
   advisor:      "Amadeus AI",
   investments:  "Investments",
   accounts:     "Accounts",
@@ -194,9 +197,10 @@ export default function App() {
 
   const renderView = () => {
     switch (view) {
-      case "dashboard":    return <Dashboard userName={displayName} />;
+      case "dashboard":    return <Dashboard userName={displayName} onNavigate={navigateTo} onAddTransaction={() => setSheetOpen(true)} />;
       case "transactions": return <Transactions />;
       case "budgets":      return <Budgets />;
+      case "goals":        return <Goals />;
       case "analytics":    return <Analytics />;
       case "accounts":     return <Accounts />;
       case "investments":  return <Investments />;
@@ -205,7 +209,7 @@ export default function App() {
       case "audit":        return <AuditWebhooks />;
       case "advisor":      return <Advisor />;
       case "profile":      return <Profile onSignOut={handleSignOut} />;
-      default:             return <Dashboard userName={displayName} />;
+      default:             return <Dashboard userName={displayName} onNavigate={navigateTo} onAddTransaction={() => setSheetOpen(true)} />;
     }
   };
 
@@ -550,8 +554,13 @@ function QuickAddSheet({ open, onClose, onSaved }) {
   const [importMode, setImportMode] = React.useState("manual"); // "manual" or "sms"
   const [smsText, setSmsText] = React.useState("");
   const [amountStr, setAmountStr] = React.useState("0");
+  const [accounts, setAccounts] = React.useState([]);
+  const [categoryOptions, setCategoryOptions] = React.useState([]);
+  const [pendingStatement, setPendingStatement] = React.useState(null);
+  const [statementPreview, setStatementPreview] = React.useState(null);
+  const [excludedStatementRows, setExcludedStatementRows] = React.useState(() => new Set());
   const [form, setForm] = React.useState({
-    type: "expense", category: "Dining", description: "", date: today(), account: "Everyday"
+    type: "expense", status: "posted", category: "Dining", description: "", date: today(), account: ""
   });
 
   useEffect(() => {
@@ -559,7 +568,14 @@ function QuickAddSheet({ open, onClose, onSaved }) {
       setAmountStr("0");
       setImportMode("manual");
       setSmsText("");
-      setForm({ type: "expense", category: "Dining", description: "", date: today(), account: "Everyday" });
+      setPendingStatement(null);
+      setStatementPreview(null);
+      setForm({ type: "expense", status: "posted", category: "Dining", description: "", date: today(), account: "" });
+      apiFetch("/accounts").then((items) => {
+        setAccounts(Array.isArray(items) ? items : []);
+        if (items?.length) setForm((prev) => ({ ...prev, account: items[0].id }));
+      }).catch(() => setAccounts([]));
+      apiFetch("/categories").then((items) => setCategoryOptions(Array.isArray(items) ? items : [])).catch(() => setCategoryOptions([]));
     }
   }, [open]);
 
@@ -608,15 +624,38 @@ function QuickAddSheet({ open, onClose, onSaved }) {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      toast("Uploading statement...", "info");
-      await apiFetch("/imports/statement", { method: "POST", body: formData });
-      toast("Statement processing started. Check back in a few moments.", "success");
-      onSaved();
-      onClose();
+      if (form.account) formData.append("account_id", form.account);
+      toast("Reading statement for review...", "info");
+      const preview = await apiFetch("/imports/statement/preview", { method: "POST", body: formData });
+      setPendingStatement(file);
+      setStatementPreview(preview);
+      setExcludedStatementRows(new Set());
     } catch (err) {
       toast(err.message || "Failed to upload statement", "error");
     } finally {
       if (statementInputRef.current) statementInputRef.current.value = "";
+    }
+  };
+
+  const confirmStatementImport = async () => {
+    if (!pendingStatement) return;
+    try {
+      const formData = new FormData();
+      formData.append("file", pendingStatement);
+      if (form.account) formData.append("account_id", form.account);
+      formData.append("excluded_row_fingerprints", JSON.stringify([...excludedStatementRows]));
+      const job = await apiFetch("/imports/statement", { method: "POST", body: formData });
+      if (job.status === "done") {
+        toast("This statement was already imported; no duplicate rows were added.", "info");
+      } else if (job.status === "failed") {
+        toast("This statement was already attempted and failed. Review the import status and retry it.", "error");
+      } else {
+        toast("Statement processing started.", "success");
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast(err.message || "Failed to import statement", "error");
     }
   };
 
@@ -647,11 +686,13 @@ function QuickAddSheet({ open, onClose, onSaved }) {
         method: "POST",
         body: JSON.stringify({ 
           type: form.type,
+          status: form.status,
           amount: numericAmount,
           category: form.category,
           description: form.description || "Quick Add",
           date: form.date,
-          source: form.account === "Everyday" ? "bank" : "cash"
+          source: form.account ? "bank" : "cash",
+          account_id: form.account || null,
         }),
       });
       onSaved();
@@ -663,7 +704,14 @@ function QuickAddSheet({ open, onClose, onSaved }) {
     }
   }
 
-  const activeCategories = form.type === "income" ? ["Salary", "Freelance", "Transfer", "Other"] : ["Dining", "Groceries", "Transport", "Shopping", "Health", "Housing"];
+  const configuredCategories = categoryOptions
+    .filter((item) => item.is_active && item.kind === (form.type === "income" ? "income" : "expense"))
+    .map((item) => item.name);
+  const fallbackCategories = form.type === "income" ? ["Salary", "Freelance", "Other"]
+    : ["refund", "reimbursement"].includes(form.type) ? ["Refunds", "Shopping", "Dining", "Other"]
+    : form.type === "transfer" ? ["Transfer", "Other"]
+    : ["Dining", "Groceries", "Transport", "Shopping", "Health", "Housing"];
+  const activeCategories = configuredCategories.length ? configuredCategories : fallbackCategories;
 
   // Automatically ensure category is valid for type
   useEffect(() => {
@@ -689,6 +737,9 @@ function QuickAddSheet({ open, onClose, onSaved }) {
           <div className="add-segmented-control">
             <button className={form.type === "expense" ? "active" : ""} onClick={() => setForm({ ...form, type: "expense" })}>Expense</button>
             <button className={form.type === "income" ? "active" : ""} onClick={() => setForm({ ...form, type: "income" })}>Income</button>
+            <button className={form.type === "refund" ? "active" : ""} onClick={() => setForm({ ...form, type: "refund" })}>Refund</button>
+            <button className={form.type === "reimbursement" ? "active" : ""} onClick={() => setForm({ ...form, type: "reimbursement" })}>Reimbursement</button>
+            <button className={form.type === "transfer" ? "active" : ""} onClick={() => setForm({ ...form, type: "transfer" })}>Transfer</button>
           </div>
 
           {/* Amount Display */}
@@ -714,7 +765,51 @@ function QuickAddSheet({ open, onClose, onSaved }) {
             </button>
           </div>
 
-          {importMode === "sms" ? (
+          {statementPreview ? (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div className="add-section-label">REVIEW STATEMENT</div>
+              <div style={{ padding: "14px 16px", borderRadius: 14, background: "var(--surface-secondary)", border: "1px solid var(--border)" }}>
+                <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>{statementPreview.file_name}</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  {statementPreview.row_count} rows found · {statementPreview.duplicate_count} will be skipped · {form.account ? "Account selected" : "No account selected"}
+                </div>
+              </div>
+              {statementPreview.warnings?.map((warning) => (
+                <div key={warning} style={{ fontSize: 12, lineHeight: 1.45, color: "var(--text-secondary)", padding: "9px 11px", borderRadius: 10, background: "rgba(250,204,21,0.10)", border: "1px solid rgba(250,204,21,0.28)" }}>
+                  {warning}
+                </div>
+              ))}
+              <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 12 }}>
+                {statementPreview.preview?.slice(0, 20).map((row, index) => {
+                  const excluded = excludedStatementRows.has(row.fingerprint);
+                  const uncertain = row.category_confidence != null && row.category_confidence < 0.6;
+                  return (
+                  <label key={`${row.fingerprint || row.date}-${index}`} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 11px", borderBottom: "1px solid var(--border)", opacity: row.duplicate || excluded ? 0.5 : 1, fontSize: 12, cursor: row.duplicate ? "default" : "pointer" }}>
+                    <input type="checkbox" checked={!excluded && !row.duplicate} disabled={row.duplicate} onChange={() => setExcludedStatementRows((previous) => {
+                      const next = new Set(previous);
+                      if (next.has(row.fingerprint)) next.delete(row.fingerprint); else next.add(row.fingerprint);
+                      return next;
+                    })} aria-label={`${excluded ? "Include" : "Exclude"} ${row.description}`} />
+                    <span style={{ width: 76, color: "var(--text-muted)" }}>{row.date}</span>
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>{row.description}</span>
+                    <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>₹{row.amount}</span>
+                    {row.duplicate && <span style={{ color: "var(--text-muted)", fontSize: 10 }}>SKIP</span>}
+                    {!row.duplicate && row.category && <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{row.category}{uncertain ? " · REVIEW" : ""}</span>}
+                  </label>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                {excludedStatementRows.size ? `${excludedStatementRows.size} row(s) excluded from this import. You can repair them later from Activity.` : "Uncheck any row you do not want to import. Low-confidence categories are marked REVIEW."}
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: "auto" }}>
+                <button className="btn-secondary" onClick={() => { setPendingStatement(null); setStatementPreview(null); setExcludedStatementRows(new Set()); }}>Choose another</button>
+                <button className="add-submit-btn" onClick={confirmStatementImport} disabled={!statementPreview.row_count || statementPreview.duplicate_count + excludedStatementRows.size >= statementPreview.row_count}>
+                  Confirm import
+                </button>
+              </div>
+            </div>
+          ) : importMode === "sms" ? (
             <div className="sms-import-view" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
               <div className="add-section-label">PASTE SMS MESSAGES</div>
               <textarea 
@@ -747,8 +842,23 @@ function QuickAddSheet({ open, onClose, onSaved }) {
               {/* Form List Fields */}
               <div className="add-form-list">
                 <label className="add-form-row">
+                  <span className="row-label">Account</span>
+                  <select className="row-input" value={form.account} onChange={e => setForm({...form, account: e.target.value})}>
+                    <option value="">Cash wallet</option>
+                    {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                  </select>
+                </label>
+                <label className="add-form-row">
                   <span className="row-label">Date</span>
                   <input type="date" className="row-input" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                </label>
+                <label className="add-form-row">
+                  <span className="row-label">Status</span>
+                  <select className="row-input" value={form.status} onChange={e => setForm({...form, status: e.target.value})}>
+                    <option value="posted">Posted · include in totals</option>
+                    <option value="pending">Pending · review later</option>
+                    <option value="excluded">Excluded · keep for records</option>
+                  </select>
                 </label>
                 <label className="add-form-row">
                   <span className="row-label">Note</span>

@@ -11,7 +11,6 @@ from .db import get_db
 from .models import User
 from .schemas import UserContext
 
-
 _google_verify_lock = Lock()
 
 

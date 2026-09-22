@@ -36,7 +36,11 @@ export default function Analytics() {
   const [summary,    setSummary]    = React.useState(null);
   const [anomalies,  setAnomalies]  = React.useState([]);
   const [forecast,   setForecast]   = React.useState(null);
+  const [comparison, setComparison] = React.useState(null);
   const [loading,    setLoading]    = React.useState(true);
+  const [scenario,   setScenario]   = React.useState(null);
+  const [scenarioForm, setScenarioForm] = React.useState({ category: "Dining", reduction_pct: 20, income_change_pct: 0, one_time_expense: 0, horizon_months: 1 });
+  const [scenarioLoading, setScenarioLoading] = React.useState(false);
 
   React.useEffect(() => {
     setLoading(true);
@@ -44,10 +48,12 @@ export default function Analytics() {
       apiFetch(`/summary?range=${timeRange}`),
       apiFetch(`/analytics/anomalies?range=${timeRange}`).catch(() => []),
       apiFetch(`/analytics/forecast`).catch(() => null),
-    ]).then(([s, a, f]) => {
+      apiFetch(`/analytics/compare?days=30`).catch(() => null),
+    ]).then(([s, a, f, c]) => {
       setSummary(s);
       setAnomalies(Array.isArray(a) ? a : []);
       setForecast(f);
+      setComparison(c);
     }).catch(e => toast(e.message, "error"))
       .finally(() => setLoading(false));
   }, [timeRange]);
@@ -148,6 +154,29 @@ export default function Analytics() {
   const net      = income - expenses;
   const months_covered = summary?.months_covered || 1;
   const avgMonthlyExpense = expenses / months_covered;
+  const scenarioCategories = [...new Set([...EXPENSE_CATEGORIES, ...Object.keys(byCategory)])];
+
+  async function runScenario(e) {
+    e.preventDefault();
+    setScenarioLoading(true);
+    try {
+      const result = await apiFetch("/analytics/scenario", {
+        method: "POST",
+        body: JSON.stringify({
+          ...scenarioForm,
+          reduction_pct: Number(scenarioForm.reduction_pct) || 0,
+          income_change_pct: Number(scenarioForm.income_change_pct) || 0,
+          one_time_expense: Number(scenarioForm.one_time_expense) || 0,
+          horizon_months: Number(scenarioForm.horizon_months) || 1,
+        }),
+      });
+      setScenario(result);
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setScenarioLoading(false);
+    }
+  }
 
   return (
     <div>
@@ -190,6 +219,103 @@ export default function Analytics() {
             <div className="account-change muted" style={{ fontSize: 12 }}>{sub}</div>
           </div>
         ))}
+      </div>
+
+      {/* Evidence-backed same-length comparison */}
+      <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--primary)" }}>
+        <div className="chart-card-header">
+          <div>
+            <div className="chart-title">Last 30 days vs previous 30 days</div>
+            <div className="chart-subtitle">
+              {comparison?.status === "ready"
+                ? `${comparison.current.period.start} → ${comparison.current.period.end} compared with ${comparison.previous.period.start} → ${comparison.previous.period.end}.`
+                : comparison?.data_quality?.warnings?.join(" · ") || "Not enough history for a trustworthy comparison."}
+            </div>
+          </div>
+        </div>
+        {comparison?.status === "ready" ? (
+          <div className="account-grid" style={{ marginBottom: 0 }}>
+            {[
+              ["Spending change", comparison.changes.expenses, comparison.changes.expenses_percent, "var(--negative)"],
+              ["Income change", comparison.changes.income, comparison.changes.income_percent, "var(--positive)"],
+              ["Net cash-flow change", comparison.changes.net, comparison.changes.net_percent, "var(--info)"],
+            ].map(([label, change, percent, color]) => (
+              <div key={label} style={{ padding: "4px 0" }}>
+                <div className="account-label">{label}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color }}>{Number(change) >= 0 ? "+" : ""}{money(change)}</div>
+                <div className="muted" style={{ fontSize: 12 }}>{percent == null ? "No prior baseline" : `${Number(percent) >= 0 ? "+" : ""}${percent}%`}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state" style={{ padding: "8px 0 0" }}>Add transactions across two comparable periods to unlock trend analysis.</div>
+        )}
+      </div>
+
+      {/* Deterministic scenario planner */}
+      <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--info)" }}>
+        <div className="chart-card-header">
+          <div>
+            <div className="chart-title" style={{ display: "flex", alignItems: "center", gap: 8 }}><Zap size={17} style={{ color: "var(--info)" }} /> Scenario planner</div>
+            <div className="chart-subtitle">See the monthly effect of a change using your last 90 days of transactions. No AI estimates.</div>
+          </div>
+        </div>
+        <form onSubmit={runScenario}>
+          <div className="form-grid-2">
+            <div className="form-field">
+              <label className="form-label">Category to reduce</label>
+              <select value={scenarioForm.category} onChange={e => setScenarioForm({ ...scenarioForm, category: e.target.value })}>
+                {scenarioCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+              </select>
+            </div>
+            <div className="form-field">
+              <label className="form-label">Reduction (%)</label>
+              <input type="number" min="0" max="100" step="1" value={scenarioForm.reduction_pct}
+                onChange={e => setScenarioForm({ ...scenarioForm, reduction_pct: e.target.value })} />
+            </div>
+            <div className="form-field">
+              <label className="form-label">Income change (%)</label>
+              <input type="number" min="-100" max="100" step="1" value={scenarioForm.income_change_pct}
+                onChange={e => setScenarioForm({ ...scenarioForm, income_change_pct: e.target.value })} />
+            </div>
+            <div className="form-field">
+              <label className="form-label">One-time expense</label>
+              <input type="number" min="0" step="100" value={scenarioForm.one_time_expense}
+                onChange={e => setScenarioForm({ ...scenarioForm, one_time_expense: e.target.value })} />
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 4 }}>
+            <button type="submit" className="btn-primary" disabled={scenarioLoading}>{scenarioLoading ? "Calculating…" : "Calculate scenario"}</button>
+            <label className="form-label" style={{ margin: 0 }}>Over
+              <select style={{ marginLeft: 8 }} value={scenarioForm.horizon_months} onChange={e => setScenarioForm({ ...scenarioForm, horizon_months: e.target.value })}>
+                {[1, 3, 6, 12].map(n => <option key={n} value={n}>{n} month{n > 1 ? "s" : ""}</option>)}
+              </select>
+            </label>
+          </div>
+        </form>
+        {scenario && (
+          <div style={{ marginTop: 20, paddingTop: 18, borderTop: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+              Based on {scenario.transaction_count} transactions from {scenario.period_start || "no recorded history"} to {scenario.period_end || "today"}.
+            </div>
+            <div className="account-grid">
+              {[
+                ["Current monthly net", scenario.baseline_monthly_net, "var(--text-secondary)"],
+                ["Projected monthly net", scenario.projected_monthly_net, scenario.projected_monthly_net >= 0 ? "var(--positive)" : "var(--negative)"],
+                ["Monthly improvement", Number(scenario.monthly_savings) + (Number(scenario.projected_monthly_income) - Number(scenario.baseline_monthly_income)), "var(--info)"],
+                [`${scenario.horizon_months}-month net change`, scenario.horizon_net_change, scenario.horizon_net_change >= 0 ? "var(--positive)" : "var(--negative)"],
+              ].map(([label, value, color]) => (
+                <div key={label} style={{ padding: "12px 14px", borderRadius: 12, background: "var(--surface-secondary)" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 5 }}>{label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color }}>{money(value)}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 12 }}>
+              Category baseline: {money(scenario.category_monthly_spend)}/month · First month after one-time expense: {money(scenario.first_month_net_after_one_time)} · Observed coverage: {scenario.data_quality?.coverage || "unknown"}.
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Monthly Cash Flow Trend */}
