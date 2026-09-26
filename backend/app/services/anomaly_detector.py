@@ -122,6 +122,7 @@ def _severity_from_ratio(ratio: float) -> str:
 
 def _detect_large_purchases(
     expense_txns: list[Transaction],
+    currency: str = "INR",
 ) -> list[dict[str, Any]]:
     """
     Flag transactions whose amount exceeds the per-category IQR upper fence
@@ -166,8 +167,8 @@ def _detect_large_purchases(
                         "anomaly_type": "large_purchase",
                         "severity": severity,
                         "message": (
-                            f"{ANOMALY_TYPES['large_purchase']}: INR {amount:,.2f} in {category} "
-                            f"(category fence INR {fence:,.2f}, median INR {med:,.2f})"
+                            f"{ANOMALY_TYPES['large_purchase']}: {currency} {amount:,.2f} in {category} "
+                            f"(category fence {currency} {fence:,.2f}, median {currency} {med:,.2f})"
                         ),
                         "expected_range": {"min": float(q1), "max": float(fence)},
                         "date": tx.date.isoformat(),
@@ -181,6 +182,7 @@ def _detect_large_purchases(
 
 def _detect_velocity_spikes(
     expense_txns: list[Transaction],
+    currency: str = "INR",
 ) -> list[dict[str, Any]]:
     """
     Detect days where total spending exceeded mean_daily + 2.5 × std_daily.
@@ -220,8 +222,8 @@ def _detect_velocity_spikes(
                         "anomaly_type": "velocity_spike",
                         "severity": severity,
                         "message": (
-                            f"{ANOMALY_TYPES['velocity_spike']}: day total INR {total:,.2f} "
-                            f"vs typical INR {mean_daily:,.2f} ± {std_daily:,.2f}"
+                            f"{ANOMALY_TYPES['velocity_spike']}: day total {currency} {total:,.2f} "
+                            f"vs typical {currency} {mean_daily:,.2f} ± {currency} {std_daily:,.2f}"
                         ),
                         "expected_range": {
                             "min": max(0.0, mean_daily - std_daily),
@@ -238,6 +240,7 @@ def _detect_velocity_spikes(
 
 def _detect_duplicate_suspects(
     expense_txns: list[Transaction],
+    currency: str = "INR",
 ) -> list[dict[str, Any]]:
     """
     Flag pairs of transactions that share the same amount AND category within 48 hours.
@@ -267,7 +270,7 @@ def _detect_duplicate_suspects(
                         "anomaly_type": "duplicate_suspect",
                         "severity": "medium",
                         "message": (
-                            f"{ANOMALY_TYPES['duplicate_suspect']}: INR {float(tx_b.amount):,.2f} "
+                            f"{ANOMALY_TYPES['duplicate_suspect']}: {currency} {float(tx_b.amount):,.2f} "
                             f"in {tx_b.category} appears within 48 h of transaction {tx_a.id[:8]}…"
                         ),
                         "expected_range": None,
@@ -304,7 +307,7 @@ def _deduplicate(anomalies: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def detect_anomalies(transactions: list[Transaction]) -> list[dict[str, Any]]:
+def detect_anomalies(transactions: list[Transaction], currency: str = "INR") -> list[dict[str, Any]]:
     """
     Run all anomaly detection strategies against a list of transactions.
 
@@ -330,7 +333,10 @@ def detect_anomalies(transactions: list[Transaction]) -> list[dict[str, Any]]:
         logger.info("detect_anomalies called with no transactions — returning empty list")
         return []
 
-    expense_txns = [t for t in transactions if t.type == "expense"]
+    expense_txns = [
+        t for t in transactions
+        if t.type == "expense" and getattr(t, "status", "posted") == "posted"
+    ]
     if not expense_txns:
         logger.info("No expense transactions found — skipping anomaly detection")
         return []
@@ -344,22 +350,24 @@ def detect_anomalies(transactions: list[Transaction]) -> list[dict[str, Any]]:
     anomalies: list[dict[str, Any]] = []
 
     try:
-        anomalies.extend(_detect_large_purchases(expense_txns))
+        anomalies.extend(_detect_large_purchases(expense_txns, currency))
     except Exception:
         logger.exception("Error in large_purchase detection — skipping")
 
     try:
-        anomalies.extend(_detect_velocity_spikes(expense_txns))
+        anomalies.extend(_detect_velocity_spikes(expense_txns, currency))
     except Exception:
         logger.exception("Error in velocity_spike detection — skipping")
 
     try:
-        anomalies.extend(_detect_duplicate_suspects(expense_txns))
+        anomalies.extend(_detect_duplicate_suspects(expense_txns, currency))
     except Exception:
         logger.exception("Error in duplicate_suspect detection — skipping")
 
     # De-duplicate and sort: severity ASC (high=0), then date DESC
     anomalies = _deduplicate(anomalies)
+    for anomaly in anomalies:
+        anomaly["id"] = f"anomaly:{anomaly['anomaly_type']}:{anomaly['transaction_id']}"
     anomalies.sort(
         key=lambda a: (_SEVERITY_ORDER[a["severity"]], a["date"]),
         # date desc = reverse on secondary; severity asc on primary handled via tuple
@@ -370,6 +378,29 @@ def detect_anomalies(transactions: list[Transaction]) -> list[dict[str, Any]]:
     # Simpler, correct two-pass sort:
     anomalies.sort(key=lambda a: a["date"], reverse=True)
     anomalies.sort(key=lambda a: _SEVERITY_ORDER[a["severity"]])
+
+    period_start = min((tx.date for tx in expense_txns), default=None)
+    period_end = max((tx.date for tx in expense_txns), default=None)
+    methods = {
+        "large_purchase": "category IQR fence and median multiple",
+        "velocity_spike": "daily spending mean and standard deviation",
+        "duplicate_suspect": "same amount/category within a 48-hour window",
+    }
+    for anomaly in anomalies:
+        transaction_id = anomaly.get("transaction_id")
+        anomaly["recommended_action"] = "Review this transaction and confirm whether the pattern is expected."
+        anomaly["action_type"] = "open_transaction"
+        anomaly["status"] = "new"
+        anomaly["analysis"] = {
+            "period": {
+                "start": period_start.isoformat() if period_start else None,
+                "end": period_end.isoformat() if period_end else None,
+            },
+            "comparison_period": None,
+            "method": methods.get(anomaly.get("anomaly_type"), "deterministic anomaly rule"),
+            "transaction_ids": [transaction_id] if transaction_id else [],
+            "sufficient": bool(transaction_id),
+        }
 
     logger.info("Anomaly detection complete — %d anomalies found", len(anomalies))
     return anomalies

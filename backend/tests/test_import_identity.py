@@ -1,9 +1,11 @@
+import asyncio
 import json
 from datetime import date
 from decimal import Decimal
 
+import app.main as main
 from app.main import _statement_row_fingerprint
-from app.models import ImportJob
+from app.models import ImportJob, Transaction
 
 from .conftest import AUTH_HEADER, TEST_USER_ID, TestSession
 
@@ -93,3 +95,56 @@ def test_statement_review_can_exclude_preview_rows(client):
     assert response.status_code == 202
     job = response.json()
     assert rows[0]["fingerprint"] in json.loads(job["excluded_row_fingerprints"])
+
+
+def test_statement_preview_review_commit_persists_only_included_rows(client, monkeypatch):
+    async def categorize(rows, user_overrides=None):
+        return [
+            {"id": row["id"], "category": "Food", "confidence": 0.9}
+            for row in rows
+        ]
+
+    monkeypatch.setattr(main, "SessionLocal", TestSession)
+    monkeypatch.setattr(main, "categorize_batch", categorize)
+    content = b"Date,Description,Amount\n02/01/2026,Coffee,-100.00\n03/01/2026,Groceries,-250.00\n"
+
+    preview = client.post(
+        "/imports/statement/preview",
+        files={"file": ("march.csv", content, "text/csv")},
+        headers=AUTH_HEADER,
+    )
+    assert preview.status_code == 200
+    rows = preview.json()["preview"]
+    assert len(rows) == 2
+    assert all(row["category_confidence"] == 0.9 for row in rows)
+
+    response = client.post(
+        "/imports/statement",
+        files={"file": ("march.csv", content, "text/csv")},
+        data={"excluded_row_fingerprints": json.dumps([rows[0]["fingerprint"]])},
+        headers=AUTH_HEADER,
+    )
+    assert response.status_code == 202
+    job_id = response.json()["id"]
+
+    db = TestSession()
+    try:
+        job_status = db.get(ImportJob, job_id).status
+    finally:
+        db.close()
+    if job_status == "pending":
+        asyncio.run(main._process_import_job(job_id))
+
+    db = TestSession()
+    try:
+        saved_job = db.get(ImportJob, job_id)
+        saved_transactions = db.query(Transaction).filter(Transaction.user_id == TEST_USER_ID).all()
+
+        assert saved_job.status == "done"
+        assert saved_job.row_count == 1
+        assert saved_job.processed_rows == 2
+        assert [(tx.description, tx.amount, tx.category) for tx in saved_transactions] == [
+            ("Groceries", Decimal("250.00"), "Food")
+        ]
+    finally:
+        db.close()

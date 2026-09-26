@@ -30,3 +30,10 @@ def test_recurring_payment_reports_cadence_confidence_and_evidence():
     assert payments[0]["maximum_amount"] == Decimal("549")
     assert 0 < payments[0]["confidence"] <= 1
     assert {row["transaction_id"] for row in payments[0]["evidence"]} == {"t1", "t2", "t3"}
+
+
+def test_recurring_tolerance_changes_suggestion_sensitivity():
+    rows = [tx("t1", "2026-01-01", "499"), tx("t2", "2026-02-01", "499")]
+
+    assert recurring_payments(rows, "standard")
+    assert recurring_payments(rows, "strict") == []

@@ -69,6 +69,28 @@ class Settings(BaseSettings):
     # LLM cache TTL in seconds
     llm_cache_ttl_seconds: int = 3600  # 1 hour
 
+    # AI provider safety controls. Empty policy values preserve the configured
+    # adapter order; deployments can restrict providers globally or per task.
+    ai_provider_allowlist: str = ""
+    ai_task_provider_policy: str = ""
+    ai_provider_timeout_seconds: float = 20.0
+    ai_provider_max_attempts: int = 3
+    # Open a provider circuit after repeated failures so a degraded upstream
+    # does not consume every request's retry budget. The cooldown is short by
+    # default; a later request probes the provider again automatically.
+    ai_provider_circuit_failure_threshold: int = 3
+    ai_provider_circuit_cooldown_seconds: float = 60.0
+    # Request-equivalent quota guard. Zero disables the guard.
+    ai_daily_request_budget: int = 0
+    ai_provider_daily_request_budgets: str = ""
+    ai_conversation_retention_days: int = 90
+    # Fernet key used for portable encrypted backups. Generate with
+    # `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`.
+    backup_encryption_key: str | None = None
+    # JSON map such as {"Groq": "provider-configured-30d"}; unknown values
+    # remain visible to users instead of being presented as guarantees.
+    ai_provider_retention_policy: str = "{}"
+
     # Anomaly detection sensitivity (IQR multiplier — higher = less sensitive)
     anomaly_iqr_multiplier: float = 1.5
 

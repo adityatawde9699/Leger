@@ -1,5 +1,5 @@
 import React from "react";
-import { apiFetch, money } from "../lib";
+import { apiFetch, getCurrencyPreference, money } from "../lib";
 import { useToast } from "../components/ui";
 import {
   Briefcase, TrendingUp, TrendingDown, Plus, Trash2,
@@ -147,6 +147,14 @@ export default function Investments() {
       {/* Portfolio Analytics */}
       {analytics && (analytics.allocation?.length > 0 || analytics.sharpe_ratio != null) && (
         <div style={{ marginBottom: 24 }}>
+          {analytics.valuation_quality && (
+            <div className="card" role="status" style={{ padding: 18, marginBottom: 16, borderLeft: "3px solid var(--warning)" }}>
+              <strong>Valuation quality: {analytics.valuation_quality.source.replace("_", " ")}</strong>
+              <p style={{ margin: "6px 0 0", color: "var(--text-secondary)", fontSize: 12 }}>
+                {analytics.valuation_quality.warnings[0]} {analytics.valuation_quality.stale_holding_count} of {analytics.valuation_quality.holding_count} holding{analytics.valuation_quality.holding_count === 1 ? "" : "s"} need a current user-entered price.
+              </p>
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
             {/* Asset Allocation Donut */}
             {analytics.allocation?.length > 0 && (
@@ -449,14 +457,14 @@ export default function Investments() {
                       onChange={e => setHoldingForm({ ...holdingForm, quantity: e.target.value })} />
                   </div>
                   <div className="form-field">
-                    <label className="form-label">Buy Price (₹)</label>
+                    <label className="form-label">Buy Price ({getCurrencyPreference()})</label>
                     <input type="number" required step="0.01" placeholder="2500" value={holdingForm.buy_price}
                       onChange={e => setHoldingForm({ ...holdingForm, buy_price: e.target.value })} />
                   </div>
                 </div>
                 <div className="form-grid-2">
                   <div className="form-field">
-                    <label className="form-label">Current Price (₹)</label>
+                    <label className="form-label">Current Price ({getCurrencyPreference()})</label>
                     <input type="number" step="0.01" placeholder="2800" value={holdingForm.current_price}
                       onChange={e => setHoldingForm({ ...holdingForm, current_price: e.target.value })} />
                   </div>

@@ -189,8 +189,8 @@ export default function ProactiveInsights({ onNavigate }) {
                 {cfg.label}
               </span>
 
-              {/* Dismiss button */}
-              <button onClick={() => { dismiss(key); sendFeedback(ins, "dismissed"); }}
+              {/* Seven-day snooze: the insight can return after the user has had time to act. */}
+              <button aria-label="Snooze insight for 7 days" title="Snooze for 7 days" onClick={() => { dismiss(key); sendFeedback(ins, "snoozed"); }}
                 style={{
                   background: "none", border: "none", color: "var(--text-muted)",
                   cursor: "pointer", padding: "0 2px", flexShrink: 0, fontSize: 14,

@@ -26,3 +26,18 @@ def test_scenario_excludes_transfers_and_applies_category_reduction():
     assert result["category_monthly_spend"] == Decimal("9000.00")
     assert result["monthly_savings"] == Decimal("1800.00")
     assert result["projected_monthly_net"] == Decimal("52800.00")
+
+
+def test_savings_target_reports_required_monthly_saving_and_feasibility():
+    result = calculate_scenario(
+        [
+            tx("2026-01-05", "income", "60000", "Salary"),
+            tx("2026-01-10", "expense", "10000", "Housing"),
+        ],
+        scenario_type="savings_target",
+        target_amount=Decimal("24000"),
+        horizon_months=6,
+    )
+
+    assert result["required_monthly_saving"] == Decimal("4000.00")
+    assert result["target_feasible"] is True

@@ -8,6 +8,53 @@ export function setAuthToken(token) {
   currentToken = token;
 }
 
+const CURRENCY_STORAGE_KEY = "ledger-display-currency";
+const RATE_STORAGE_KEY = "ledger-display-rates";
+
+export function setCurrencyPreference(currency) {
+  if (!currency || typeof currency !== "string") return;
+  localStorage.setItem(CURRENCY_STORAGE_KEY, currency);
+  window.dispatchEvent(new Event("ledger-currency-updated"));
+}
+
+export function setDisplayRates(base, rates, date = null) {
+  if (!base || !rates) return;
+  localStorage.setItem(RATE_STORAGE_KEY, JSON.stringify({ base, rates, date, savedAt: Date.now() }));
+  window.dispatchEvent(new Event("ledger-currency-updated"));
+}
+
+function convertDisplayAmount(value, sourceCurrency, targetCurrency) {
+  if (!sourceCurrency || sourceCurrency === targetCurrency) return Number(value || 0);
+  try {
+    const saved = JSON.parse(localStorage.getItem(RATE_STORAGE_KEY) || "null");
+    if (!saved || saved.base !== sourceCurrency) return Number(value || 0);
+    const sourceRate = Number(saved.rates?.[sourceCurrency] || 1);
+    const targetRate = Number(saved.rates?.[targetCurrency]);
+    if (!Number.isFinite(targetRate) || !sourceRate) return Number(value || 0);
+    return Number(value || 0) * targetRate / sourceRate;
+  } catch { return Number(value || 0); }
+}
+
+export function setRegionPreference(region) {
+  if (!region || typeof region !== "string") return;
+  localStorage.setItem("ledger-region", region);
+}
+
+export function getCurrencyPreference() {
+  const currency = localStorage.getItem(CURRENCY_STORAGE_KEY);
+  return /^[A-Z]{3}$/.test(currency || "") ? currency : "INR";
+}
+
+export function getRecordCurrency() {
+  const currency = localStorage.getItem("ledger-record-currency");
+  return /^[A-Z]{3}$/.test(currency || "") ? currency : "INR";
+}
+
+function getLocalePreference() {
+  const locales = { IN: "en-IN", US: "en-US", GB: "en-GB", CA: "en-CA", AU: "en-AU", SG: "en-SG", AE: "en-AE", JP: "ja-JP", CH: "de-CH", CN: "zh-CN", HK: "zh-HK" };
+  return locales[localStorage.getItem("ledger-region") || "IN"] || "en";
+}
+
 function getToken() {
   return currentToken;
 }
@@ -30,8 +77,13 @@ export async function apiFetch(path, opts = {}) {
     },
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    const responseText = await res.text();
+    let message = responseText;
+    try {
+      const parsed = JSON.parse(responseText);
+      if (typeof parsed.detail === "string") message = parsed.detail;
+    } catch { /* use response text */ }
+    throw new Error(message || `HTTP ${res.status}`);
   }
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("text/event-stream")) return res;
@@ -117,9 +169,25 @@ export function paletteColor(key, i) {
   return CHART_PALETTE[h % CHART_PALETTE.length];
 }
 
-export const money = (v) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency", currency: "INR", maximumFractionDigits: 0,
-  }).format(Number(v || 0));
+export const money = (v, currency = getRecordCurrency()) =>
+  new Intl.NumberFormat(getLocalePreference(), {
+    style: "currency", currency: getCurrencyPreference(),
+    minimumFractionDigits: 0, maximumFractionDigits: 2,
+  }).format(convertDisplayAmount(v, /^[A-Z]{3}$/.test(currency || "") ? currency : "INR", getCurrencyPreference()));
 
-export const today = () => new Date().toISOString().slice(0, 10);
+export const currencySymbol = (currency = getCurrencyPreference()) =>
+  new Intl.NumberFormat(getLocalePreference(), {
+    style: "currency", currency: /^[A-Z]{3}$/.test(currency || "") ? currency : "INR",
+  }).formatToParts(0).find((part) => part.type === "currency")?.value || currency;
+
+export const compactMoney = (v) =>
+  new Intl.NumberFormat(getLocalePreference(), {
+    style: "currency", currency: getCurrencyPreference(), notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(convertDisplayAmount(v, getRecordCurrency(), getCurrencyPreference()));
+
+export const today = () => {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+};

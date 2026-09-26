@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { apiFetch, API_BASE, EXPENSE_CATEGORIES, setAuthToken, today } from "./lib";
+import { apiFetch, API_BASE, EXPENSE_CATEGORIES, currencySymbol, getCurrencyPreference, money, setAuthToken, setCurrencyPreference, setDisplayRates, setRegionPreference, today } from "./lib";
 import { clearGoogleSession, loadGoogleSession, silentlyRefreshGoogleSession, msUntilRefresh } from "./googleAuth";
 import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
 import Auth from "./views/Auth";
 import CommandPalette from "./components/CommandPalette";
+import { listQueued, queueCapture, removeQueued, updateQueued } from "./offlineQueue";
 
 const Dashboard     = lazy(() => import("./views/Dashboard"));
 const Transactions  = lazy(() => import("./views/Transactions"));
@@ -115,6 +116,8 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [profileData, setProfileData] = useState(null);
+  const moreDrawerRef = useRef(null);
+  const moreTriggerRef = useRef(null);
 
   // Swipe navigation state
   const [touchStart, setTouchStart] = useState(null);
@@ -172,7 +175,17 @@ export default function App() {
 
   useEffect(() => {
     if (!session) return;
-    apiFetch("/profile").then(p => setProfileData(p)).catch(() => {});
+    apiFetch("/profile").then((profile) => {
+      setProfileData(profile);
+      localStorage.setItem("ledger-last-profile-id", profile.id);
+      setCurrencyPreference(profile.currency_preference);
+      setRegionPreference(profile.region);
+      const recordCurrency = localStorage.getItem("ledger-record-currency") || profile.currency_preference;
+      localStorage.setItem("ledger-record-currency", recordCurrency);
+      apiFetch(`/currency/rates?base=${recordCurrency}`)
+        .then((rates) => setDisplayRates(rates.base, rates.rates, rates.date))
+        .catch(() => {});
+    }).catch(() => {});
   }, [session]);
 
   useEffect(() => {
@@ -186,8 +199,25 @@ export default function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  useEffect(() => {
+    if (!moreDrawerOpen) return undefined;
+    const focusTimer = window.setTimeout(() => moreDrawerRef.current?.querySelector("button")?.focus(), 30);
+    const onKeyDown = (event) => {
+      if (event.key !== "Tab") return;
+      const elements = [...(moreDrawerRef.current?.querySelectorAll("button:not([disabled]), a[href]") || [])]
+        .filter((element) => element.getClientRects().length > 0);
+      if (!elements.length) return;
+      if (event.shiftKey && document.activeElement === elements[0]) { event.preventDefault(); elements[elements.length - 1].focus(); }
+      else if (!event.shiftKey && document.activeElement === elements[elements.length - 1]) { event.preventDefault(); elements[0].focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => { window.clearTimeout(focusTimer); document.removeEventListener("keydown", onKeyDown); moreTriggerRef.current?.focus(); };
+  }, [moreDrawerOpen]);
+
   const handleSignOut = async () => {
     stopKeepAlive();
+    localStorage.removeItem("ledger-last-profile-id");
+    setProfileData(null);
     if (import.meta.env.VITE_AUTH_PROVIDER === "dev") {
       localStorage.removeItem("dev-session"); setSession(null); setAuthToken(null); return;
     }
@@ -200,15 +230,15 @@ export default function App() {
     switch (view) {
       case "dashboard":    return <Dashboard userName={displayName} onNavigate={navigateTo} onAddTransaction={() => setSheetOpen(true)} />;
       case "transactions": return <Transactions initialFilter={transactionInitialFilter} />;
-      case "budgets":      return <Budgets />;
+      case "budgets":      return <Budgets onNavigate={navigateTo} />;
       case "goals":        return <Goals />;
-      case "analytics":    return <Analytics />;
+      case "analytics":    return <Analytics onNavigate={navigateTo} />;
       case "accounts":     return <Accounts />;
       case "investments":  return <Investments />;
       case "credit":       return <CreditBenchmarks />;
       case "export":       return <ExportGST />;
       case "audit":        return <AuditWebhooks />;
-      case "advisor":      return <Advisor />;
+      case "advisor":      return <Advisor onNavigate={navigateTo} />;
       case "profile":      return <Profile onSignOut={handleSignOut} />;
       default:             return <Dashboard userName={displayName} onNavigate={navigateTo} onAddTransaction={() => setSheetOpen(true)} />;
     }
@@ -434,6 +464,7 @@ export default function App() {
         })}
         <button
           id="mob-nav-more"
+          ref={moreTriggerRef}
           className={`mobile-nav-item${moreDrawerOpen ? " active" : ""}`}
           onClick={() => setMoreDrawerOpen(true)}
           aria-label="More features"
@@ -453,6 +484,8 @@ export default function App() {
         aria-hidden="true"
       />
       <div
+        ref={moreDrawerRef}
+        hidden={!moreDrawerOpen}
         className={`bottom-sheet mobile-more-drawer${moreDrawerOpen ? " open" : ""}`}
         role="dialog"
         aria-modal="true"
@@ -534,6 +567,7 @@ export default function App() {
       {/* ── Quick Add Sheet ── */}
       <QuickAddSheet
         open={sheetOpen}
+        ownerId={profileData?.id || localStorage.getItem("ledger-last-profile-id")}
         onClose={() => setSheetOpen(false)}
         onSaved={() => {
           toast("Transaction added ✓", "success");
@@ -547,10 +581,13 @@ export default function App() {
 }
 
 // ── Quick Add Sheet ────────────────────────────────────────────────────────────
-function QuickAddSheet({ open, onClose, onSaved }) {
+function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
   const toast = useToast();
   const fileInputRef = React.useRef(null);
   const statementInputRef = React.useRef(null);
+  const sheetRef = React.useRef(null);
+  const amountRef = React.useRef(null);
+  const priorFocusRef = React.useRef(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [scanning, setScanning] = React.useState(false);
   const [importMode, setImportMode] = React.useState("manual"); // "manual" or "sms"
@@ -558,28 +595,92 @@ function QuickAddSheet({ open, onClose, onSaved }) {
   const [amountStr, setAmountStr] = React.useState("0");
   const [accounts, setAccounts] = React.useState([]);
   const [categoryOptions, setCategoryOptions] = React.useState([]);
+  const [merchantOptions, setMerchantOptions] = React.useState([]);
+  const [merchantCategories, setMerchantCategories] = React.useState({});
+  const [recurringEnabled, setRecurringEnabled] = React.useState(false);
+  const [recurringCadence, setRecurringCadence] = React.useState("monthly");
+  const [nextDue, setNextDue] = React.useState("");
+  const [receiptFile, setReceiptFile] = React.useState(null);
+  const [queuedDrafts, setQueuedDrafts] = React.useState([]);
+  const [syncingDrafts, setSyncingDrafts] = React.useState(false);
+  const [online, setOnline] = React.useState(navigator.onLine);
+  const [splitEnabled, setSplitEnabled] = React.useState(false);
+  const [splitLines, setSplitLines] = React.useState([
+    { category: "Dining", amount: "" }, { category: "Groceries", amount: "" },
+  ]);
   const [pendingStatement, setPendingStatement] = React.useState(null);
   const [statementPreview, setStatementPreview] = React.useState(null);
   const [excludedStatementRows, setExcludedStatementRows] = React.useState(() => new Set());
+  const [statementEdits, setStatementEdits] = React.useState({});
   const [form, setForm] = React.useState({
     type: "expense", status: "posted", category: "Dining", description: "", date: today(), account: ""
   });
+  const activeCurrency = accounts.find((account) => account.id === form.account)?.currency || getCurrencyPreference();
 
   useEffect(() => {
     if (open) {
+      priorFocusRef.current = document.activeElement;
+      const focusTimer = window.setTimeout(() => amountRef.current?.focus(), 30);
       setAmountStr("0");
       setImportMode("manual");
       setSmsText("");
       setPendingStatement(null);
       setStatementPreview(null);
+      setStatementEdits({});
+      setRecurringEnabled(false);
+      setRecurringCadence("monthly");
+      setNextDue("");
+      setReceiptFile(null);
+      setSplitEnabled(false);
+      setSplitLines([{ category: "Dining", amount: "" }, { category: "Groceries", amount: "" }]);
       setForm({ type: "expense", status: "posted", category: "Dining", description: "", date: today(), account: "" });
       apiFetch("/accounts").then((items) => {
         setAccounts(Array.isArray(items) ? items : []);
         if (items?.length) setForm((prev) => ({ ...prev, account: items[0].id }));
       }).catch(() => setAccounts([]));
       apiFetch("/categories").then((items) => setCategoryOptions(Array.isArray(items) ? items : [])).catch(() => setCategoryOptions([]));
+      listQueued(ownerId).then(setQueuedDrafts).catch(() => setQueuedDrafts([]));
+      Promise.all([
+        apiFetch("/merchant-aliases").catch(() => []),
+        apiFetch("/transactions?limit=50").catch(() => ({ items: [] })),
+      ]).then(([aliases, recent]) => {
+        const names = [...aliases.map((item) => item.canonical), ...(recent.items || []).map((item) => item.merchant_normalized || item.description)];
+        setMerchantOptions([...new Set(names.filter(Boolean))].slice(0, 30));
+        setMerchantCategories(Object.fromEntries([...(recent.items || [])].reverse()
+          .filter((item) => item.type === "expense")
+          .map((item) => [(item.merchant_normalized || item.description).toLocaleLowerCase(), item.category])));
+      });
+      const onKeyDown = (event) => {
+        if (event.key === "Escape") { event.preventDefault(); onClose(); }
+        if (event.key !== "Tab") return;
+        const elements = [...sheetRef.current.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])")]
+          .filter((element) => element.getClientRects().length > 0);
+        if (!elements.length) return;
+        const first = elements[0];
+        const last = elements[elements.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      };
+      document.addEventListener("keydown", onKeyDown);
+      return () => {
+        window.clearTimeout(focusTimer);
+        document.removeEventListener("keydown", onKeyDown);
+        priorFocusRef.current?.focus?.();
+      };
     }
+    return undefined;
   }, [open]);
+
+  useEffect(() => {
+    const refresh = () => setOnline(navigator.onLine);
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    return () => { window.removeEventListener("online", refresh); window.removeEventListener("offline", refresh); };
+  }, []);
+
+  useEffect(() => {
+    if (open) listQueued(ownerId).then(setQueuedDrafts).catch(() => setQueuedDrafts([]));
+  }, [open, ownerId]);
 
   const handleKeypad = (val) => {
     if (val === "back") {
@@ -596,6 +697,13 @@ function QuickAddSheet({ open, onClose, onSaved }) {
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 5 * 1024 * 1024) return toast("Receipt must be under 5MB", "error");
+    setReceiptFile(file);
+    if (file.type === "application/pdf") {
+      toast("PDF receipt attached. Its details were not scanned; enter them manually.", "info");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
     
     setScanning(true);
     try {
@@ -613,7 +721,7 @@ function QuickAddSheet({ open, onClose, onSaved }) {
       }));
       toast("Receipt scanned successfully!", "success");
     } catch (err) {
-      toast(err.message || "Failed to scan receipt", "error");
+      toast(`${err.message || "Could not scan receipt"}. The file is still attached for saving.`, "info");
     } finally {
       setScanning(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -632,6 +740,7 @@ function QuickAddSheet({ open, onClose, onSaved }) {
       setPendingStatement(file);
       setStatementPreview(preview);
       setExcludedStatementRows(new Set());
+      setStatementEdits({});
     } catch (err) {
       toast(err.message || "Failed to upload statement", "error");
     } finally {
@@ -646,6 +755,7 @@ function QuickAddSheet({ open, onClose, onSaved }) {
       formData.append("file", pendingStatement);
       if (form.account) formData.append("account_id", form.account);
       formData.append("excluded_row_fingerprints", JSON.stringify([...excludedStatementRows]));
+      formData.append("review_overrides", JSON.stringify(statementEdits));
       const job = await apiFetch("/imports/statement", { method: "POST", body: formData });
       if (job.status === "done") {
         toast("This statement was already imported; no duplicate rows were added.", "info");
@@ -677,30 +787,109 @@ function QuickAddSheet({ open, onClose, onSaved }) {
     }
   };
 
+  async function submitCapture(submission) {
+    const saved = await apiFetch(submission.path, { method: "POST", body: JSON.stringify(submission.payload) });
+    if (submission.receiptFile) {
+      const attachment = new FormData();
+      attachment.append("file", submission.receiptFile);
+      const txId = submission.path.endsWith("/split") ? saved.items[0].id : saved.id;
+      await apiFetch(`/transactions/${txId}/receipt`, { method: "POST", body: attachment });
+    }
+    if (submission.recurringTemplate) {
+      await apiFetch("/recurring", {
+        method: "POST",
+        body: JSON.stringify({ ...submission.recurringTemplate, evidence_transaction_ids: [saved.id] }),
+      });
+    }
+    return saved;
+  }
+
+  async function syncDrafts() {
+    if (!ownerId || !navigator.onLine) return;
+    setSyncingDrafts(true);
+    try {
+      const currentProfile = await apiFetch("/profile");
+      if (currentProfile.id !== ownerId) throw new Error("These offline entries belong to another profile; they were not sent.");
+      let completed = 0;
+      for (const draft of await listQueued(ownerId)) {
+        try {
+          await submitCapture(draft);
+          await removeQueued(draft.id);
+          completed += 1;
+        } catch (error) {
+          await updateQueued({ ...draft, status: "needs_retry", error: String(error.message || error).slice(0, 160) });
+        }
+      }
+      setQueuedDrafts(await listQueued(ownerId));
+      toast(completed ? `${completed} offline entr${completed === 1 ? "y" : "ies"} synced` : "No entries synced; check the retry status below", completed ? "success" : "info");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      setSyncingDrafts(false);
+    }
+  }
+
+  async function discardDraft(id) {
+    if (!window.confirm("Discard this unsynced entry? It cannot be recovered.")) return;
+    try {
+      await removeQueued(id);
+      setQueuedDrafts(await listQueued(ownerId));
+    } catch (error) { toast(error.message, "error"); }
+  }
+
   async function save(e) {
     if (e) e.preventDefault();
     const numericAmount = Number(amountStr);
     if (!numericAmount || numericAmount <= 0) return toast("Enter a valid amount", "error");
-    
+    if (splitEnabled) {
+      const lineCents = splitLines.reduce((total, line) => total + Math.round(Number(line.amount) * 100), 0);
+      if (splitLines.some((line) => !Number(line.amount) || !line.category) || lineCents !== Math.round(numericAmount * 100)) {
+        return toast("Split lines must add up exactly to the total", "error");
+      }
+    }
+    const requestId = crypto.randomUUID();
+    const submission = {
+      path: splitEnabled ? "/transactions/split" : "/transactions",
+      payload: splitEnabled ? {
+        status: form.status, amount: amountStr, description: form.description || "Split purchase",
+        date: form.date, account_id: form.account || null, lines: splitLines,
+        client_request_id: requestId,
+      } : {
+        type: form.type, status: form.status, amount: amountStr,
+        category: form.category, description: form.description || "Quick Add", date: form.date,
+        source: form.account ? "bank" : "cash", account_id: form.account || null,
+        source_ref: `offline:${requestId}`,
+      },
+      receiptFile,
+      recurringTemplate: recurringEnabled && !splitEnabled && form.type === "expense" && form.status === "posted"
+        ? { description: form.description.trim(), category: form.category, cadence: recurringCadence,
+            average_amount: amountStr, minimum_amount: amountStr, maximum_amount: amountStr,
+            next_expected: nextDue, confidence: 1, status: "active", confirmed: true }
+        : null,
+    };
     setSubmitting(true);
     try {
-      await apiFetch("/transactions", {
-        method: "POST",
-        body: JSON.stringify({ 
-          type: form.type,
-          status: form.status,
-          amount: numericAmount,
-          category: form.category,
-          description: form.description || "Quick Add",
-          date: form.date,
-          source: form.account ? "bank" : "cash",
-          account_id: form.account || null,
-        }),
-      });
+      if (!navigator.onLine) {
+        await queueCapture(ownerId, submission);
+        setQueuedDrafts(await listQueued(ownerId));
+        toast("Entry saved on this device. Sync it when connected.", "info");
+        onClose();
+        return;
+      }
+      await submitCapture(submission);
       onSaved();
       onClose();
-    } catch (err) {
-      toast(err.message, "error");
+    } catch (error) {
+      if (!navigator.onLine || error instanceof TypeError) {
+        try {
+          await queueCapture(ownerId, submission);
+          setQueuedDrafts(await listQueued(ownerId));
+          toast("Connection lost. Entry queued on this device for explicit sync.", "info");
+          onClose();
+        } catch (queueError) { toast(queueError.message, "error"); }
+      } else {
+        toast(error.message, "error");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -720,12 +909,15 @@ function QuickAddSheet({ open, onClose, onSaved }) {
     if (!activeCategories.includes(form.category)) {
       setForm((prev) => ({ ...prev, category: activeCategories[0] }));
     }
+    if (form.type !== "expense") setSplitEnabled(false);
   }, [form.type]);
 
   return (
     <>
       <div className={`sheet-backdrop${open ? " open" : ""}`} onClick={onClose} aria-hidden="true" />
       <section
+        ref={sheetRef}
+        hidden={!open}
         className={`bottom-sheet add-sheet${open ? " open" : ""}`}
         role="dialog"
         aria-modal="true"
@@ -733,6 +925,7 @@ function QuickAddSheet({ open, onClose, onSaved }) {
         aria-hidden={!open}
       >
         <div className="sheet-handle" />
+        <button className="btn-secondary" type="button" onClick={onClose} aria-label="Close quick add" style={{ alignSelf: "flex-end", marginBottom: 8 }}><X size={16} /> Close</button>
 
         <div className="add-content">
           {/* Segmented Control */}
@@ -746,14 +939,23 @@ function QuickAddSheet({ open, onClose, onSaved }) {
 
           {/* Amount Display */}
           <div className="add-amount-display">
-            <span className="add-currency">₹</span>
-            {amountStr}
+            <span className="add-currency">{currencySymbol(activeCurrency)}</span>
+            <input ref={amountRef} aria-label={`Amount in ${activeCurrency}`} inputMode="decimal" type="text" value={amountStr}
+              onChange={(event) => {
+                const cleaned = event.target.value.replace(/[^0-9.]/g, "");
+                if (/^\d{0,10}(?:\.\d{0,2})?$/.test(cleaned)) setAmountStr(cleaned || "0");
+              }}
+              style={{ width: "100%", minWidth: 0, background: "transparent", border: 0, color: "inherit", font: "inherit", outlineOffset: 4 }} />
           </div>
           <div className="add-amount-hint">Tap the keypad, scan a receipt, or import</div>
+          {receiptFile && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>
+            <span>Receipt attached: {receiptFile.name}</span>
+            <button type="button" className="btn-secondary" onClick={() => setReceiptFile(null)}>Remove</button>
+          </div>}
 
           {/* Action Buttons */}
           <div className="add-action-buttons">
-            <input type="file" accept="image/*" ref={fileInputRef} style={{ display: "none" }} onChange={handleFileChange} />
+            <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf" ref={fileInputRef} style={{ display: "none" }} onChange={handleFileChange} />
             <input type="file" accept=".csv,.xls,.xlsx,.ods,.pdf" ref={statementInputRef} style={{ display: "none" }} onChange={handleStatementChange} />
             <button className="add-action-btn" type="button" onClick={() => { setImportMode("manual"); fileInputRef.current?.click(); }} disabled={scanning}>
               {scanning ? <Loader2 size={16} className="spin" /> : <Scan size={16} />} 
@@ -766,6 +968,17 @@ function QuickAddSheet({ open, onClose, onSaved }) {
               <MessageSquare size={16} /> SMS
             </button>
           </div>
+          {queuedDrafts.length > 0 && <section aria-label="Unsynced quick captures" style={{ padding: 12, border: "1px solid var(--warning)", borderRadius: 12, margin: "10px 0", color: "var(--text-primary)" }}>
+            <strong>{queuedDrafts.length} entr{queuedDrafts.length === 1 ? "y" : "ies"} saved on this device</strong>
+            <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0" }}>They do not affect balances or budgets until you sync them. Nothing is sent automatically.</p>
+            {queuedDrafts.map((draft) => <div key={draft.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 12 }}>
+              <span style={{ flex: 1 }}>{draft.payload.description} · {money(draft.payload.amount, activeCurrency)} · {draft.status === "needs_retry" ? `Needs retry: ${draft.error || "sync failed"}` : "Queued"}</span>
+              <button type="button" className="btn-secondary" disabled={syncingDrafts} onClick={() => discardDraft(draft.id)} aria-label={`Discard unsynced ${draft.payload.description}`}>Discard</button>
+            </div>)}
+            <button type="button" className="btn-primary" disabled={!online || syncingDrafts} onClick={syncDrafts}>
+              {syncingDrafts ? "Syncing…" : online ? "Sync queued entries" : "Connect to sync"}
+            </button>
+          </section>}
 
           {statementPreview ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
@@ -781,12 +994,25 @@ function QuickAddSheet({ open, onClose, onSaved }) {
                   {warning}
                 </div>
               ))}
-              <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 12 }}>
+              <div style={{ maxHeight: 300, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 12 }}>
                 {statementPreview.preview?.slice(0, 20).map((row, index) => {
                   const excluded = excludedStatementRows.has(row.fingerprint);
                   const uncertain = row.category_confidence != null && row.category_confidence < 0.6;
+                  const edit = statementEdits[row.fingerprint] || {};
+                  const category = edit.category ?? row.category ?? "Other";
+                  const merchant = edit.merchant_normalized ?? row.merchant_normalized ?? "";
+                  const type = edit.type ?? row.type ?? "expense";
+                  const importCategories = [...new Set([
+                    ...EXPENSE_CATEGORIES,
+                    ...categoryOptions.map((item) => item.name || item).filter(Boolean),
+                    category,
+                  ])];
+                  const updateEdit = (key, value) => setStatementEdits((previous) => ({
+                    ...previous,
+                    [row.fingerprint]: { ...previous[row.fingerprint], [key]: value },
+                  }));
                   return (
-                  <label key={`${row.fingerprint || row.date}-${index}`} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 11px", borderBottom: "1px solid var(--border)", opacity: row.duplicate || excluded ? 0.5 : 1, fontSize: 12, cursor: row.duplicate ? "default" : "pointer" }}>
+                  <div key={`${row.fingerprint || row.date}-${index}`} style={{ display: "grid", gridTemplateColumns: "auto 76px minmax(100px, 1fr) 95px 120px 92px auto", gap: 8, alignItems: "center", padding: "9px 11px", borderBottom: "1px solid var(--border)", opacity: row.duplicate || excluded ? 0.5 : 1, fontSize: 12 }}>
                     <input type="checkbox" checked={!excluded && !row.duplicate} disabled={row.duplicate} onChange={() => setExcludedStatementRows((previous) => {
                       const next = new Set(previous);
                       if (next.has(row.fingerprint)) next.delete(row.fingerprint); else next.add(row.fingerprint);
@@ -794,15 +1020,22 @@ function QuickAddSheet({ open, onClose, onSaved }) {
                     })} aria-label={`${excluded ? "Include" : "Exclude"} ${row.description}`} />
                     <span style={{ width: 76, color: "var(--text-muted)" }}>{row.date}</span>
                     <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>{row.description}</span>
-                    <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>₹{row.amount}</span>
+                    <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{money(row.amount, activeCurrency)}</span>
+                    <input value={merchant} disabled={row.duplicate} onChange={(event) => updateEdit("merchant_normalized", event.target.value)} placeholder="Merchant" aria-label={`Merchant for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "5px 6px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }} />
+                    <select value={category} disabled={row.duplicate} onChange={(event) => updateEdit("category", event.target.value)} aria-label={`Category for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "5px 4px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }}>
+                      {importCategories.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                    <select value={type} disabled={row.duplicate} onChange={(event) => updateEdit("type", event.target.value)} aria-label={`Type for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "5px 4px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }}>
+                      {['expense', 'income', 'refund', 'reimbursement', 'transfer'].map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
                     {row.duplicate && <span style={{ color: "var(--text-muted)", fontSize: 10 }}>SKIP</span>}
-                    {!row.duplicate && row.category && <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{row.category}{uncertain ? " · REVIEW" : ""}</span>}
-                  </label>
+                    {!row.duplicate && row.category && <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{uncertain ? "REVIEW" : "Edited"}</span>}
+                  </div>
                   );
                 })}
               </div>
               <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                {excludedStatementRows.size ? `${excludedStatementRows.size} row(s) excluded from this import. You can repair them later from Activity.` : "Uncheck any row you do not want to import. Low-confidence categories are marked REVIEW."}
+                {excludedStatementRows.size ? `${excludedStatementRows.size} row(s) excluded from this import. You can repair them later from Activity.` : "Edit merchant, category, or type before confirming. Low-confidence categories are marked REVIEW."}
               </div>
               <div style={{ display: "flex", gap: 10, marginTop: "auto" }}>
                 <button className="btn-secondary" onClick={() => { setPendingStatement(null); setStatementPreview(null); setExcludedStatementRows(new Set()); }}>Choose another</button>
@@ -863,9 +1096,38 @@ function QuickAddSheet({ open, onClose, onSaved }) {
                   </select>
                 </label>
                 <label className="add-form-row">
-                  <span className="row-label">Note</span>
-                  <input type="text" className="row-input placeholder-right" placeholder="Add a note" value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
+                  <span className="row-label">Merchant / description</span>
+                  <input type="text" className="row-input placeholder-right" list="quick-add-merchants" placeholder="Who was this with?" value={form.description} onChange={(event) => {
+                    const description = event.target.value;
+                    const suggestedCategory = merchantCategories[description.toLocaleLowerCase()];
+                    setForm((previous) => ({ ...previous, description, category: suggestedCategory || previous.category }));
+                  }} />
+                  <datalist id="quick-add-merchants">{merchantOptions.map((name) => <option key={name} value={name} />)}</datalist>
                 </label>
+                {form.type === "expense" && <>
+                  <label className="add-form-row"><span className="row-label">Split categories</span><input type="checkbox" checked={splitEnabled} onChange={(event) => {
+                    setSplitEnabled(event.target.checked);
+                    if (event.target.checked) setSplitLines([{ category: activeCategories[0], amount: "" }, { category: activeCategories[1] || activeCategories[0], amount: "" }]);
+                  }} /></label>
+                  {splitEnabled && <div style={{ padding: "8px 12px", color: "var(--text-secondary)", fontSize: 12 }}>
+                    {splitLines.map((line, index) => <div key={index} style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                      <select aria-label={`Split ${index + 1} category`} value={line.category} onChange={(event) => setSplitLines((rows) => rows.map((item, i) => i === index ? { ...item, category: event.target.value } : item))}>
+                        {activeCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                      </select>
+                      <input aria-label={`Split ${index + 1} amount`} type="number" min="0.01" step="0.01" value={line.amount} onChange={(event) => setSplitLines((rows) => rows.map((item, i) => i === index ? { ...item, amount: event.target.value } : item))} style={{ width: 110 }} />
+                      {splitLines.length > 2 && <button type="button" className="btn-secondary" aria-label={`Remove split ${index + 1}`} onClick={() => setSplitLines((rows) => rows.filter((_, i) => i !== index))}>−</button>}
+                    </div>)}
+                    {splitLines.length < 10 && <button type="button" className="btn-secondary" onClick={() => setSplitLines((rows) => [...rows, { category: activeCategories[0], amount: "" }])}>Add category</button>}
+                    <div style={{ marginTop: 6 }}>Assigned: {money(splitLines.reduce((total, line) => total + Number(line.amount || 0), 0), activeCurrency)} of {money(amountStr, activeCurrency)}. The receipt attaches to the first split line.</div>
+                  </div>}
+                </>}
+                {form.type === "expense" && form.status === "posted" && !splitEnabled && <>
+                  <label className="add-form-row"><span className="row-label">Repeat this payment</span><input type="checkbox" checked={recurringEnabled} onChange={(event) => setRecurringEnabled(event.target.checked)} /></label>
+                  {recurringEnabled && <>
+                    <label className="add-form-row"><span className="row-label">Repeat</span><select className="row-input" value={recurringCadence} onChange={(event) => setRecurringCadence(event.target.value)}><option value="weekly">Weekly</option><option value="biweekly">Every two weeks</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option></select></label>
+                    <label className="add-form-row"><span className="row-label">Next due date</span><input className="row-input" type="date" min={today()} value={nextDue} onChange={(event) => setNextDue(event.target.value)} /></label>
+                  </>}
+                </>}
               </div>
 
               {/* Custom Keypad */}
@@ -879,7 +1141,7 @@ function QuickAddSheet({ open, onClose, onSaved }) {
               </div>
 
               {/* Submit */}
-              <button className="add-submit-btn" onClick={save} disabled={submitting || amountStr === "0" || amountStr === "0."}>
+              <button className="add-submit-btn" onClick={save} disabled={submitting || !Number(amountStr) || (recurringEnabled && !splitEnabled && form.type === "expense" && form.status === "posted" && (!nextDue || !form.description.trim()))}>
                 {submitting ? <><Loader2 size={16} className="spin" /> Saving…</> : "Enter an amount"}
               </button>
             </>

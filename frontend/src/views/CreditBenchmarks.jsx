@@ -1,151 +1,109 @@
 import React from "react";
 import { apiFetch, money } from "../lib";
-import { useToast } from "../components/ui";
-import {
-  BarChart3, Users, ArrowUp, Gauge, Heart, Shield, Zap, Lightbulb, DollarSign, TrendingUp,
-} from "lucide-react";
+import { BarChart3, Info, Wallet } from "lucide-react";
 
-function CreditGauge({ score, grade, color }) {
-  const pct = Math.min(100, Math.max(0, ((score - 300) / 600) * 100));
-  const circumference = 2 * Math.PI * 52;
-  const offset = circumference - (circumference * pct) / 100;
+function Period({ start, end, count }) {
+  if (!count) return <span>No posted transactions yet</span>;
+  return <span>Based on {count} posted transactions · {start} to {end}</span>;
+}
 
+function AmountCard({ label, value, currency }) {
   return (
-    <div className="credit-gauge">
-      <div className="gauge-ring" style={{ position: 'relative', display: 'inline-block' }}>
-        <svg viewBox="0 0 120 120" width="200" height="200">
-          {/* Background ring */}
-          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="12"
-            strokeDasharray={circumference} strokeDashoffset="0" transform="rotate(-90 60 60)" />
-          {/* Score ring */}
-          <circle cx="60" cy="60" r="52" fill="none" stroke={color} strokeWidth="12"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            transform="rotate(-90 60 60)"
-            style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1)', filter: `drop-shadow(0 0 8px ${color}40)` }} />
-        </svg>
-        <div style={{
-          position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-          textAlign: 'center',
-        }}>
-          <div className="gauge-score" style={{ color }}>{score}</div>
-          <div className="gauge-grade">{grade}</div>
-        </div>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', width: 200, marginTop: 8 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>300</span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>900</span>
+    <div className="card" style={{ padding: 22 }}>
+      <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 700, marginTop: 8 }}>
+        {value === null ? "Not available" : money(value, currency)}
       </div>
     </div>
   );
 }
 
 export default function CreditBenchmarks() {
-  const toast = useToast();
-  const [tab, setTab]           = React.useState("credit");
-  const [credit, setCredit]     = React.useState(null);
-  const [benchmarks, setBenchmarks] = React.useState(null);
-  const [loading, setLoading]   = React.useState(true);
+  const [tab, setTab] = React.useState("cash-flow");
+  const [snapshot, setSnapshot] = React.useState(null);
+  const [comparison, setComparison] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState("");
 
   React.useEffect(() => {
-    Promise.all([
-      apiFetch("/credit-health").then(setCredit).catch(() => {}),
-      apiFetch("/benchmarks").then(setBenchmarks).catch(() => {}),
-    ]).finally(() => setLoading(false));
+    Promise.all([apiFetch("/credit-health"), apiFetch("/benchmarks")])
+      .then(([health, peers]) => {
+        setSnapshot(health);
+        setComparison(peers);
+      })
+      .catch((problem) => setError(problem.message || "Could not load your financial snapshot."))
+      .finally(() => setLoading(false));
   }, []);
-
-  const FACTOR_ICONS = {
-    savings:           Heart,
-    budget_adherence:  Shield,
-    consistency:       Zap,
-    diversity:         BarChart3,
-    credit_utilization: DollarSign,
-  };
-
-  const TABS = [
-    { id: "credit",     label: "Credit Score",  Icon: Gauge },
-    { id: "benchmarks", label: "Benchmarks",    Icon: Users },
-  ];
 
   return (
     <div className="view-credit">
-      <div style={{ marginBottom: 32 }}>
-        <h1 className="page-title">Financial Health</h1>
-        <p className="page-subtitle" style={{ marginBottom: 0 }}>Credit score, spending benchmarks & insights</p>
+      <h1 className="page-title">Your financial picture</h1>
+      <p className="page-subtitle" style={{ marginBottom: 24 }}>
+        Facts from your ledger, without an invented credit score or peer rank.
+      </p>
+      <div aria-label="Financial picture sections" style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+        <button type="button" aria-pressed={tab === "cash-flow"} onClick={() => setTab("cash-flow")}
+          className="btn-secondary" style={{ opacity: tab === "cash-flow" ? 1 : 0.7 }}>
+          <Wallet size={16} /> Cash flow
+        </button>
+        <button type="button" aria-pressed={tab === "peers"} onClick={() => setTab("peers")}
+          className="btn-secondary" style={{ opacity: tab === "peers" ? 1 : 0.7 }}>
+          <BarChart3 size={16} /> Peer comparison
+        </button>
       </div>
 
-      {/* Tab switcher */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 28, background: 'var(--bg)', padding: 4, borderRadius: 12, width: 'fit-content' }}>
-        {TABS.map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-              fontSize: 14, fontWeight: 600, transition: 'all 0.2s',
-              background: tab === id ? 'var(--surface)' : 'transparent',
-              color: tab === id ? 'var(--primary)' : 'var(--text-secondary)',
-              boxShadow: tab === id ? 'var(--shadow)' : 'none',
-            }}
-          >
-            <Icon size={15} /> {label}
-          </button>
-        ))}
-      </div>
+      {loading && <div className="card" role="status">Loading your financial picture…</div>}
+      {error && <div className="card" role="alert">{error}</div>}
 
-      {/* Credit tab */}
-      {tab === "credit" && (
-        <div>
-          {loading || !credit ? (
-            <div className="card">
-              <div className="skeleton" style={{ height: 220, borderRadius: 12 }} />
+      {!loading && !error && tab === "cash-flow" && snapshot && (
+        <div role="region" aria-label="Cash-flow picture">
+          <div className="card" style={{ padding: 22, marginBottom: 20 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <Info size={18} style={{ flexShrink: 0 }} />
+              <div>
+                <strong>Not a credit assessment</strong>
+                <p style={{ margin: "6px 0 0", color: "var(--text-secondary)" }}>{snapshot.credit_reason}</p>
+              </div>
             </div>
+          </div>
+          {snapshot.status === "currency_mismatch" ? (
+            <div className="card" role="alert" style={{ padding: 22 }}>{snapshot.warnings[0]}</div>
           ) : (
             <>
-              <div className="card credit-main-card" style={{ marginBottom: 24 }}>
-                <CreditGauge score={credit.score} grade={credit.grade} color={credit.color} />
+              <p style={{ color: "var(--text-secondary)", marginBottom: 20 }}>
+                <Period start={snapshot.period_start} end={snapshot.period_end} count={snapshot.transaction_count} />
+              </p>
+              <div className="account-grid">
+                <AmountCard label="Recorded income" value={snapshot.income} currency={snapshot.currency} />
+                <AmountCard label="Net spending" value={snapshot.expenses} currency={snapshot.currency} />
+                <AmountCard label="Recorded cash flow" value={snapshot.net} currency={snapshot.currency} />
               </div>
-
-              <div className="account-grid" style={{ marginBottom: 24 }}>
-                {Object.entries(credit.breakdown).map(([key, factor]) => {
-                  const Icon = FACTOR_ICONS[key] || Zap;
-                  const pct  = Math.round((factor.score / factor.max) * 100);
-                  const barColor = pct > 70 ? 'var(--positive)' : pct > 40 ? 'var(--warning)' : 'var(--negative)';
-                  return (
-                    <div className="card credit-factor-card" key={key}>
-                      <div className="credit-factor-top">
-                        <div style={{ width: 36, height: 36, borderRadius: 10, background: pct > 70 ? 'var(--positive-soft)' : pct > 40 ? 'rgba(250,204,21,0.12)' : 'var(--negative-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Icon size={18} style={{ color: barColor }} />
-                        </div>
-                        <div>
-                          <div className="credit-factor-name">{key.replace(/_/g, " ")}</div>
-                          <div style={{ fontSize: 12, color: barColor, fontWeight: 600, marginTop: 2 }}>{pct}%</div>
-                        </div>
-                      </div>
-                      <div className="credit-factor-bar-wrap">
-                        <div className="credit-factor-bar" style={{ width: `${pct}%`, background: barColor }} />
-                      </div>
-                      <div className="credit-factor-score">{factor.score} / {factor.max} pts</div>
+              <div className="card" style={{ padding: 22, marginTop: 20 }}>
+                <strong>Savings rate: {snapshot.savings_rate_pct === null ? "Not enough income data" : `${snapshot.savings_rate_pct}%`}</strong>
+                <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>
+                  {snapshot.savings_rate_pct === null
+                    ? "Add income transactions before interpreting this rate."
+                    : "Calculated as recorded income minus net spending, divided by recorded income over the period above."}
+                </p>
+              </div>
+              {snapshot.warnings.length > 0 && (
+                <div className="card" style={{ padding: 22, marginTop: 20 }}>
+                  <strong>Before relying on this picture</strong>
+                  <ul>{snapshot.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                </div>
+              )}
+              {snapshot.credit_readiness && snapshot.credit_readiness.status !== "unavailable" && (
+                <div className="card" style={{ padding: 22, marginTop: 20 }}>
+                  <strong>Recorded credit-account readiness</strong>
+                  <p style={{ margin: "8px 0", color: "var(--text-secondary)" }}>{snapshot.credit_readiness.reason}</p>
+                  {snapshot.credit_readiness.accounts.map((account) => (
+                    <div key={account.account_id} style={{ borderTop: "1px solid var(--border)", padding: "10px 0", fontSize: 13 }}>
+                      <strong>{account.name}</strong> · Owed {money(account.balance_owed, snapshot.currency)}
+                      {account.utilization_pct === null ? " · Utilization unavailable" : ` · Utilization ${account.utilization_pct}%`}
                     </div>
-                  );
-                })}
-              </div>
-
-              {credit.tips.length > 0 && (
-                <div className="card">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600 }}>
-                    <Lightbulb size={18} style={{ color: 'var(--warning)' }} /> Tips to Improve
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {credit.tips.map((tip, i) => (
-                      <div key={i} style={{ display: 'flex', gap: 12, padding: '14px 16px', background: 'rgba(250,204,21,0.12)', borderRadius: 12, borderLeft: '3px solid var(--warning)' }}>
-                        <ArrowUp size={15} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 2 }} />
-                        <p style={{ fontSize: 14, margin: 0, lineHeight: 1.6, color: 'var(--text-primary)' }}>{tip}</p>
-                      </div>
-                    ))}
-                  </div>
+                  ))}
+                  {snapshot.credit_readiness.warnings?.length > 0 && <ul>{snapshot.credit_readiness.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
+                  <p style={{ margin: "8px 0 0", color: "var(--text-muted)", fontSize: 11 }}>This is a record of the details you entered, not a lender or bureau assessment.</p>
                 </div>
               )}
             </>
@@ -153,59 +111,27 @@ export default function CreditBenchmarks() {
         </div>
       )}
 
-      {/* Benchmarks tab */}
-      {tab === "benchmarks" && (
-        <div>
-          {loading || !benchmarks ? (
-            <div className="card"><div className="skeleton" style={{ height: 200, borderRadius: 12 }} /></div>
-          ) : (
-            <>
-              <div className="card hero-card" style={{ marginBottom: 24 }}>
-                <div className="hero-label"><TrendingUp size={16} /> Your Spending Rank</div>
-                <div className="hero-amount">{benchmarks.overall_percentile}th</div>
-                <div className="hero-change muted" style={{ color: 'var(--text-secondary)' }}>
-                  percentile · Median: {money(benchmarks.benchmark_median)}
+      {!loading && !error && tab === "peers" && comparison && (
+        <div role="region" aria-label="Peer comparison status">
+          <div className="card" style={{ padding: 22, marginBottom: 20 }}>
+            <strong>Peer ranking unavailable</strong>
+            <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>{comparison.reason}</p>
+          </div>
+          {comparison.total_spending !== null && (
+            <div className="card" style={{ padding: 22 }}>
+              <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>Your recorded spending</h2>
+              <p style={{ color: "var(--text-secondary)", margin: "0 0 18px" }}>
+                <Period start={comparison.period_start} end={comparison.period_end} count={comparison.transaction_count} />
+              </p>
+              <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 18 }}>{money(comparison.total_spending, comparison.currency)}</div>
+              {comparison.categories.length === 0 ? (
+                <p>No expenses recorded yet. Add or import transactions to see your category breakdown.</p>
+              ) : comparison.categories.map((item) => (
+                <div key={item.category} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 0", borderTop: "1px solid var(--border)" }}>
+                  <span>{item.category}</span><strong>{money(item.your_spend, comparison.currency)}</strong>
                 </div>
-              </div>
-
-              <div className="card">
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 24, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Users size={18} style={{ color: 'var(--primary)' }} /> Category Comparison
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                  {benchmarks.categories.map(cat => {
-                    const STATUS_COLORS = {
-                      low:     { bar: 'var(--positive)', badge: { bg: 'var(--positive-soft)', color: 'var(--positive)' } },
-                      good:    { bar: 'var(--info)', badge: { bg: 'rgba(56,189,248,0.12)', color: 'var(--info)' } },
-                      average: { bar: 'var(--warning)', badge: { bg: 'rgba(250,204,21,0.12)', color: 'var(--warning)' } },
-                      high:    { bar: 'var(--negative)', badge: { bg: 'var(--negative-soft)', color: 'var(--negative)' } },
-                    };
-                    const sc = STATUS_COLORS[cat.status] || STATUS_COLORS.average;
-                    return (
-                      <div key={cat.category}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                          <div>
-                            <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{cat.category}</span>
-                            <span style={{ fontSize: 13, color: 'var(--text-muted)', marginLeft: 8 }}>{money(cat.your_spend)}</span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <span style={{ ...sc.badge, padding: '3px 12px', borderRadius: 99, fontSize: 12, fontWeight: 700 }}>{cat.label}</span>
-                            <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>P{cat.percentile}</span>
-                          </div>
-                        </div>
-                        <div style={{ height: 8, background: 'var(--bg)', borderRadius: 99, overflow: 'hidden', position: 'relative' }}>
-                          <div style={{ height: '100%', width: `${Math.min(100, cat.percentile)}%`, background: sc.bar, borderRadius: 99, transition: 'width 0.6s ease' }} />
-                          <div style={{ position: 'absolute', top: -3, left: '50%', width: 2, height: 14, background: 'var(--text-muted)', borderRadius: 1, transform: 'translateX(-1px)' }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)', fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', fontWeight: 500 }}>
-                  Based on {benchmarks.sample_size} urban users · {benchmarks.methodology}
-                </div>
-              </div>
-            </>
+              ))}
+            </div>
           )}
         </div>
       )}

@@ -30,6 +30,43 @@ def test_create_transaction(client):
     assert "id" in data
 
 
+def test_offline_client_request_retry_is_idempotent(client):
+    payload = {
+        "type": "expense", "category": "Dining", "amount": "5.25", "description": "Lunch",
+        "date": "2026-09-24", "source_ref": "offline:11111111-1111-4111-8111-111111111111",
+    }
+    first = client.post("/transactions", json=payload, headers=AUTH_HEADER)
+    second = client.post("/transactions", json=payload, headers=AUTH_HEADER)
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] == second.json()["id"]
+    assert client.get("/transactions", headers=AUTH_HEADER).json()["total_returned"] == 1
+    changed = {**payload, "amount": "6.00"}
+    assert client.post("/transactions", json=changed, headers=AUTH_HEADER).status_code == 409
+
+
+def test_confirmed_recurring_retry_reuses_same_evidence(client):
+    tx = client.post(
+        "/transactions",
+        json={"date": "2026-09-24", "type": "expense", "category": "Subscriptions",
+              "amount": "12.00", "description": "Music"},
+        headers=AUTH_HEADER,
+    )
+    assert tx.status_code == 201
+    payload = {
+        "description": "Music", "category": "Subscriptions", "cadence": "monthly",
+        "average_amount": "12.00", "minimum_amount": "12.00", "maximum_amount": "12.00",
+        "next_expected": "2026-10-24", "confidence": 1, "status": "active", "confirmed": True,
+        "evidence_transaction_ids": [tx.json()["id"]],
+    }
+    first = client.post("/recurring", json=payload, headers=AUTH_HEADER)
+    second = client.post("/recurring", json=payload, headers=AUTH_HEADER)
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] == second.json()["id"]
+    assert len(client.get("/recurring", headers=AUTH_HEADER).json()) == 1
+
+
 def test_list_transactions_empty(client):
     """GET /transactions should return empty list initially."""
     r = client.get("/transactions", headers=AUTH_HEADER)

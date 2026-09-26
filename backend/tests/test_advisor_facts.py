@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
+from app.schemas import AdvisorRequest
 from app.services.advisor_facts import deterministic_answer
 
 
@@ -31,6 +32,9 @@ def test_direct_fact_answer_has_math_and_evidence():
     assert result["answer_type"] == "deterministic"
     assert "₹800.00" in result["answer"]
     assert {row["transaction_id"] for row in result["evidence"]} == {"t1", "t2"}
+    assert result["uncertainties"] == []
+    assert result["suggested_actions"][0]["type"] == "review_evidence"
+    assert result["source_links"][0]["transaction_ids"] == ["t1", "t2"]
 
 
 def test_non_factual_question_is_left_for_ai():
@@ -49,3 +53,16 @@ def test_comparison_question_uses_equal_windows_and_evidence():
     assert result["answer_type"] == "deterministic"
     assert "increased" in result["answer"]
     assert {item["transaction_id"] for item in result["evidence"]} == {"old", "new"}
+
+
+def test_insufficient_fact_answer_explains_uncertainty_and_next_step():
+    result = deterministic_answer("How much did I spend?", [], [])
+    assert result["answer_type"] == "deterministic"
+    assert result["uncertainties"]
+    assert result["suggested_actions"] == [{"type": "add_or_import", "label": "Add or import transactions"}]
+    assert result["source_links"] == []
+
+
+def test_advisor_answer_mode_is_explicit_and_bounded():
+    assert AdvisorRequest(question="show the math", answer_mode="math").answer_mode == "math"
+    assert AdvisorRequest(question="make a plan", answer_mode="plan").answer_mode == "plan"

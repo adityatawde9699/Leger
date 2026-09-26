@@ -16,7 +16,7 @@ All monetary values are treated as INR unless otherwise noted.
 import logging
 import math
 from collections import defaultdict
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 logger = logging.getLogger("ledger.portfolio_analytics")
@@ -218,6 +218,7 @@ def compute_portfolio_analytics(
 
     # Collect cashflows for XIRR (all holdings combined)
     all_cashflows: list[tuple[date, float]] = []
+    valuation_items: list[dict[str, Any]] = []
 
     for h in all_holdings:
         qty = float(h.quantity)
@@ -225,6 +226,21 @@ def compute_portfolio_analytics(
         cur_px = float(h.current_price)
         invested = qty * buy_px
         current_val = qty * cur_px
+
+        updated_at = getattr(h, "updated_at", None)
+        if updated_at is not None:
+            updated_at = updated_at.replace(tzinfo=UTC) if updated_at.tzinfo is None else updated_at.astimezone(UTC)
+            price_age_days = max(0, (datetime.now(UTC) - updated_at).days)
+        else:
+            price_age_days = None
+        valuation_status = "stale" if cur_px <= 0 or price_age_days is None or price_age_days > 30 else "user_entered_current"
+        valuation_items.append({
+            "holding_id": h.id,
+            "symbol": h.symbol,
+            "source": "user_entered",
+            "status": valuation_status,
+            "price_age_days": price_age_days,
+        })
 
         total_value += current_val
         total_invested += invested
@@ -350,4 +366,14 @@ def compute_portfolio_analytics(
             {"symbol": worst_symbol, "return_pct": round(worst_return * 100, 2)} if worst_symbol is not None else None
         ),
         "by_asset_type": by_asset_type,
+        "valuation_quality": {
+            "source": "user_entered",
+            "live_prices_available": False,
+            "stale_holding_count": sum(1 for item in valuation_items if item["status"] == "stale"),
+            "holding_count": len(valuation_items),
+            "warnings": [
+                "Investment values are user-entered and may be stale; Ledger does not fetch live market prices.",
+            ],
+            "holdings": valuation_items,
+        },
     }

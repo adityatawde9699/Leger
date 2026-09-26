@@ -254,8 +254,9 @@ def budget_breach_warnings(
     Predict which budget categories will be breached by month-end.
 
     Uses the current month's spending so far plus a pro-rated projection
-    of remaining days.  If the extrapolated total exceeds the monthly limit,
-    a warning entry is emitted.
+    of remaining days. The result also includes the user's prior monthly
+    pace when enough history exists, so a warning can be interpreted against
+    personal history rather than an arbitrary benchmark.
 
     Args:
         transactions: All transactions (income + expense).
@@ -271,6 +272,9 @@ def budget_breach_warnings(
         - ``projected_breach``float  (projected_total - monthly_limit, > 0)
         - ``days_elapsed``    int
         - ``days_remaining``  int
+        - ``historical_monthly_avg`` float | None
+        - ``historical_months`` int
+        - ``pace_delta`` float | None (current projection minus historical average)
         - ``severity``        "low" | "medium" | "high"
     """
     if not budgets:
@@ -291,9 +295,13 @@ def budget_breach_warnings(
 
     # Sum current-month expense per category
     cat_spent: dict[str, float] = defaultdict(float)
+    prior_months: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for tx in transactions:
-        if tx.type == "expense" and tx.date >= month_start:
+        if tx.type == "expense" and getattr(tx, "status", "posted") == "posted" and tx.date >= month_start:
             cat_spent[tx.category] += float(tx.amount)
+        elif tx.type == "expense" and getattr(tx, "status", "posted") == "posted" and tx.date < month_start:
+            month_key = tx.date.strftime("%Y-%m")
+            prior_months[tx.category][month_key] += float(tx.amount)
 
     warnings: list[dict[str, Any]] = []
 
@@ -309,6 +317,9 @@ def budget_breach_warnings(
         # Daily run-rate × full month length
         daily_rate = spent / max(days_elapsed, 1)
         projected_total = daily_rate * days_in_month
+        historical_month_map = prior_months.get(budget.category, {})
+        historical_values = [historical_month_map[key] for key in sorted(historical_month_map)[-3:]]
+        historical_avg = sum(historical_values) / len(historical_values) if historical_values else None
 
         if projected_total <= limit:
             continue  # on track — no warning needed
@@ -332,6 +343,9 @@ def budget_breach_warnings(
                 "projected_breach": round(breach_amount, 2),
                 "days_elapsed": days_elapsed,
                 "days_remaining": days_remaining,
+                "historical_monthly_avg": round(historical_avg, 2) if historical_avg is not None else None,
+                "historical_months": len(historical_values),
+                "pace_delta": round(projected_total - historical_avg, 2) if historical_avg is not None else None,
                 "severity": severity,
             }
         )

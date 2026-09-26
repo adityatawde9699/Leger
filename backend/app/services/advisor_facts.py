@@ -2,11 +2,8 @@ from collections import defaultdict
 from decimal import Decimal
 
 from ..models import Budget, Transaction
+from .currency import format_amount
 from .insights import _expense_value, _is_posted, compare_periods
-
-
-def _money(value: Decimal) -> str:
-    return f"₹{value:,.2f}"
 
 
 def _evidence(tx: Transaction) -> dict:
@@ -20,13 +17,40 @@ def _evidence(tx: Transaction) -> dict:
     }
 
 
-def _result(answer: str, facts: list[dict], evidence: list[dict], assumptions: list[str] | None = None) -> dict:
+def _result(
+    answer: str,
+    facts: list[dict],
+    evidence: list[dict],
+    assumptions: list[str] | None = None,
+    uncertainties: list[str] | None = None,
+    suggested_actions: list[dict] | None = None,
+    source_links: list[dict] | None = None,
+) -> dict:
+    evidence = evidence[:20]
+    evidence_ids = [row["transaction_id"] for row in evidence if row.get("transaction_id")]
+    # Keep links/action descriptors data-only. The client decides how to open
+    # the relevant view; no model-generated URL is trusted or executed.
+    if source_links is None and evidence_ids:
+        source_links = [{
+            "type": "transactions",
+            "label": "Review supporting transactions",
+            "transaction_ids": evidence_ids,
+        }]
+    if suggested_actions is None:
+        suggested_actions = ([{
+            "type": "review_evidence",
+            "label": "Review the supporting transactions",
+            "transaction_ids": evidence_ids,
+        }] if evidence_ids else [])
     return {
         "answer": answer,
         "answer_type": "deterministic",
         "facts": facts,
-        "evidence": evidence[:20],
+        "evidence": evidence,
         "assumptions": assumptions or [],
+        "uncertainties": uncertainties or [],
+        "suggested_actions": suggested_actions,
+        "source_links": source_links or [],
     }
 
 
@@ -34,6 +58,7 @@ def deterministic_answer(
     question: str,
     transactions: list[Transaction],
     budgets: list[Budget],
+    currency: str = "INR",
 ) -> dict | None:
     """Answer direct factual questions without asking an LLM to do arithmetic."""
     text = question.casefold()
@@ -44,6 +69,8 @@ def deterministic_answer(
                 [],
                 [],
                 ["No transactions are currently available."],
+                ["There is no transaction history to support a calculation."],
+                [{"type": "add_or_import", "label": "Add or import transactions"}],
             )
         return None
 
@@ -67,6 +94,8 @@ def deterministic_answer(
                 [],
                 [],
                 comparison["data_quality"]["warnings"],
+                ["The available history does not cover both equal-length comparison windows."],
+                [{"type": "add_or_import", "label": "Add or import more history"}],
             )
         change = comparison["changes"]["expenses"]
         percent = comparison["changes"]["expenses_percent"]
@@ -75,7 +104,7 @@ def deterministic_answer(
         evidence_ids = set(comparison["current"]["expense_transaction_ids"] + comparison["previous"]["expense_transaction_ids"])
         evidence = [_evidence(tx) for tx in transactions if tx.id in evidence_ids]
         return _result(
-            f"Spending {direction} by {_money(abs(change))}{percent_text} in the latest 30 days compared with the previous 30 days.",
+            f"Spending {direction} by {format_amount(abs(change), currency)}{percent_text} in the latest 30 days compared with the previous 30 days.",
             [
                 {"label": "Current-period spending", "value": str(comparison["current"]["expenses"])},
                 {"label": "Previous-period spending", "value": str(comparison["previous"]["expenses"])},
@@ -88,7 +117,7 @@ def deterministic_answer(
     if any(term in text for term in ("latest transaction", "last transaction", "most recent transaction")):
         tx = ordered[0]
         return _result(
-            f"Your latest transaction was {_money(tx.amount)} {tx.type} on {tx.date.isoformat()} for {tx.description} ({tx.category}).",
+            f"Your latest transaction was {format_amount(tx.amount, currency)} {tx.type} on {tx.date.isoformat()} for {tx.description} ({tx.category}).",
             [{"label": "Latest transaction", "value": str(tx.amount), "transaction_id": tx.id}],
             [_evidence(tx)],
         )
@@ -99,7 +128,7 @@ def deterministic_answer(
         category, amount = max(category_totals.items(), key=lambda item: item[1])
         rows = category_rows[category]
         return _result(
-            f"{category} is your largest spending category at {_money(amount)} across {len(rows)} transaction(s).",
+            f"{category} is your largest spending category at {format_amount(amount, currency)} across {len(rows)} transaction(s).",
             [{"label": category, "value": str(amount), "transaction_count": len(rows)}],
             [_evidence(tx) for tx in rows],
             ["Refunds offset spending; transfers are excluded."] if any(tx.type == "refund" for tx in rows) else ["Transfers are excluded from spending."]
@@ -113,7 +142,7 @@ def deterministic_answer(
         amount = category_totals[requested_category]
         rows = category_rows[requested_category]
         return _result(
-            f"You spent {_money(amount)} in {requested_category} across {len(rows)} transaction(s) in the available history.",
+            f"You spent {format_amount(amount, currency)} in {requested_category} across {len(rows)} transaction(s) in the available history.",
             [{"label": requested_category, "value": str(amount), "transaction_count": len(rows)}],
             [_evidence(tx) for tx in rows],
             ["This uses all available history, not a monthly average.", "Refunds offset spending; transfers are excluded."]
@@ -124,7 +153,7 @@ def deterministic_answer(
         rate = (net / income_total * 100) if income_total else None
         rate_text = f" ({rate:.1f}% savings rate)" if rate is not None else " (income data is unavailable)"
         return _result(
-            f"Your net savings are {_money(net)}{rate_text} across the available history.",
+            f"Your net savings are {format_amount(net, currency)}{rate_text} across the available history.",
             [{"label": "Income", "value": str(income_total)}, {"label": "Expenses", "value": str(expense_total)}, {"label": "Net", "value": str(net)}],
             [_evidence(tx) for tx in transactions if tx.type in ("income", "expense", "refund", "reimbursement") and _is_posted(tx)],
             ["Transfers are excluded from income and expenses."]
@@ -133,14 +162,14 @@ def deterministic_answer(
     if any(term in text for term in ("income", "earned", "salary")) and any(term in text for term in ("how much", "total", "what is", "show")):
         rows = [tx for tx in transactions if tx.type == "income" and _is_posted(tx)]
         return _result(
-            f"Recorded income is {_money(income_total)} across {len(rows)} transaction(s).",
+            f"Recorded income is {format_amount(income_total, currency)} across {len(rows)} transaction(s).",
             [{"label": "Income", "value": str(income_total), "transaction_count": len(rows)}],
             [_evidence(tx) for tx in rows],
         )
 
     if any(term in text for term in ("expense total", "total expenses", "how much did i spend", "total spending")):
         return _result(
-            f"Recorded spending is {_money(expense_total)} across the available history.",
+            f"Recorded spending is {format_amount(expense_total, currency)} across the available history.",
             [{"label": "Expenses", "value": str(expense_total), "transaction_count": len(expense_rows)}],
             [_evidence(tx) for tx in expense_rows],
             ["Refunds offset spending; transfers are excluded."]
@@ -158,7 +187,7 @@ def deterministic_answer(
         category, remaining = rows[0]
         status = "over" if remaining < 0 else "remaining"
         return _result(
-            f"{category} is the closest to its limit: {_money(abs(remaining))} {status}.",
+            f"{category} is the closest to its limit: {format_amount(abs(remaining), currency)} {status}.",
             facts,
             [_evidence(tx) for tx in category_rows.get(category, [])],
             ["Budget comparison uses all available transaction history; confirm the period if you need a monthly view."]

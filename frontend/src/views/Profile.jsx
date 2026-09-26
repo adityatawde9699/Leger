@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { API_BASE, apiFetch, authHeaders, money } from "../lib";
+import { API_BASE, apiFetch, authHeaders, money, setCurrencyPreference, setDisplayRates, setRegionPreference } from "../lib";
 import { useToast } from "../components/ui";
 import {
   User, Mail, Calendar, TrendingUp, TrendingDown,
@@ -23,6 +23,7 @@ const AVATAR_GRADIENTS = [
   "linear-gradient(135deg, var(--warning), var(--negative))",
   "linear-gradient(135deg, var(--negative), var(--info))",
 ];
+const REGION_OPTIONS = [["IN", "India"], ["US", "United States"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"], ["SG", "Singapore"], ["AE", "United Arab Emirates"], ["JP", "Japan"], ["CH", "Switzerland"], ["CN", "China"], ["HK", "Hong Kong"], ["OTHER", "Other"]];
 
 function pickGradient(str = "") {
   let hash = 0;
@@ -47,7 +48,7 @@ export default function Profile({ onSignOut }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
-  const [form, setForm] = useState({ display_name: "", currency_preference: "INR" });
+  const [form, setForm] = useState({ display_name: "", currency_preference: "INR", region: "IN", income_pattern: "not_sure", pay_cycle: "monthly", risk_comfort: "not_sure", household_mode: "individual", recurring_tolerance: "standard", cloud_ai_enabled: true, insight_frequency: "daily", quiet_hours_start: 22, quiet_hours_end: 7, proactive_daily_cap: 3 });
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [exportingData, setExportingData] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
@@ -67,11 +68,21 @@ export default function Profile({ onSignOut }) {
         apiFetch("/merchant-aliases"),
       ]);
       setProfile(p);
+      setCurrencyPreference(p.currency_preference);
+      setRegionPreference(p.region);
       setStats(s);
       setCustomCategories((categories || []).filter((item) => item.is_custom));
       setMerchantAliases(aliases || []);
-      setForm({ display_name: p.display_name || "", currency_preference: p.currency_preference || "INR" });
+      setForm({ display_name: p.display_name || "", currency_preference: p.currency_preference || "INR", region: p.region || "IN", income_pattern: p.income_pattern || "not_sure", pay_cycle: p.pay_cycle || "monthly", risk_comfort: p.risk_comfort || "not_sure", household_mode: p.household_mode || "individual", recurring_tolerance: p.recurring_tolerance || "standard", cloud_ai_enabled: p.cloud_ai_enabled !== false, insight_frequency: p.insight_frequency || "daily", quiet_hours_start: p.quiet_hours_start ?? 22, quiet_hours_end: p.quiet_hours_end ?? 7, proactive_daily_cap: p.proactive_daily_cap ?? 3 });
     } catch (e) {
+      if (e.message?.startsWith("Currency cannot be changed")) {
+        // Do not leave a rejected currency in the form: subsequent saves would
+        // resend the same unsafe relabel request and produce repeated 409s.
+        setForm(current => ({
+          ...current,
+          currency_preference: profile?.currency_preference || current.currency_preference,
+        }));
+      }
       toast(e.message, "error");
     } finally {
       setLoading(false);
@@ -113,12 +124,38 @@ export default function Profile({ onSignOut }) {
         body: JSON.stringify({
           display_name: form.display_name.trim() || null,
           currency_preference: form.currency_preference,
+          region: form.region,
+          income_pattern: form.income_pattern,
+          pay_cycle: form.pay_cycle,
+          risk_comfort: form.risk_comfort,
+          household_mode: form.household_mode,
+          recurring_tolerance: form.recurring_tolerance,
+          cloud_ai_enabled: form.cloud_ai_enabled,
+          insight_frequency: form.insight_frequency,
+          quiet_hours_start: Number(form.quiet_hours_start),
+          quiet_hours_end: Number(form.quiet_hours_end),
+          proactive_daily_cap: Number(form.proactive_daily_cap),
         }),
       });
       setProfile(updated);
+      setCurrencyPreference(updated.currency_preference);
+      setRegionPreference(updated.region);
+      const recordCurrency = localStorage.getItem("ledger-record-currency") || updated.currency_preference;
+      localStorage.setItem("ledger-record-currency", recordCurrency);
+      apiFetch(`/currency/rates?base=${recordCurrency}`)
+        .then((rates) => setDisplayRates(rates.base, rates.rates, rates.date))
+        .catch(() => {});
       setEditing(false);
       toast("Profile updated", "success");
     } catch (e) {
+      if (e.message?.startsWith("Currency cannot be changed")) {
+        // Restore the persisted currency so a later save does not resend the
+        // rejected relabel request and produce another 409.
+        setForm(current => ({
+          ...current,
+          currency_preference: profile?.currency_preference || current.currency_preference,
+        }));
+      }
       toast(e.message, "error");
     } finally {
       setSaving(false);
@@ -126,7 +163,7 @@ export default function Profile({ onSignOut }) {
   };
 
   const handleCancelEdit = () => {
-    setForm({ display_name: profile?.display_name || "", currency_preference: profile?.currency_preference || "INR" });
+    setForm({ display_name: profile?.display_name || "", currency_preference: profile?.currency_preference || "INR", region: profile?.region || "IN", income_pattern: profile?.income_pattern || "not_sure", pay_cycle: profile?.pay_cycle || "monthly", risk_comfort: profile?.risk_comfort || "not_sure", household_mode: profile?.household_mode || "individual", recurring_tolerance: profile?.recurring_tolerance || "standard", cloud_ai_enabled: profile?.cloud_ai_enabled !== false, insight_frequency: profile?.insight_frequency || "daily", quiet_hours_start: profile?.quiet_hours_start ?? 22, quiet_hours_end: profile?.quiet_hours_end ?? 7, proactive_daily_cap: profile?.proactive_daily_cap ?? 3 });
     setEditing(false);
   };
 
@@ -404,7 +441,7 @@ export default function Profile({ onSignOut }) {
             <div className="settings-item">
               <div className="settings-item-info">
                 <span className="settings-item-label">Currency</span>
-                <span className="settings-item-desc">Choose your primary display currency</span>
+                <span className="settings-item-desc">Choose the currency used to display your balances, totals, and analysis. Historical records stay in their original currency and are converted using a dated reference rate.</span>
               </div>
               <div className="settings-item-action">
                 <select
@@ -427,11 +464,79 @@ export default function Profile({ onSignOut }) {
                 </select>
               </div>
             </div>
+            <div className="settings-item">
+              <div className="settings-item-info"><span className="settings-item-label">Country or region</span><span className="settings-item-desc">Used for number formatting</span></div>
+              <div className="settings-item-action"><select className="premium-select" value={form.region} onChange={(e) => setForm((value) => ({ ...value, region: e.target.value }))}>{REGION_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></div>
+            </div>
+            <div className="settings-item">
+              <div className="settings-item-info"><span className="settings-item-label">Income pattern</span><span className="settings-item-desc">A self-reported preference; does not change forecasts</span></div>
+              <div className="settings-item-action"><select className="premium-select" value={form.income_pattern} onChange={(e) => setForm((value) => ({ ...value, income_pattern: e.target.value }))}><option value="regular">Mostly regular</option><option value="irregular">Irregular or freelance</option><option value="mixed">A mix of regular and variable</option><option value="not_sure">Not sure yet</option></select></div>
+            </div>
+            <div className="settings-item">
+              <div className="settings-item-info"><span className="settings-item-label">Pay cycle</span><span className="settings-item-desc">A self-reported rhythm used to make planning language more relevant; Ledger does not infer payday.</span></div>
+              <div className="settings-item-action"><select className="premium-select" value={form.pay_cycle} onChange={(e) => setForm((value) => ({ ...value, pay_cycle: e.target.value }))} aria-label="Pay cycle"><option value="weekly">Weekly</option><option value="biweekly">Every two weeks</option><option value="monthly">Monthly</option><option value="irregular">Irregular</option></select></div>
+            </div>
+            <div className="settings-item">
+              <div className="settings-item-info"><span className="settings-item-label">Risk comfort</span><span className="settings-item-desc">Only a stated preference. It is not a risk score or investment recommendation.</span></div>
+              <div className="settings-item-action"><select className="premium-select" value={form.risk_comfort} onChange={(e) => setForm((value) => ({ ...value, risk_comfort: e.target.value }))} aria-label="Risk comfort"><option value="not_sure">Not sure yet</option><option value="conservative">Prefer lower volatility</option><option value="balanced">Balanced</option><option value="aggressive">Comfortable with volatility</option></select></div>
+            </div>
+            <div className="settings-item">
+              <div className="settings-item-info"><span className="settings-item-label">Household view</span><span className="settings-item-desc">Choose whether your Ledger records represent only you or shared household spending.</span></div>
+              <div className="settings-item-action"><select className="premium-select" value={form.household_mode} onChange={(e) => setForm((value) => ({ ...value, household_mode: e.target.value }))} aria-label="Household view"><option value="individual">Just me</option><option value="shared">Shared household</option></select></div>
+            </div>
+            <div className="settings-item">
+              <div className="settings-item-info"><span className="settings-item-label">Recurring detection tolerance</span><span className="settings-item-desc">How much variation Ledger should tolerate when suggesting recurring payments; suggestions still require confirmation.</span></div>
+              <div className="settings-item-action"><select className="premium-select" value={form.recurring_tolerance} onChange={(e) => setForm((value) => ({ ...value, recurring_tolerance: e.target.value }))} aria-label="Recurring detection tolerance"><option value="strict">Strict</option><option value="standard">Standard</option><option value="flexible">Flexible</option></select></div>
+            </div>
+            <div className="settings-item">
+              <div className="settings-item-info">
+                <span className="settings-item-label">Cloud AI explanations</span>
+                <span className="settings-item-desc">When enabled, Ledger may send a minimized financial context to a configured cloud provider for explanations and planning. Direct factual answers still run locally.</span>
+              </div>
+              <div className="settings-item-action">
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-secondary)" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.cloud_ai_enabled}
+                    onChange={(e) => setForm((value) => ({ ...value, cloud_ai_enabled: e.target.checked }))}
+                    aria-label="Enable cloud AI explanations"
+                  />
+                  {form.cloud_ai_enabled ? "Enabled" : "Disabled"}
+                </label>
+              </div>
+            </div>
+            <div className="settings-item">
+              <div className="settings-item-info">
+                <span className="settings-item-label">Insight frequency</span>
+                <span className="settings-item-desc">Choose whether Ledger shows all proactive observations, only important ones, or none.</span>
+              </div>
+              <div className="settings-item-action">
+                <select
+                  className="premium-select"
+                  value={form.insight_frequency}
+                  onChange={(e) => setForm((value) => ({ ...value, insight_frequency: e.target.value }))}
+                  aria-label="Insight frequency"
+                >
+                  <option value="off">Off</option>
+                  <option value="important">Important only</option>
+                  <option value="daily">All available</option>
+                  <option value="weekly">All available (weekly preference)</option>
+                </select>
+              </div>
+            </div>
+            <div className="settings-item">
+              <div className="settings-item-info"><span className="settings-item-label">Quiet hours</span><span className="settings-item-desc">Do not surface proactive notifications during this local-hour window.</span></div>
+              <div className="settings-item-action" style={{ display: "flex", gap: 6, alignItems: "center" }}><input className="premium-input" type="number" min="0" max="23" value={form.quiet_hours_start} onChange={(e) => setForm((value) => ({ ...value, quiet_hours_start: e.target.value }))} aria-label="Quiet hours start" /><span>to</span><input className="premium-input" type="number" min="0" max="23" value={form.quiet_hours_end} onChange={(e) => setForm((value) => ({ ...value, quiet_hours_end: e.target.value }))} aria-label="Quiet hours end" /></div>
+            </div>
+            <div className="settings-item">
+              <div className="settings-item-info"><span className="settings-item-label">Daily insight cap</span><span className="settings-item-desc">Limit proactive insight notifications to avoid noisy reminders.</span></div>
+              <div className="settings-item-action"><input className="premium-input" type="number" min="0" max="20" value={form.proactive_daily_cap} onChange={(e) => setForm((value) => ({ ...value, proactive_daily_cap: e.target.value }))} aria-label="Daily insight cap" /></div>
+            </div>
           </div>
           <button
             className="btn-primary settings-save-btn"
             onClick={handleSave}
-            disabled={saving || (form.currency_preference === profile?.currency_preference)}
+            disabled={saving || (form.currency_preference === profile?.currency_preference && form.region === profile?.region && form.income_pattern === (profile?.income_pattern || "not_sure") && form.pay_cycle === (profile?.pay_cycle || "monthly") && form.risk_comfort === (profile?.risk_comfort || "not_sure") && form.household_mode === (profile?.household_mode || "individual") && form.recurring_tolerance === (profile?.recurring_tolerance || "standard") && form.cloud_ai_enabled === (profile?.cloud_ai_enabled !== false) && form.insight_frequency === (profile?.insight_frequency || "daily") && Number(form.quiet_hours_start) === (profile?.quiet_hours_start ?? 22) && Number(form.quiet_hours_end) === (profile?.quiet_hours_end ?? 7) && Number(form.proactive_daily_cap) === (profile?.proactive_daily_cap ?? 3))}
           >
             {saving ? <><Loader2 size={16} className="spin" /> Saving…</> : <><Check size={16} /> Save Preferences</>}
           </button>

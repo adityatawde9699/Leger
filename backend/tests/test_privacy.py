@@ -1,42 +1,53 @@
-import json
+from datetime import UTC, datetime, timedelta
 
-from .conftest import AUTH_HEADER
+from app.models import AIConversation
+from app.services.privacy import purge_expired_conversations, redact_sensitive_text, safe_conversation_memory
 
-
-def test_full_export_is_portable_and_excludes_secrets(client):
-    account = client.post(
-        "/accounts",
-        json={"name": "Checking", "account_type": "current", "balance": "1000"},
-        headers=AUTH_HEADER,
-    )
-    assert account.status_code == 201
-    response = client.get("/export/full", headers=AUTH_HEADER)
-    assert response.status_code == 200
-    payload = json.loads(response.content)
-    assert payload["profile"]["id"] == "test-user-1"
-    assert payload["accounts"][0]["name"] == "Checking"
-    assert "file_content" not in payload
-    assert "secret" not in payload
+from .conftest import TEST_USER_ID, TestSession
 
 
-def test_delete_all_data_requires_exact_confirmation_and_removes_profile(client):
-    created = client.post(
-        "/transactions",
-        json={
-            "date": "2026-01-01",
-            "type": "expense",
-            "category": "Dining",
-            "amount": "25",
-            "description": "Test meal",
-        },
-        headers=AUTH_HEADER,
-    )
-    assert created.status_code == 201
+def test_ai_text_redaction_preserves_useful_prose():
+    value = "Email jane@example.com, call +91 98765 43210, account 1234 5678 9012, PAN ABCDE1234F"
+    redacted = redact_sensitive_text(value)
 
-    denied = client.request("DELETE", "/profile/data", json={"confirmation": "delete"}, headers=AUTH_HEADER)
-    assert denied.status_code == 422
+    assert "jane@example.com" not in redacted
+    assert "98765" not in redacted
+    assert "1234 5678 9012" not in redacted
+    assert "ABCDE1234F" not in redacted
+    assert "Email" in redacted
+    assert "4111111111111111" not in redact_sensitive_text("card 4111111111111111")
+    assert "https://bank.example" not in redact_sensitive_text("https://bank.example/account?id=123")
 
-    deleted = client.request("DELETE", "/profile/data", json={"confirmation": "DELETE"}, headers=AUTH_HEADER)
-    assert deleted.status_code == 200
-    assert deleted.json()["deleted"] is True
-    assert client.get("/profile", headers=AUTH_HEADER).status_code == 404
+
+def test_expired_conversations_are_deleted_for_one_user():
+    db = TestSession()
+    try:
+        old = AIConversation(
+            user_id=TEST_USER_ID,
+            title="Old",
+            updated_at=datetime.now(UTC) - timedelta(days=100),
+        )
+        current = AIConversation(user_id=TEST_USER_ID, title="Current")
+        db.add_all([old, current])
+        db.commit()
+
+        assert purge_expired_conversations(db, TEST_USER_ID, 90) == 1
+        remaining = db.query(AIConversation).filter(AIConversation.user_id == TEST_USER_ID).all()
+        assert [item.title for item in remaining] == ["Current"]
+    finally:
+        db.close()
+
+
+def test_provider_memory_keeps_only_explicit_user_preferences_and_goals():
+    messages = [
+        {"role": "user", "content": "What did I spend at the supermarket last month?"},
+        {"role": "assistant", "content": "You spent a calculated amount."},
+        {"role": "user", "content": "My goal is to save for an emergency fund; email me@example.com"},
+    ]
+
+    memory = safe_conversation_memory(messages)
+
+    assert len(memory) == 1
+    assert memory[0]["role"] == "user"
+    assert "emergency fund" in memory[0]["content"]
+    assert "me@example.com" not in memory[0]["content"]

@@ -77,7 +77,7 @@ export default function PWAController() {
       {!online && (
         <div className="pwa-notice offline" role="status">
           <WifiOff size={18} />
-          <div><strong>You’re offline</strong><span>Saved screens remain available. New data will need a connection.</span></div>
+          <div><strong>You’re offline</strong><span>If your profile was loaded before, Quick Add can queue entries on this device for explicit sync later.</span></div>
         </div>
       )}
 

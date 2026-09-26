@@ -36,6 +36,21 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     currency_preference: Mapped[str] = mapped_column(String(3), default="INR")
+    region: Mapped[str] = mapped_column(String(16), default="IN")
+    income_pattern: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    pay_cycle: Mapped[str] = mapped_column(String(16), default="monthly", nullable=False)
+    risk_comfort: Mapped[str] = mapped_column(String(16), default="not_sure", nullable=False)
+    household_mode: Mapped[str] = mapped_column(String(16), default="individual", nullable=False)
+    recurring_tolerance: Mapped[str] = mapped_column(String(16), default="standard", nullable=False)
+    onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # User-controlled privacy preference. Existing users retain current
+    # behavior after migration; new users can turn cloud AI off explicitly.
+    cloud_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    insight_frequency: Mapped[str] = mapped_column(String(16), default="daily", nullable=False)
+    quiet_hours_start: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
+    quiet_hours_end: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
+    proactive_daily_cap: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    obligations_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")
     budgets: Mapped[list["Budget"]] = relationship(back_populates="user")
@@ -54,6 +69,11 @@ class Account(Base):
     institution: Mapped[str | None] = mapped_column(String(128), nullable=True)
     balance: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=Decimal("0"))
     currency: Mapped[str] = mapped_column(String(3), default="INR")
+    # Credit-account fields are optional for non-credit accounts. Balance is
+    # the positive amount currently owed when account_type=credit.
+    credit_limit: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    minimum_payment: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    payment_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_reconciled_balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
@@ -93,10 +113,24 @@ class Transaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     user: Mapped["User"] = relationship(back_populates="transactions")
     account: Mapped["Account | None"] = relationship(back_populates="transactions")
+    receipt: Mapped["ReceiptAttachment | None"] = relationship(back_populates="transaction", cascade="all, delete-orphan", uselist=False)
     __table_args__ = (
         Index("ix_transactions_user_date", "user_id", "date"),
         Index("ix_transactions_user_category", "user_id", "category"),
     )
+
+
+class ReceiptAttachment(Base):
+    """User-owned receipt bytes attached to one transaction, never sent to an LLM by default."""
+
+    __tablename__ = "receipt_attachments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.id"), unique=True, index=True)
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    mime_type: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    transaction: Mapped["Transaction"] = relationship(back_populates="receipt")
 
 
 class Budget(Base):
@@ -193,6 +227,8 @@ class ImportJob(Base):
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     # JSON array of statement row fingerprints intentionally excluded during review.
     excluded_row_fingerprints: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON map of reviewed row fingerprint -> user-confirmed inferred fields.
+    review_overrides: Mapped[str | None] = mapped_column(Text, nullable=True)
     row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -232,6 +268,20 @@ class AuditLog(Base):
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     __table_args__ = (Index("ix_audit_user_time", "user_id", "created_at"),)
+
+
+class Notification(Base):
+    """User-owned in-app notification generated by the maintenance worker."""
+
+    __tablename__ = "notifications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="insight")
+    insight_id: Mapped[str] = mapped_column(String(256))
+    text: Mapped[str] = mapped_column(Text)
+    payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class Webhook(Base):

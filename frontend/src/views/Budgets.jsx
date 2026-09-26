@@ -1,9 +1,10 @@
 import React from "react";
-import { apiFetch, money, CATEGORY_COLORS } from "../lib";
+import { apiFetch, currencySymbol, money, CATEGORY_COLORS } from "../lib";
 import { useToast, CardSkeleton } from "../components/ui";
+import CurrencyMismatchNotice from "../components/CurrencyMismatchNotice";
 import { Target, AlertCircle, Sparkles, CheckCircle } from "lucide-react";
 
-export default function Budgets() {
+export default function Budgets({ onNavigate }) {
   const toast = useToast();
   const [budgets, setBudgets]   = React.useState([]);
   const [summary, setSummary]   = React.useState(null);
@@ -76,6 +77,10 @@ export default function Budgets() {
         </div>
       </div>
     );
+  }
+
+  if (summary?.data_quality?.currency_mismatch_count > 0) {
+    return <CurrencyMismatchNotice title="Budgets" onNavigate={onNavigate} />;
   }
 
   const budgetCategories = [...new Set([...categories, ...budgets.map((budget) => budget.category), ...Object.keys(byCategory)])].sort();
@@ -180,7 +185,7 @@ export default function Budgets() {
                 <div>
                   <div className="budget-stat-label">Monthly Limit</div>
                   <div className="input-prefix-wrap">
-                    <span className="input-prefix" style={{ top: 'unset', transform: 'none', position: 'relative', left: 'unset', marginRight: 4, fontSize: 14, fontWeight: 700 }}>₹</span>
+                    <span className="input-prefix" style={{ top: 'unset', transform: 'none', position: 'relative', left: 'unset', marginRight: 4, fontSize: 14, fontWeight: 700 }}>{currencySymbol()}</span>
                     <input
                       type="number" min="0" placeholder="Set limit"
                       value={draft[cat] ?? ""}

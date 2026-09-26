@@ -27,6 +27,36 @@ with engine.begin() as conn:
     if 'avatar_url' not in existing_cols:
         conn.execute(text('ALTER TABLE users ADD COLUMN avatar_url TEXT'))
         print('  + Added users.avatar_url')
+    if 'region' not in existing_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN region VARCHAR(16) NOT NULL DEFAULT 'IN'"))
+        print('  + Added users.region')
+    if 'income_pattern' not in existing_cols:
+        conn.execute(text('ALTER TABLE users ADD COLUMN income_pattern VARCHAR(16)'))
+        print('  + Added users.income_pattern')
+    if 'pay_cycle' not in existing_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN pay_cycle VARCHAR(16) NOT NULL DEFAULT 'monthly'"))
+        print('  + Added users.pay_cycle')
+    if 'risk_comfort' not in existing_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN risk_comfort VARCHAR(16) NOT NULL DEFAULT 'not_sure'"))
+        print('  + Added users.risk_comfort')
+    if 'household_mode' not in existing_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN household_mode VARCHAR(16) NOT NULL DEFAULT 'individual'"))
+        print('  + Added users.household_mode')
+    if 'recurring_tolerance' not in existing_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN recurring_tolerance VARCHAR(16) NOT NULL DEFAULT 'standard'"))
+        print('  + Added users.recurring_tolerance')
+    if 'onboarding_completed' not in existing_cols:
+        conn.execute(text('ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE'))
+        print('  + Added users.onboarding_completed')
+    if 'cloud_ai_enabled' not in existing_cols:
+        conn.execute(text('ALTER TABLE users ADD COLUMN cloud_ai_enabled BOOLEAN NOT NULL DEFAULT TRUE'))
+        print('  + Added users.cloud_ai_enabled')
+    if 'insight_frequency' not in existing_cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN insight_frequency VARCHAR(16) NOT NULL DEFAULT 'daily'"))
+        print('  + Added users.insight_frequency')
+    if 'obligations_reviewed_at' not in existing_cols:
+        conn.execute(text('ALTER TABLE users ADD COLUMN obligations_reviewed_at TIMESTAMP'))
+        print('  + Added users.obligations_reviewed_at')
     job_cols = [c['name'] for c in inspect(engine).get_columns('import_jobs')]
     if 'file_extension' not in job_cols:
         conn.execute(text("ALTER TABLE import_jobs ADD COLUMN file_extension VARCHAR(8) DEFAULT ''"))
@@ -54,6 +84,9 @@ with engine.begin() as conn:
     if 'excluded_row_fingerprints' not in job_cols:
         conn.execute(text("ALTER TABLE import_jobs ADD COLUMN excluded_row_fingerprints TEXT"))
         print('  + Added import_jobs.excluded_row_fingerprints')
+    if 'review_overrides' not in job_cols:
+        conn.execute(text("ALTER TABLE import_jobs ADD COLUMN review_overrides TEXT"))
+        print('  + Added import_jobs.review_overrides')
     account_cols = [c['name'] for c in inspect(engine).get_columns('accounts')]
     if 'last_reconciled_at' not in account_cols:
         conn.execute(text('ALTER TABLE accounts ADD COLUMN last_reconciled_at TIMESTAMP'))
@@ -64,6 +97,15 @@ with engine.begin() as conn:
     if 'reconciliation_note' not in account_cols:
         conn.execute(text('ALTER TABLE accounts ADD COLUMN reconciliation_note TEXT'))
         print('  + Added accounts.reconciliation_note')
+    if 'credit_limit' not in account_cols:
+        conn.execute(text('ALTER TABLE accounts ADD COLUMN credit_limit NUMERIC(14,2)'))
+        print('  + Added accounts.credit_limit')
+    if 'minimum_payment' not in account_cols:
+        conn.execute(text('ALTER TABLE accounts ADD COLUMN minimum_payment NUMERIC(14,2)'))
+        print('  + Added accounts.minimum_payment')
+    if 'payment_due_date' not in account_cols:
+        conn.execute(text('ALTER TABLE accounts ADD COLUMN payment_due_date DATE'))
+        print('  + Added accounts.payment_due_date')
     transaction_cols = [c['name'] for c in inspect(engine).get_columns('transactions')]
     if 'status' not in transaction_cols:
         conn.execute(text("ALTER TABLE transactions ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'posted'"))

@@ -33,6 +33,7 @@ dist/
 build/
 .vite/
 coverage/
+test-results/
 
 # Editor / OS
 .vscode/

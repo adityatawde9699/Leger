@@ -1,5 +1,5 @@
 import React from "react";
-import { apiFetch, money } from "../lib";
+import { apiFetch, getCurrencyPreference, money } from "../lib";
 import { useToast } from "../components/ui";
 import { Plus, CreditCard, Wallet, Building2, PiggyBank, Trash2, ChevronRight } from "lucide-react";
 
@@ -34,14 +34,17 @@ export default function Accounts() {
   const [showForm, setShowForm] = React.useState(false);
   const [reconcileId, setReconcileId] = React.useState(null);
   const [reconcileForm, setReconcileForm] = React.useState({ observed_balance: "", note: "" });
+  const [ledgerCurrency, setLedgerCurrency] = React.useState(getCurrencyPreference);
   const [form, setForm] = React.useState({
-    name: "", account_type: "savings", institution: "", balance: "", currency: "INR",
+    name: "", account_type: "savings", institution: "", balance: "", credit_limit: "", minimum_payment: "", payment_due_date: "",
   });
   const [saving, setSaving] = React.useState(false);
 
   async function load() {
     try {
-      setAccounts(await apiFetch("/accounts"));
+      const [loadedAccounts, profile] = await Promise.all([apiFetch("/accounts"), apiFetch("/profile")]);
+      setAccounts(loadedAccounts);
+      setLedgerCurrency(profile.currency_preference);
     } catch (e) {
       toast(e.message, "error");
     } finally {
@@ -57,9 +60,16 @@ export default function Accounts() {
     try {
       await apiFetch("/accounts", {
         method: "POST",
-        body: JSON.stringify({ ...form, balance: Number(form.balance || 0) }),
+        body: JSON.stringify({
+          ...form,
+          balance: form.balance,
+          currency: ledgerCurrency,
+          credit_limit: form.account_type === "credit" ? (form.credit_limit || null) : null,
+          minimum_payment: form.account_type === "credit" ? (form.minimum_payment || null) : null,
+          payment_due_date: form.account_type === "credit" ? (form.payment_due_date || null) : null,
+        }),
       });
-      setForm({ name: "", account_type: "savings", institution: "", balance: "", currency: "INR" });
+      setForm({ name: "", account_type: "savings", institution: "", balance: "", credit_limit: "", minimum_payment: "", payment_due_date: "" });
       setShowForm(false);
       await load();
       toast("Account added", "success");
@@ -87,14 +97,15 @@ export default function Accounts() {
       const result = await apiFetch(`/accounts/${reconcileId}/reconcile`, {
         method: "POST",
         body: JSON.stringify({
-          observed_balance: Number(reconcileForm.observed_balance),
+          observed_balance: reconcileForm.observed_balance,
           note: reconcileForm.note.trim() || null,
         }),
       });
       setAccounts((current) => current.map((account) => account.id === reconcileId
         ? { ...account, balance: result.observed_balance, last_reconciled_at: result.reconciled_at, last_reconciled_balance: result.observed_balance, reconciliation_note: result.note }
         : account));
-      toast(result.difference === 0 ? "Account reconciled" : `Balance updated · difference ${money(result.difference)}`, "success");
+      const accountCurrency = accounts.find((account) => account.id === reconcileId)?.currency || ledgerCurrency;
+      toast(Number(result.difference) === 0 ? "Account reconciled" : `Balance updated · difference ${money(result.difference, accountCurrency)}`, "success");
       setReconcileId(null);
       setReconcileForm({ observed_balance: "", note: "" });
     } catch (e) {
@@ -102,7 +113,10 @@ export default function Accounts() {
     }
   }
 
-  const totalBalance = accounts.reduce((s, a) => s + Number(a.balance || 0), 0);
+  const accountCurrencies = new Set(accounts.map((account) => account.currency));
+  const hasMixedCurrencies = accountCurrencies.size > 1;
+  const hasCurrencyMismatch = accounts.some((account) => account.currency !== ledgerCurrency);
+  const totalBalance = hasMixedCurrencies ? null : accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0);
 
   return (
     <div className="view-accounts">
@@ -118,10 +132,15 @@ export default function Accounts() {
 
       {/* Hero */}
       <div className="card hero-card" style={{ marginBottom: 24 }}>
-        <div className="hero-label"><Wallet size={16} /> Total Balance Across All Accounts</div>
-        <div className="hero-amount">{money(totalBalance)}</div>
-        <div className="hero-change positive">{accounts.length} active account{accounts.length !== 1 ? "s" : ""}</div>
+        <div className="hero-label"><Wallet size={16} /> {hasMixedCurrencies ? "Balances in different currencies" : "Total Balance Across All Accounts"}</div>
+        <div className="hero-amount">{hasMixedCurrencies ? "No combined total" : money(totalBalance, accounts[0]?.currency || ledgerCurrency)}</div>
+        <div className="hero-change positive">{hasMixedCurrencies ? "Review each account below; Ledger does not convert currencies." : `${accounts.length} active account${accounts.length !== 1 ? "s" : ""}`}</div>
       </div>
+      {hasCurrencyMismatch && (
+        <div className="card" style={{ marginBottom: 24, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+          Some account currencies differ from your Ledger setting ({ledgerCurrency}). Analysis is paused because Ledger cannot convert their amounts. Review these accounts and the currency setting in Profile.
+        </div>
+      )}
 
       {/* Account cards */}
       {loading ? (
@@ -166,7 +185,7 @@ export default function Accounts() {
                   </button>
                 </div>
                 <div className="num" style={{ fontSize: 30, fontWeight: 600, color, marginTop: 4 }}>
-                  {money(acct.balance)}
+                  {money(acct.balance, acct.currency)}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>
                   {acct.currency} · {acct.account_type.toUpperCase()}
@@ -195,16 +214,33 @@ export default function Accounts() {
           <form onSubmit={reconcile}>
             <div className="form-grid-2">
               <div className="form-field">
-                <label className="form-label">Observed balance</label>
-                <div className="input-prefix-wrap"><span className="input-prefix">₹</span>
-                  <input required type="number" step="0.01" value={reconcileForm.observed_balance} onChange={(e) => setReconcileForm({ ...reconcileForm, observed_balance: e.target.value })} />
-                </div>
+                <label className="form-label">Observed balance ({accounts.find((account) => account.id === reconcileId)?.currency || ledgerCurrency})</label>
+                <input required type="number" step="0.01" value={reconcileForm.observed_balance} onChange={(e) => setReconcileForm({ ...reconcileForm, observed_balance: e.target.value })} />
               </div>
               <div className="form-field">
                 <label className="form-label">Note</label>
                 <input placeholder="e.g. Checked after September statement" value={reconcileForm.note} onChange={(e) => setReconcileForm({ ...reconcileForm, note: e.target.value })} />
               </div>
             </div>
+            {form.account_type === "credit" && (
+              <div className="form-grid-2" style={{ marginTop: 8 }}>
+                <div className="form-field">
+                  <label className="form-label">Credit limit ({ledgerCurrency})</label>
+                  <input required type="number" min="0" step="0.01" value={form.credit_limit}
+                    onChange={(e) => setForm({ ...form, credit_limit: e.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Minimum payment ({ledgerCurrency})</label>
+                  <input required type="number" min="0" step="0.01" value={form.minimum_payment}
+                    onChange={(e) => setForm({ ...form, minimum_payment: e.target.value })} />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Next payment due</label>
+                  <input required type="date" value={form.payment_due_date}
+                    onChange={(e) => setForm({ ...form, payment_due_date: e.target.value })} />
+                </div>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
               <button type="submit" className="btn-primary">Save reconciliation</button>
               <button type="button" className="btn-secondary" onClick={() => setReconcileId(null)}>Cancel</button>
@@ -243,12 +279,9 @@ export default function Accounts() {
                   onChange={(e) => setForm({ ...form, institution: e.target.value })} />
               </div>
               <div className="form-field">
-                <label className="form-label">Opening Balance</label>
-                <div className="input-prefix-wrap">
-                  <span className="input-prefix">₹</span>
-                  <input type="number" placeholder="0" value={form.balance}
-                    onChange={(e) => setForm({ ...form, balance: e.target.value })} />
-                </div>
+                <label className="form-label">Current balance ({ledgerCurrency})</label>
+                <input required type="number" step="0.01" placeholder="Enter 0 if the balance is zero" value={form.balance}
+                  onChange={(e) => setForm({ ...form, balance: e.target.value })} />
               </div>
             </div>
             <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>

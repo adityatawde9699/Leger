@@ -19,8 +19,8 @@ const ACTIONS = [
   { id: "audit-log", label: "View audit log", desc: "Activity history & compliance", view: "audit", Icon: Shield },
   { id: "webhooks", label: "Manage webhooks", desc: "Register event integrations", view: "audit", Icon: Globe },
   { id: "investments", label: "Investments", desc: "Track portfolios & holdings", view: "investments", Icon: Briefcase },
-  { id: "credit-score", label: "Credit Health Score", desc: "Financial health 300-900", view: "credit", Icon: Gauge },
-  { id: "benchmarks", label: "Community Benchmarks", desc: "Compare spending to peers", view: "credit", Icon: BarChart3 },
+  { id: "financial-picture", label: "Financial picture", desc: "Review your recorded cash flow and data gaps", view: "credit", Icon: Gauge },
+  { id: "benchmarks", label: "Peer comparison status", desc: "See why peer rankings are unavailable", view: "credit", Icon: BarChart3 },
   { id: "bill-negotiate", label: "Negotiate bills", desc: "AI strategies to reduce costs", view: "advisor", Icon: Banknote },
 ];
 
@@ -28,13 +28,18 @@ export default function CommandPalette({ open, onClose, onNavigate }) {
   const [query, setQuery] = React.useState("");
   const [selected, setSelected] = React.useState(0);
   const inputRef = React.useRef(null);
+  const paletteRef = React.useRef(null);
+  const previousFocusRef = React.useRef(null);
 
   React.useEffect(() => {
     if (open) {
+      previousFocusRef.current = document.activeElement;
       setQuery("");
       setSelected(0);
-      setTimeout(() => inputRef.current?.focus(), 50);
+      const focusTimer = setTimeout(() => inputRef.current?.focus(), 50);
+      return () => { clearTimeout(focusTimer); previousFocusRef.current?.focus?.(); };
     }
+    return undefined;
   }, [open]);
 
   // Global Cmd+K / Ctrl+K listener
@@ -60,13 +65,23 @@ export default function CommandPalette({ open, onClose, onNavigate }) {
   }, [query]);
 
   function handleKeyDown(e) {
+    if (e.key === "Tab") {
+      const focusable = [...(paletteRef.current?.querySelectorAll("input, button:not([disabled])") || [])];
+      if (focusable.length) {
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+      return;
+    }
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setSelected((s) => Math.min(s + 1, filtered.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setSelected((s) => Math.max(s - 1, 0));
-    } else if (e.key === "Enter" && filtered[selected]) {
+    } else if (e.key === "Enter" && document.activeElement === inputRef.current && filtered[selected]) {
       e.preventDefault();
       execute(filtered[selected]);
     }
@@ -82,7 +97,7 @@ export default function CommandPalette({ open, onClose, onNavigate }) {
   return (
     <>
       <div className="cmd-backdrop" onClick={onClose} />
-      <div className="cmd-palette" role="dialog" aria-label="Command palette">
+      <div ref={paletteRef} className="cmd-palette" role="dialog" aria-modal="true" aria-label="Command palette" onKeyDown={handleKeyDown}>
         <div className="cmd-header">
           <Search size={16} className="cmd-search-icon" />
           <input
@@ -91,7 +106,6 @@ export default function CommandPalette({ open, onClose, onNavigate }) {
             placeholder="Type a command or search…"
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelected(0); }}
-            onKeyDown={handleKeyDown}
             aria-label="Search commands"
           />
           <kbd className="cmd-kbd">ESC</kbd>

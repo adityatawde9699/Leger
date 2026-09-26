@@ -3,8 +3,8 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from app.schemas import TransactionIn
-from app.services.forecaster import generate_forecast
-from app.services.insights import build_analysis_object, compare_periods, monthly_summary
+from app.services.forecaster import budget_breach_warnings, generate_forecast
+from app.services.insights import build_analysis_object, compare_periods, compute_insight_claims, monthly_summary
 
 from .conftest import AUTH_HEADER
 
@@ -42,6 +42,20 @@ def test_period_comparison_refuses_to_claim_a_trend_without_both_periods():
     result = compare_periods(transactions, end_date=date(2026, 2, 5), days=30)
     assert result["status"] == "insufficient_data"
     assert result["data_quality"]["warnings"]
+
+
+def test_dashboard_insight_claims_include_evidence_method_and_action():
+    transactions = [
+        SimpleNamespace(id="budget-1", date=date.today(), type="expense", status="posted", amount=Decimal("90"), category="Food", source="cash", merchant_normalized=None, description="Lunch"),
+        SimpleNamespace(id="budget-2", date=date.today(), type="expense", status="posted", amount=Decimal("30"), category="Food", source="cash", merchant_normalized=None, description="Dinner"),
+    ]
+    budget = SimpleNamespace(category="Food", monthly_limit=Decimal("100"))
+    claims = compute_insight_claims(transactions, [budget], currency="USD")
+    claim = next(item for item in claims if item["kind"] == "budget")
+    assert claim["evidence"]["transaction_ids"] == ["budget-1", "budget-2"]
+    assert claim["evidence"]["method"]
+    assert claim["recommended_action"]
+    assert claim["action_type"] == "open_transactions"
 
 
 def test_pending_and_excluded_rows_do_not_change_committed_analysis():
@@ -85,6 +99,21 @@ def test_forecast_exposes_period_and_sufficiency_metadata():
     assert result["by_category"]["Food"]["projected_30d"] < 999
 
 
+def test_budget_warning_includes_personal_historical_pace():
+    transactions = [
+        SimpleNamespace(date=date(2026, 9, 5), type="expense", status="posted", amount=Decimal("500"), category="Food"),
+        SimpleNamespace(date=date(2026, 8, 5), type="expense", status="posted", amount=Decimal("100"), category="Food"),
+        SimpleNamespace(date=date(2026, 7, 5), type="expense", status="posted", amount=Decimal("120"), category="Food"),
+    ]
+    warning = budget_breach_warnings(
+        transactions,
+        [SimpleNamespace(category="Food", monthly_limit=Decimal("200"))],
+    )[0]
+    assert warning["historical_months"] == 2
+    assert warning["historical_monthly_avg"] == 110.0
+    assert warning["pace_delta"] > 0
+
+
 def test_anomaly_endpoint_exposes_analysis_metadata(client):
     response = client.get("/analytics/anomalies?range=all", headers=AUTH_HEADER)
     assert response.status_code == 200
@@ -92,6 +121,34 @@ def test_anomaly_endpoint_exposes_analysis_metadata(client):
     assert body["items"] == []
     assert body["analysis"]["period_start"] is None
     assert body["analysis"]["sufficient"] is False
+
+
+def test_runway_endpoint_explains_missing_reconciled_cash(client):
+    response = client.get("/analytics/runway?horizon_months=3", headers=AUTH_HEADER)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "insufficient_data"
+    assert body["projection"] == []
+    assert any("account" in warning.lower() for warning in body["data_quality"]["warnings"])
+
+
+def test_leakage_endpoint_is_honest_with_empty_history(client):
+    response = client.get("/analytics/leakage", headers=AUTH_HEADER)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "insufficient_data"
+    assert body["items"] == []
+    assert body["data_quality"]["warnings"]
+
+
+def test_anomaly_feedback_uses_existing_audit_contract(client):
+    response = client.post(
+        "/insights/feedback",
+        json={"insight_id": "anomaly:large_purchase:tx-1", "feedback": "inaccurate"},
+        headers=AUTH_HEADER,
+    )
+    assert response.status_code == 200
+    assert response.json()["feedback"] == "inaccurate"
 
 
 def test_anomaly_analysis_excludes_pending_rows(client):

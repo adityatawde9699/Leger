@@ -12,15 +12,17 @@ const SUGGESTIONS = [
   "What's my biggest expense category?",
 ];
 
-export default function Advisor() {
+export default function Advisor({ onNavigate }) {
   const toast = useToast();
   const [conversations, setConversations] = React.useState([]);
   const [activeId, setActiveId]           = React.useState(null);
   const [messages, setMessages]           = React.useState([]);
   const [input, setInput]                 = React.useState("");
   const [streaming, setStreaming]         = React.useState(false);
+  const [answerMode, setAnswerMode]       = React.useState("quick");
   const [loadingConvs, setLoadingConvs]   = React.useState(true);
   const [showConvs, setShowConvs]         = React.useState(false);
+  const [completedActions, setCompletedActions] = React.useState({});
   const chatRef  = React.useRef(null);
   const inputRef = React.useRef(null);
 
@@ -62,7 +64,7 @@ export default function Advisor() {
     setMessages((m) => [...m, { role: "assistant", text: "" }]);
 
     try {
-      const body = JSON.stringify({ question: q, conversation_id: activeId || undefined });
+      const body = JSON.stringify({ question: q, conversation_id: activeId || undefined, answer_mode: answerMode });
       const res  = await fetch(`${API_BASE}/advisor/stream`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
@@ -132,6 +134,39 @@ export default function Advisor() {
     setActiveId(null);
     setMessages([]);
     setShowConvs(false);
+  }
+
+  async function followAdvisorAction(action, conversationId = null, confirm = true) {
+    if (!action) return;
+    const actionKey = `${action.type || "action"}:${(action.transaction_ids || []).join(",")}`;
+    if (confirm) {
+      try {
+        await apiFetch("/advisor/actions/complete", {
+          method: "POST",
+          body: JSON.stringify({
+            action_type: ["review_evidence", "review_accounts", "add_or_import", "enable_cloud_ai", "review_budgets", "review_goals"].includes(action.type) ? action.type : "review_evidence",
+            transaction_ids: action.transaction_ids || [],
+            conversation_id: conversationId || undefined,
+          }),
+        });
+        setCompletedActions((previous) => ({ ...previous, [actionKey]: true }));
+      } catch (error) {
+        toast(error.message, "error");
+      }
+    }
+    if (action.type === "review_accounts") {
+      onNavigate?.("accounts");
+    } else if (action.type === "add_or_import") {
+      onNavigate?.("transactions");
+    } else if (action.type === "review_evidence" || action.type === "open_transactions") {
+      onNavigate?.("transactions");
+    } else if (action.type === "review_budgets") {
+      onNavigate?.("budgets");
+    } else if (action.type === "review_goals") {
+      onNavigate?.("goals");
+    } else if (action.type === "enable_cloud_ai") {
+      onNavigate?.("profile");
+    }
   }
 
   async function deleteConversation(id, e) {
@@ -283,11 +318,55 @@ export default function Advisor() {
                       </div>
                     )}
                     {m.meta.answer_type !== "deterministic" && <div>Explained by AI · {m.meta.cloud_ai_configured ? `configured: ${m.meta.configured_providers.join(", ")}` : "no cloud provider configured"}</div>}
-                    Based on {m.meta.transaction_count} transaction{m.meta.transaction_count === 1 ? "" : "s"}
-                    {m.meta.period_start && ` · ${m.meta.period_start} → ${m.meta.period_end}`}
+                    {m.meta.answer_type !== "deterministic" && m.meta.privacy && (
+                      <div>{m.meta.privacy.cloud_ai_enabled ? "Cloud AI enabled for this explanation" : "Cloud AI disabled"}</div>
+                    )}
+                    {m.meta.answer_mode && <div>Mode: {m.meta.answer_mode === "math" ? "show the math" : m.meta.answer_mode === "plan" ? "plan with me" : "quick answer"}</div>}
+                    Based on {m.meta.data_range?.transaction_count ?? m.meta.transaction_count} transaction{(m.meta.data_range?.transaction_count ?? m.meta.transaction_count) === 1 ? "" : "s"}
+                    {(m.meta.data_range?.start || m.meta.period_start) && ` · ${m.meta.data_range?.start || m.meta.period_start} → ${m.meta.data_range?.end || m.meta.period_end}`}
                     {m.meta.coverage && ` · ${m.meta.coverage} coverage`}
                     {m.meta.warnings?.length > 0 && <div style={{ color: "var(--warning)", marginTop: 3 }}>{m.meta.warnings.join(" · ")}</div>}
                     {m.meta.assumptions?.length > 0 && <div style={{ marginTop: 3 }}>Assumptions: {m.meta.assumptions.join(" · ")}</div>}
+                    {m.meta.uncertainties?.length > 0 && <div style={{ marginTop: 3 }}>Uncertainty: {m.meta.uncertainties.join(" · ")}</div>}
+                    {m.meta.suggested_actions?.length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                        {m.meta.suggested_actions.map((action, index) => (
+                          (() => {
+                            const actionKey = `${action.type || "action"}:${(action.transaction_ids || []).join(",")}`;
+                            const completed = completedActions[actionKey];
+                            return (
+                          <button
+                            key={`${action.type || "action"}-${index}`}
+                            type="button"
+                            className="btn-link"
+                            onClick={() => followAdvisorAction(action, activeId)}
+                            disabled={completed}
+                            style={{ fontSize: 10, padding: 0 }}
+                          >
+                            {completed ? "Completed" : action.label || "Review next step"}
+                          </button>
+                            );
+                          })()
+                        ))}
+                      </div>
+                    )}
+                    {m.meta.source_links?.length > 0 && (
+                      <div style={{ marginTop: 4 }}>
+                        Source: {m.meta.source_links.map((link, index) => (
+                          <React.Fragment key={`${link.type || "source"}-${index}`}>
+                            {index > 0 && " · "}
+                            <button
+                              type="button"
+                              className="btn-link"
+                              onClick={() => followAdvisorAction(link, null, false)}
+                              style={{ fontSize: 10, padding: 0 }}
+                            >
+                              {link.label || "Open evidence"}
+                            </button>
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -296,6 +375,20 @@ export default function Advisor() {
 
           {/* Input */}
           <div className="chat-input-row">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
+              <span className="sr-only">Answer mode</span>
+              <select
+                value={answerMode}
+                onChange={(e) => setAnswerMode(e.target.value)}
+                disabled={streaming}
+                aria-label="Answer mode"
+                style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "8px 6px", background: "var(--surface)", color: "var(--text-primary)", fontSize: 11 }}
+              >
+                <option value="quick">Quick answer</option>
+                <option value="math">Show the math</option>
+                <option value="plan">Plan with me</option>
+              </select>
+            </label>
             <input
               ref={inputRef}
               className="chat-input"

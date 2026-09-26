@@ -2,6 +2,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
+    "test:e2e": "playwright test",
     "preview": "vite preview",
     "icons": "node scripts/generate-icons.mjs"
   },
@@ -14,6 +15,7 @@
     "vite": "^6.0.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "sharp": "^0.35.1",
     "vite-plugin-pwa": "^1.2.0"
   }

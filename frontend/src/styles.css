@@ -15,7 +15,7 @@
 
   --text-primary: #FFFFFF;
   --text-secondary: #94A3B8;
-  --text-muted: #64748B;
+  --text-muted: #9AA9BA;
 
   --primary: #A8FF2F; /* Neon Lime */
   --primary-glow: rgba(168, 255, 47, 0.15);
@@ -283,6 +283,63 @@ button, input, select, textarea { font: inherit; outline: none; background: tran
 .account-label { font-size: 14px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
 .account-amount { font-family: var(--font-condensed); font-size: clamp(26px, 3vw, 32px); font-weight: 600; color: var(--text-primary); letter-spacing: 0.01em; font-feature-settings: "tnum" 1; }
 
+/* Dashboard hierarchy: one trustworthy balance anchor, then three KPI columns. */
+.dashboard-balance-anchor {
+  min-height: 166px;
+  padding: 28px 24px !important;
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.dashboard-balance-card { position: relative; overflow: hidden; color: #fff; background: linear-gradient(112deg, #271b1b 0%, #6c2c18 46%, #c84b13 100%); border-color: rgba(255,255,255,0.16); box-shadow: 0 18px 42px rgba(0,0,0,0.24); }
+.dashboard-balance-card::after { content: ""; position: absolute; width: 46%; height: 150%; right: -10%; top: -30%; background: linear-gradient(120deg, transparent, rgba(255,180,105,0.12), transparent); transform: rotate(12deg); pointer-events: none; }
+.dashboard-balance-topline { display: flex; align-items: center; justify-content: space-between; color: rgba(255,255,255,0.72); font-size: 16px; letter-spacing: 0.01em; }
+.dashboard-balance-eye { display: grid; place-items: center; color: rgba(255,255,255,0.8); background: none; border: 0; padding: 4px; cursor: pointer; }
+.dashboard-balance-value { position: relative; z-index: 1; margin-top: 12px; color: #fff; font-family: var(--font-condensed); font-size: clamp(38px, 5vw, 62px); font-weight: 800; letter-spacing: -0.035em; line-height: 1; }
+.dashboard-balance-chip { position: relative; z-index: 1; display: flex; gap: 4px; width: 32px; margin-top: 28px; opacity: 0.55; }
+.dashboard-balance-chip span { width: 3px; height: 27px; border: 1px solid rgba(255,255,255,0.8); border-radius: 3px; }
+.dashboard-balance-footer { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-top: 24px; text-transform: uppercase; }
+.dashboard-balance-footer div { display: flex; flex-direction: column; gap: 8px; }
+.dashboard-balance-footer span { color: rgba(255,255,255,0.7); font-size: 12px; text-transform: none; }
+.dashboard-balance-footer strong { color: #fff; font-size: 15px; letter-spacing: 0.13em; }
+.dashboard-balance-account { text-align: right; }
+.dashboard-balance-note { position: relative; z-index: 1; margin-top: 18px; color: rgba(255,255,255,0.62); font-size: 11px; }
+.dashboard-kpi-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px;
+}
+.dashboard-kpi-grid .account-card {
+  min-height: 218px;
+  padding: 30px;
+  border-radius: 24px;
+}
+.dashboard-kpi-grid .account-amount {
+  font-size: clamp(34px, 4vw, 44px);
+  margin-top: 28px;
+}
+.dashboard-kpi-grid .account-change {
+  margin-top: 10px;
+}
+.dashboard-header-tools { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.dashboard-goal-badge { display: flex; align-items: center; gap: 9px; min-width: 190px; padding: 7px 11px 7px 7px; border: 1px solid rgba(168,255,47,0.28); border-radius: 16px; background: linear-gradient(135deg, rgba(168,255,47,0.12), rgba(250,204,21,0.08)); color: var(--text-primary); cursor: pointer; text-align: left; }
+.dashboard-goal-badge:hover { border-color: var(--primary); transform: translateY(-1px); }
+.dashboard-goal-ring { display: grid; place-items: center; width: 54px; height: 54px; padding: 5px; border-radius: 50%; flex-shrink: 0; }
+.dashboard-goal-ring-inner { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; color: var(--primary); background: var(--surface); }
+.dashboard-goal-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.dashboard-goal-copy small { color: var(--text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.dashboard-goal-copy strong { max-width: 118px; overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-goal-copy > span { color: var(--text-secondary); font-size: 10px; }
+.currency-converter { margin-bottom: 24px; }
+.currency-converter-form { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+.currency-converter-form label { display: flex; min-width: 120px; flex: 1; flex-direction: column; gap: 5px; color: var(--text-muted); font-size: 11px; font-weight: 700; }
+.currency-converter-form input, .currency-converter-form select { width: 100%; box-sizing: border-box; padding: 10px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-secondary); color: var(--text-primary); }
+.currency-swap { display: grid; width: 34px; height: 34px; place-items: center; margin-bottom: 2px; border: 1px solid var(--border); border-radius: 50%; color: var(--primary); background: var(--surface-secondary); cursor: pointer; }
+.currency-convert-button { min-height: 36px; }
+.currency-converter-result { display: flex; align-items: baseline; gap: 10px; margin-top: 16px; flex-wrap: wrap; color: var(--text-primary); }
+.currency-converter-result span { color: var(--text-muted); font-size: 11px; }
+.currency-converter-error { margin-top: 12px; color: var(--negative); font-size: 12px; }
+
 /* ── Charts ── */
 .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
 @media (max-width: 1000px) { .charts-grid { grid-template-columns: 1fr; } }
@@ -306,6 +363,20 @@ input:focus, select:focus {
   border-color: var(--primary); 
   background: var(--surface-hover); 
   box-shadow: 0 0 0 4px var(--primary-glow); 
+}
+
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .btn-primary { 
@@ -484,6 +555,11 @@ input:focus, select:focus {
 
 /* Large phones / small tablets (≤640px) */
 @media (max-width: 640px) {
+  .dashboard-header-tools { align-items: stretch; justify-content: flex-start; flex-direction: column; }
+  .dashboard-goal-badge { width: 100%; }
+  .dashboard-balance-card { min-height: 220px; padding: 24px 20px !important; }
+  .dashboard-balance-footer { align-items: flex-start; flex-direction: column; gap: 16px; }
+  .dashboard-balance-account { text-align: left; }
   .account-grid { grid-template-columns: 1fr; }
   .tx-head { display: none; }
   .tx-item {
@@ -621,6 +697,7 @@ input:focus, select:focus {
   overflow-y: auto;
 }
 .bottom-sheet.open { transform: translateY(0); }
+.bottom-sheet[hidden] { display: none !important; }
 
 /* Desktop: constrain sheet to right side so sidebar stays visible */
 @media (min-width: 901px) {
@@ -2775,6 +2852,7 @@ input:focus, select:focus {
 @media (max-width: 900px) {
   .page-content       { padding: 24px 18px calc(96px + env(safe-area-inset-bottom)); }
   .account-grid       { grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .dashboard-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   .summary-strip      { grid-template-columns: repeat(2, 1fr); }
   .profile-stats-grid { grid-template-columns: repeat(2, 1fr); }
   .portfolio-grid     { grid-template-columns: repeat(2, 1fr); }
@@ -2851,6 +2929,9 @@ input:focus, select:focus {
 
 /* ——— Mobile (≤640px) ——— */
 @media (max-width: 640px) {
+  .dashboard-kpi-grid { grid-template-columns: 1fr; }
+  .dashboard-kpi-grid .account-card { min-height: 0; padding: 24px; }
+  .dashboard-kpi-grid .account-amount { margin-top: 20px; }
   .page-content { padding: 18px 14px calc(96px + env(safe-area-inset-bottom)); }
   .card { padding: 20px; border-radius: 16px; }
 

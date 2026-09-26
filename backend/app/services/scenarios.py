@@ -17,6 +17,8 @@ def calculate_scenario(
     income_change_pct: Decimal = Decimal("0"),
     one_time_expense: Decimal = Decimal("0"),
     horizon_months: int = 1,
+    scenario_type: str = "category_reduction",
+    target_amount: Decimal = Decimal("0"),
 ) -> dict:
     """Calculate a transparent monthly what-if from observed transaction history."""
     dates = [tx.date for tx in transactions]
@@ -37,12 +39,20 @@ def calculate_scenario(
     projected_expenses = max(Decimal("0"), baseline_expenses - monthly_savings)
     baseline_net = baseline_income - baseline_expenses
     projected_net = projected_income - projected_expenses
+    required_monthly_saving = target_amount / Decimal(max(horizon_months, 1))
+    target_feasible = (
+        projected_net >= required_monthly_saving
+        if scenario_type == "savings_target" and target_amount > 0
+        else None
+    )
 
     return {
+        "scenario_type": scenario_type,
         "category": category,
         "reduction_pct": reduction_pct,
         "income_change_pct": income_change_pct,
         "one_time_expense": one_time_expense,
+        "target_amount": target_amount,
         "horizon_months": horizon_months,
         "period_start": min(dates) if dates else None,
         "period_end": max(dates) if dates else None,
@@ -58,5 +68,7 @@ def calculate_scenario(
         "projected_monthly_net": _money(projected_net),
         "first_month_net_after_one_time": _money(projected_net - one_time_expense),
         "horizon_net_change": _money((projected_net - baseline_net) * horizon_months - one_time_expense),
+        "required_monthly_saving": _money(required_monthly_saving),
+        "target_feasible": target_feasible,
         "data_quality": data_quality(transactions),
     }

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
@@ -21,11 +21,29 @@ class UserContext(BaseModel):
 class UserProfileIn(BaseModel):
     display_name: str | None = Field(default=None, max_length=128)
     avatar_url: str | None = None
-    currency_preference: str = Field(default="INR", pattern="^[A-Z]{3}$")
+    currency_preference: str | None = Field(default=None, pattern="^[A-Z]{3}$")
+    region: str | None = Field(default=None, pattern="^(IN|US|GB|CA|AU|SG|AE|JP|CH|CN|HK|OTHER)$")
+    income_pattern: str | None = Field(default=None, pattern="^(regular|irregular|mixed|not_sure)$")
+    pay_cycle: str | None = Field(default=None, pattern="^(weekly|biweekly|monthly|irregular)$")
+    risk_comfort: str | None = Field(default=None, pattern="^(conservative|balanced|aggressive|not_sure)$")
+    household_mode: str | None = Field(default=None, pattern="^(individual|shared)$")
+    recurring_tolerance: str | None = Field(default=None, pattern="^(strict|standard|flexible)$")
+    onboarding_completed: bool | None = None
+    cloud_ai_enabled: bool | None = None
+    insight_frequency: str | None = Field(default=None, pattern="^(off|important|daily|weekly)$")
+    quiet_hours_start: int | None = Field(default=None, ge=0, le=23)
+    quiet_hours_end: int | None = Field(default=None, ge=0, le=23)
+    proactive_daily_cap: int | None = Field(default=None, ge=0, le=20)
 
 
 class DataDeletionRequest(BaseModel):
     confirmation: str = Field(pattern="^DELETE$", description="Type DELETE to permanently erase account data")
+
+
+class BackupRestoreRequest(BaseModel):
+    encrypted_backup: str = Field(min_length=20)
+    confirmation: str = Field(pattern="^RESTORE$", description="Type RESTORE to import backup data")
+    dry_run: bool = False
 
 
 class UserProfileOut(BaseModel):
@@ -34,6 +52,19 @@ class UserProfileOut(BaseModel):
     display_name: str | None
     avatar_url: str | None
     currency_preference: str
+    region: str
+    income_pattern: str | None
+    pay_cycle: str
+    risk_comfort: str
+    household_mode: str
+    recurring_tolerance: str
+    onboarding_completed: bool
+    cloud_ai_enabled: bool
+    insight_frequency: str
+    quiet_hours_start: int
+    quiet_hours_end: int
+    proactive_daily_cap: int
+    obligations_reviewed_at: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -48,6 +79,34 @@ class ProfileStatsOut(BaseModel):
     budgets_count: int
 
 
+class ObligationsReviewIn(BaseModel):
+    confirmed: bool
+
+
+class UpcomingObligationOut(BaseModel):
+    description: str
+    category: str
+    due_date: date
+    amount: Decimal
+
+
+class DailyPositionOut(BaseModel):
+    as_of: date
+    month_end: date
+    currency: str
+    income: Decimal | None
+    committed_spend: Decimal | None
+    flexible_spend: Decimal | None
+    cash_available: Decimal | None
+    upcoming_obligations: list[UpcomingObligationOut]
+    reserve_remaining: Decimal | None
+    safe_to_spend_estimate: Decimal | None
+    status: str
+    reasons: list[str]
+    method: str
+    obligations_reviewed_at: datetime | None
+
+
 # ── Accounts ─────────────────────────────────────────────────────────────────
 
 
@@ -56,7 +115,10 @@ class AccountIn(BaseModel):
     account_type: str = Field(pattern="^(savings|current|credit|wallet|cash)$")
     institution: str | None = None
     balance: Decimal = Decimal("0")
-    currency: str = "INR"
+    currency: str = Field(default="INR", pattern="^[A-Z]{3}$")
+    credit_limit: Decimal | None = Field(default=None, ge=0)
+    minimum_payment: Decimal | None = Field(default=None, ge=0)
+    payment_due_date: date | None = None
 
 
 class AccountOut(AccountIn):
@@ -123,6 +185,26 @@ class TransactionOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SplitLineIn(BaseModel):
+    category: str = Field(min_length=1, max_length=64)
+    amount: Decimal = Field(gt=0)
+
+
+class SplitTransactionIn(BaseModel):
+    date: date
+    status: str = Field(default="posted", pattern="^(posted|pending|excluded)$")
+    amount: Decimal = Field(gt=0)
+    description: str = Field(min_length=1, max_length=500)
+    account_id: str | None = None
+    client_request_id: str | None = Field(default=None, pattern="^[0-9a-fA-F-]{36}$")
+    lines: list[SplitLineIn] = Field(min_length=2, max_length=10)
+
+
+class SplitTransactionOut(BaseModel):
+    group_id: str
+    items: list[TransactionOut]
 
 
 class PaginatedTransactions(BaseModel):
@@ -242,6 +324,7 @@ class ImportJobOut(BaseModel):
     processed_rows: int = 0
     cancel_requested: bool = False
     excluded_row_fingerprints: str | None = None
+    review_overrides: str | None = None
     row_count: int | None = None
     error_message: str | None = None
     created_at: datetime
@@ -263,6 +346,13 @@ class ImportPreviewOut(BaseModel):
 class AdvisorRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     conversation_id: str | None = None
+    answer_mode: Literal["quick", "math", "plan"] = "quick"
+
+
+class AdvisorActionRequest(BaseModel):
+    action_type: str = Field(pattern="^(review_evidence|review_accounts|add_or_import|enable_cloud_ai|review_budgets|review_goals)$")
+    transaction_ids: list[str] = Field(default_factory=list, max_length=100)
+    conversation_id: str | None = Field(default=None, max_length=36)
 
 
 class ConversationOut(BaseModel):
@@ -317,6 +407,9 @@ class ProactiveInsight(BaseModel):
     action: str | None = None
     action_type: str | None = None
     data_quality: dict[str, Any] = Field(default_factory=dict)
+    analysis: dict[str, Any] = Field(default_factory=dict)
+    recommended_action: str | None = None
+    status: str = "new"
 
 
 class InsightFeedbackRequest(BaseModel):
@@ -355,18 +448,22 @@ class SummaryOut(BaseModel):
 
 
 class ScenarioRequest(BaseModel):
+    scenario_type: str = Field(default="category_reduction", pattern="^(category_reduction|purchase|income_shock|savings_target)$")
     category: str | None = Field(default=None, max_length=128)
     reduction_pct: Decimal = Field(default=Decimal("0"), ge=0, le=100)
     income_change_pct: Decimal = Field(default=Decimal("0"), ge=-100, le=100)
     one_time_expense: Decimal = Field(default=Decimal("0"), ge=0)
+    target_amount: Decimal = Field(default=Decimal("0"), ge=0)
     horizon_months: int = Field(default=1, ge=1, le=12)
 
 
 class ScenarioOut(BaseModel):
+    scenario_type: str = "category_reduction"
     category: str | None
     reduction_pct: Decimal
     income_change_pct: Decimal
     one_time_expense: Decimal
+    target_amount: Decimal
     horizon_months: int
     period_start: date | None
     period_end: date | None
@@ -382,6 +479,8 @@ class ScenarioOut(BaseModel):
     projected_monthly_net: Decimal
     first_month_net_after_one_time: Decimal
     horizon_net_change: Decimal
+    required_monthly_saving: Decimal
+    target_feasible: bool | None
     data_quality: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -485,11 +584,19 @@ class HoldingOut(HoldingIn):
 
 
 class CreditHealthOut(BaseModel):
-    score: int
-    grade: str
-    color: str
-    breakdown: dict[str, Any]
-    tips: list[str]
+    status: str
+    currency: str
+    period_start: str | None
+    period_end: str | None
+    transaction_count: int
+    income: Decimal | None
+    expenses: Decimal | None
+    net: Decimal | None
+    savings_rate_pct: Decimal | None
+    warnings: list[str]
+    credit_assessment: str
+    credit_reason: str
+    credit_readiness: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Benchmarks ────────────────────────────────────────────────────────────────
@@ -497,18 +604,15 @@ class CreditHealthOut(BaseModel):
 
 class BenchmarkCategory(BaseModel):
     category: str
-    your_spend: float
-    percentile: int
-    status: str
-    label: str
-    benchmark_median: int
-    benchmark_p75: int
+    your_spend: Decimal
 
 
 class BenchmarkOut(BaseModel):
-    overall_percentile: int
-    total_spending: float
-    benchmark_median: int
+    comparison_status: str
+    reason: str
+    currency: str
+    period_start: str | None
+    period_end: str | None
+    transaction_count: int
+    total_spending: Decimal | None
     categories: list[BenchmarkCategory]
-    sample_size: str
-    methodology: str

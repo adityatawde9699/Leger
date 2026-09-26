@@ -1,6 +1,7 @@
 import React from "react";
-import { apiFetch, money, EXPENSE_CATEGORIES, CATEGORY_COLORS, paletteColor } from "../lib";
+import { apiFetch, compactMoney, money, EXPENSE_CATEGORIES, CATEGORY_COLORS, paletteColor } from "../lib";
 import { useToast } from "../components/ui";
+import CurrencyMismatchNotice from "../components/CurrencyMismatchNotice";
 import { AlertTriangle, TrendingUp, TrendingDown, BarChart3, Activity, Zap } from "lucide-react";
 import {
   BarChart, Bar, Cell, AreaChart, Area, LineChart, Line,
@@ -30,17 +31,39 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
-export default function Analytics() {
+export default function Analytics({ onNavigate }) {
   const toast = useToast();
   const [timeRange,  setTimeRange]  = React.useState("3m");
   const [summary,    setSummary]    = React.useState(null);
   const [anomalies,  setAnomalies]  = React.useState([]);
   const [forecast,   setForecast]   = React.useState(null);
+  const [runway,     setRunway]     = React.useState(null);
+  const [leakage,    setLeakage]    = React.useState(null);
   const [comparison, setComparison] = React.useState(null);
+  const [comparisonMode, setComparisonMode] = React.useState("mom");
   const [loading,    setLoading]    = React.useState(true);
   const [scenario,   setScenario]   = React.useState(null);
-  const [scenarioForm, setScenarioForm] = React.useState({ category: "Dining", reduction_pct: 20, income_change_pct: 0, one_time_expense: 0, horizon_months: 1 });
+  const [anomalyFeedback, setAnomalyFeedback] = React.useState({});
+  const [scenarioForm, setScenarioForm] = React.useState({ scenario_type: "category_reduction", category: "Dining", reduction_pct: 20, income_change_pct: 0, one_time_expense: 0, target_amount: 0, horizon_months: 1 });
   const [scenarioLoading, setScenarioLoading] = React.useState(false);
+
+  const sendAnomalyFeedback = async (anomaly, feedback) => {
+    if (!anomaly.id || anomalyFeedback[anomaly.id]) return;
+    setAnomalyFeedback((current) => ({ ...current, [anomaly.id]: feedback }));
+    try {
+      await apiFetch("/insights/feedback", {
+        method: "POST",
+        body: JSON.stringify({ insight_id: anomaly.id, feedback }),
+      });
+    } catch (error) {
+      setAnomalyFeedback((current) => {
+        const next = { ...current };
+        delete next[anomaly.id];
+        return next;
+      });
+      toast(error.message, "error");
+    }
+  };
 
   React.useEffect(() => {
     setLoading(true);
@@ -48,15 +71,19 @@ export default function Analytics() {
       apiFetch(`/summary?range=${timeRange}`),
       apiFetch(`/analytics/anomalies?range=${timeRange}`).catch(() => []),
       apiFetch(`/analytics/forecast`).catch(() => null),
-      apiFetch(`/analytics/compare?days=30`).catch(() => null),
-    ]).then(([s, a, f, c]) => {
+      apiFetch(`/analytics/runway?horizon_months=3`).catch(() => null),
+      apiFetch(`/analytics/leakage`).catch(() => null),
+      apiFetch(`/analytics/compare?comparison=${comparisonMode}`).catch(() => null),
+    ]).then(([s, a, f, r, l, c]) => {
       setSummary(s);
       setAnomalies(Array.isArray(a) ? a : []);
       setForecast(f);
+      setRunway(r);
+      setLeakage(l);
       setComparison(c);
     }).catch(e => toast(e.message, "error"))
       .finally(() => setLoading(false));
-  }, [timeRange]);
+  }, [timeRange, comparisonMode]);
 
   if (loading) {
     return (
@@ -70,6 +97,10 @@ export default function Analytics() {
         </div>
       </div>
     );
+  }
+
+  if (summary?.data_quality?.currency_mismatch_count > 0) {
+    return <CurrencyMismatchNotice title="Analytics" onNavigate={onNavigate} />;
   }
 
   // ── Data preparation ────────────────────────────────────────────────────────
@@ -225,13 +256,17 @@ export default function Analytics() {
       <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--primary)" }}>
         <div className="chart-card-header">
           <div>
-            <div className="chart-title">Last 30 days vs previous 30 days</div>
+            <div className="chart-title">{comparisonMode === "yoy" ? "This month vs same month last year" : "This month vs previous month"}</div>
             <div className="chart-subtitle">
               {comparison?.status === "ready"
                 ? `${comparison.current.period.start} → ${comparison.current.period.end} compared with ${comparison.previous.period.start} → ${comparison.previous.period.end}.`
                 : comparison?.data_quality?.warnings?.join(" · ") || "Not enough history for a trustworthy comparison."}
             </div>
           </div>
+          <select className="premium-select" value={comparisonMode} onChange={(e) => setComparisonMode(e.target.value)} aria-label="Comparison period">
+            <option value="mom">Month over month</option>
+            <option value="yoy">Year over year</option>
+          </select>
         </div>
         {comparison?.status === "ready" ? (
           <div className="account-grid" style={{ marginBottom: 0 }}>
@@ -252,6 +287,100 @@ export default function Analytics() {
         )}
       </div>
 
+      {/* Fixed versus flexible spending from confirmed obligation evidence. */}
+      {summary?.analysis?.fixed_flexible && (
+        <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--warning)" }}>
+          <div className="chart-card-header">
+            <div>
+              <div className="chart-title">Committed vs flexible spending</div>
+              <div className="chart-subtitle">Only confirmed recurring rules count as committed; unmatched transactions stay flexible.</div>
+            </div>
+          </div>
+          {summary.analysis.fixed_flexible.status === "insufficient_data" ? (
+            <div className="empty-state" style={{ padding: "8px 0 0" }}>
+              {summary.analysis.fixed_flexible.data_quality.warnings.join(" ")}
+            </div>
+          ) : (
+            <>
+              <div className="account-grid" style={{ marginBottom: 0 }}>
+                {[
+                  ["Committed", summary.analysis.fixed_flexible.fixed_amount, "var(--warning)"],
+                  ["Flexible", summary.analysis.fixed_flexible.flexible_amount, "var(--info)"],
+                ].map(([label, value, color]) => (
+                  <div key={label} style={{ padding: "4px 0" }}>
+                    <div className="account-label">{label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color }}>{money(value)}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+                {summary.analysis.fixed_flexible.confirmed_rule_count} confirmed obligation rule{summary.analysis.fixed_flexible.confirmed_rule_count === 1 ? "" : "s"}; amounts link back to posted transaction evidence.
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--info)" }}>
+        <div className="chart-card-header">
+          <div>
+            <div className="chart-title">Cash-flow runway</div>
+            <div className="chart-subtitle">A deterministic projection from reconciled cash, posted spending, and confirmed obligations.</div>
+          </div>
+        </div>
+        {runway?.status !== "ready" ? (
+          <div className="empty-state" style={{ padding: "8px 0 0" }}>
+            {runway?.data_quality?.warnings?.join(" ") || "Reconcile a cash account and add posted history before relying on runway."}
+          </div>
+        ) : (
+          <>
+            <div className="account-grid" style={{ marginBottom: 0 }}>
+              {[
+                ["Starting reconciled cash", runway.starting_cash, "var(--text-primary)"],
+                ["Monthly obligations", runway.fixed_monthly_obligations, "var(--warning)"],
+                ["Monthly flexible spend", runway.flexible_monthly_spend, "var(--info)"],
+              ].map(([label, value, color]) => (
+                <div key={label} style={{ padding: "4px 0" }}>
+                  <div className="account-label">{label}</div>
+                  <div style={{ fontSize: 19, fontWeight: 700, color }}>{money(value)}</div>
+                </div>
+              ))}
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
+              Income assumption: {money(runway.income_assumption.low)}–{money(runway.income_assumption.high)} per month. {runway.income_assumption.method}. Future income is not guaranteed.
+            </div>
+            {runway.data_quality.warnings?.length > 0 && (
+              <div style={{ color: "var(--warning)", fontSize: 12, marginTop: 8 }}>{runway.data_quality.warnings.join(" ")}</div>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--warning)" }}>
+        <div className="chart-card-header">
+          <div>
+            <div className="chart-title">Review possible leakage</div>
+            <div className="chart-subtitle">Candidates from your own transaction and confirmed recurring-payment history.</div>
+          </div>
+        </div>
+        {leakage?.status !== "ready" ? (
+          <div className="empty-state" style={{ padding: "8px 0 0" }}>
+            {leakage?.data_quality?.warnings?.join(" ") || "Add posted history before checking for possible leakage."}
+          </div>
+        ) : leakage.items?.length ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {leakage.items.slice(0, 5).map((item) => (
+              <div key={item.id} style={{ padding: "10px 0", borderTop: "1px solid var(--border)" }}>
+                <div style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 13 }}>{item.claim}</div>
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{item.recommended_action} Confidence: {item.confidence}.</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state" style={{ padding: "8px 0 0" }}>Nothing notable in the available history. Ledger will show candidates only when evidence supports a review.</div>
+        )}
+      </div>
+
       {/* Deterministic scenario planner */}
       <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--info)" }}>
         <div className="chart-card-header">
@@ -262,6 +391,15 @@ export default function Analytics() {
         </div>
         <form onSubmit={runScenario}>
           <div className="form-grid-2">
+            <div className="form-field">
+              <label className="form-label">Scenario type</label>
+              <select value={scenarioForm.scenario_type} onChange={e => setScenarioForm({ ...scenarioForm, scenario_type: e.target.value })}>
+                <option value="category_reduction">Reduce a category</option>
+                <option value="purchase">Plan a one-time purchase</option>
+                <option value="income_shock">Model an income change</option>
+                <option value="savings_target">Reach a savings target</option>
+              </select>
+            </div>
             <div className="form-field">
               <label className="form-label">Category to reduce</label>
               <select value={scenarioForm.category} onChange={e => setScenarioForm({ ...scenarioForm, category: e.target.value })}>
@@ -283,6 +421,11 @@ export default function Analytics() {
               <input type="number" min="0" step="100" value={scenarioForm.one_time_expense}
                 onChange={e => setScenarioForm({ ...scenarioForm, one_time_expense: e.target.value })} />
             </div>
+            {scenarioForm.scenario_type === "savings_target" && <div className="form-field">
+              <label className="form-label">Savings target</label>
+              <input type="number" min="0" step="100" value={scenarioForm.target_amount}
+                onChange={e => setScenarioForm({ ...scenarioForm, target_amount: e.target.value })} />
+            </div>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 4 }}>
             <button type="submit" className="btn-primary" disabled={scenarioLoading}>{scenarioLoading ? "Calculating…" : "Calculate scenario"}</button>
@@ -313,6 +456,7 @@ export default function Analytics() {
             </div>
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 12 }}>
               Category baseline: {money(scenario.category_monthly_spend)}/month · First month after one-time expense: {money(scenario.first_month_net_after_one_time)} · Observed coverage: {scenario.data_quality?.coverage || "unknown"}.
+              {scenario.scenario_type === "savings_target" && ` Required monthly saving: ${money(scenario.required_monthly_saving)} · Target ${scenario.target_feasible ? "appears feasible" : "needs a larger margin"} based on observed history.`}
             </div>
           </div>
         )}
@@ -342,7 +486,7 @@ export default function Analytics() {
               <CartesianGrid strokeDasharray="3 3" stroke="var(--surface-secondary)" vertical={false} />
               <XAxis dataKey="month" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} width={62}
-                tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0)+"k" : v}`} />
+                tickFormatter={compactMoney} />
               <Tooltip content={<ChartTooltip />} />
               <Legend iconSize={8} iconType="circle" wrapperStyle={{ fontSize: 12 }} />
               <Area dataKey="Income"   name="Income"   stroke="var(--positive)" fill="url(#gAnalyticsInc)" strokeWidth={2.5} dot={false} />
@@ -457,7 +601,7 @@ export default function Analytics() {
               <CartesianGrid strokeDasharray="3 3" stroke="var(--surface-secondary)" vertical={false} />
               <XAxis dataKey="cat" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} width={64}
-                tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0)+"k" : v}`} />
+                tickFormatter={compactMoney} />
               <Tooltip content={<ChartTooltip />} />
               <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="Current"     fill="var(--text-muted)" radius={[4,4,0,0]} />
@@ -529,6 +673,11 @@ export default function Analytics() {
                     {a.category} · {money(a.amount)} · {a.date}
                     {a.expected_range && ` · Normal: ${money(a.expected_range.min)}–${money(a.expected_range.max)}`}
                   </div>
+                  {a.analysis?.method && (
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
+                      Method: {a.analysis.method} · {a.recommended_action}
+                    </div>
+                  )}
                 </div>
                 <span style={{
                   fontSize: 10, padding: "2px 8px", borderRadius: 8, fontWeight: 800,
@@ -537,6 +686,19 @@ export default function Analytics() {
                 }}>
                   {a.severity}
                 </span>
+                <button className="btn-link" type="button" onClick={() => onNavigate?.("transactions")} style={{ fontSize: 10, padding: 0 }}>
+                  Review transaction
+                </button>
+                <div style={{ display: "flex", gap: 4, flexDirection: "column" }}>
+                  {anomalyFeedback[a.id] ? (
+                    <span className="muted" style={{ fontSize: 10 }}>Recorded</span>
+                  ) : (
+                    <>
+                      <button className="btn-secondary" style={{ padding: "3px 6px", fontSize: 10 }} onClick={() => sendAnomalyFeedback(a, "helpful")}>Useful</button>
+                      <button className="btn-secondary" style={{ padding: "3px 6px", fontSize: 10 }} onClick={() => sendAnomalyFeedback(a, "inaccurate")}>Not accurate</button>
+                    </>
+                  )}
+                </div>
               </div>
             ))}
             {anomalies.length > 10 && (
@@ -568,7 +730,7 @@ export default function Analytics() {
             >
               <CartesianGrid strokeDasharray="3 3" stroke="var(--surface-secondary)" horizontal={false} />
               <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false}
-                tickFormatter={v => `₹${v >= 1000 ? (v/1000).toFixed(0)+"k" : v}`} />
+                tickFormatter={compactMoney} />
               <YAxis type="category" dataKey="cat" tick={{ fontSize: 12, fill: "var(--text-secondary)", fontWeight: 500 }} axisLine={false} tickLine={false} width={90} />
               <Tooltip
                 formatter={v => [money(v), "Spend"]}

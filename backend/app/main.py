@@ -7,7 +7,9 @@ import sys
 import time
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
+import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
@@ -15,7 +17,7 @@ from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy import case, inspect, text
+from sqlalchemy import case, func, inspect, or_, text
 from sqlalchemy.orm import Session, selectinload
 
 from .auth import get_current_user
@@ -32,7 +34,9 @@ from .models import (
     Holding,
     ImportJob,
     MerchantAlias,
+    Notification,
     Portfolio,
+    ReceiptAttachment,
     RecurringRule,
     Transaction,
     User,
@@ -42,8 +46,10 @@ from .models import (
 from .schemas import (
     AccountIn,
     AccountOut,
+    AdvisorActionRequest,
     AdvisorRequest,
     AuditLogOut,
+    BackupRestoreRequest,
     BenchmarkOut,
     BudgetIn,
     BudgetOut,
@@ -53,6 +59,7 @@ from .schemas import (
     CategorizeSingleResponse,
     ConversationOut,
     CreditHealthOut,
+    DailyPositionOut,
     DataDeletionRequest,
     GoalIn,
     GoalOut,
@@ -65,6 +72,7 @@ from .schemas import (
     MerchantAliasIn,
     MerchantAliasOut,
     MessageOut,
+    ObligationsReviewIn,
     PaginatedTransactions,
     PortfolioIn,
     PortfolioOut,
@@ -78,6 +86,8 @@ from .schemas import (
     ScenarioRequest,
     SmsParseRequest,
     SmsWebhookRequest,
+    SplitTransactionIn,
+    SplitTransactionOut,
     TransactionIn,
     TransactionOut,
     UserCategoryIn,
@@ -88,35 +98,54 @@ from .schemas import (
     WebhookIn,
     WebhookOut,
 )
+from .services.advisor_contract import ADVISOR_RESPONSE_INSTRUCTION, validate_advisor_response
 from .services.advisor_facts import deterministic_answer
+from .services.advisor_tools import (
+    TOOL_SELECTION_SYSTEM,
+    execute_tool_request,
+    parse_tool_request,
+    select_advisor_tools,
+)
 from .services.ai_router import ai_router
 from .services.anomaly_detector import detect_anomalies
 from .services.audit import get_audit_trail, log_event
 from .services.auto_categorizer import categorize_batch, categorize_single
+from .services.backups import decrypt_backup, encrypt_backup
 from .services.benchmarks import generate_benchmarks
 from .services.bill_negotiator import analyze_bills
 from .services.categorization_learner import get_user_overrides, record_correction
 from .services.categorizer import CATEGORIES
 from .services.credit_health import compute_credit_health
+from .services.currency import format_amount
+from .services.daily_position import calculate_daily_position
+from .services.exchange_rates import convert_reference_rate, get_reference_rates, validate_currency
 from .services.export import export_csv, export_json, export_tally_xml
+from .services.feedback import aggregate_insight_feedback
 from .services.forecaster import budget_breach_warnings, generate_forecast
 from .services.gst import generate_gst_report
 from .services.insights import (
     SYSTEM_PROMPT,
     build_advisor_context,
     build_analysis_object,
+    compare_calendar_periods,
     compare_periods,
+    compute_insight_claims,
     compute_insights,
     data_quality,
     dynamic_budget_suggestions,
     monthly_summary,
     recurring_payments,
 )
+from .services.leakage import detect_leakage
+from .services.notification_policy import apply_notification_policy
 from .services.portfolio_analytics import compute_portfolio_analytics
-from .services.proactive_insights import generate_proactive_insights
+from .services.privacy import purge_expired_conversations, redact_sensitive_text, safe_conversation_memory
+from .services.proactive_insights import apply_insight_frequency, generate_proactive_insights
 from .services.prompt_guard import build_safe_messages, sanitize_user_input
 from .services.receipt_ocr import parse_receipt_image
+from .services.runway import calculate_runway
 from .services.scenarios import calculate_scenario
+from .services.shared_cache import SharedTTLCache
 from .services.sms_parser import parse_sms
 from .services.statements import parse_csv, parse_excel, parse_pdf
 from .services.telemetry import record_telemetry
@@ -168,7 +197,19 @@ class TTLCache:
             del self._cache[k]
 
 
-llm_cache = TTLCache(maxsize=512, default_ttl=settings.llm_cache_ttl_seconds)
+llm_cache = SharedTTLCache(
+    TTLCache(maxsize=512, default_ttl=settings.llm_cache_ttl_seconds),
+    redis_url=settings.redis_url,
+)
+
+
+def _user_cache_version(db: Session, user_id: str) -> str:
+    """Return a DB-visible mutation version so separate workers avoid stale L1 values."""
+    count, latest = db.query(
+        func.count(AuditLog.id),
+        func.max(AuditLog.created_at),
+    ).filter(AuditLog.user_id == user_id).one()
+    return f"{count}:{latest or 'none'}"
 
 
 # ── New request schemas ───────────────────────────────────────────────────────
@@ -196,10 +237,46 @@ if settings.run_db_bootstrap:
         inspector = inspect(engine)
         if inspector.has_table("users"):
             columns = [col["name"] for col in inspector.get_columns("users")]
-            if "avatar_url" not in columns:
-                with engine.begin() as conn:
+            with engine.begin() as conn:
+                if "avatar_url" not in columns:
                     conn.execute(text("ALTER TABLE users ADD COLUMN avatar_url TEXT"))
                     logger.info("Migrated: Added avatar_url to users table.")
+                if "region" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN region VARCHAR(16) NOT NULL DEFAULT 'IN'"))
+                    logger.info("Migrated: Added users.region.")
+                if "income_pattern" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN income_pattern VARCHAR(16)"))
+                    logger.info("Migrated: Added users.income_pattern.")
+                if "pay_cycle" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN pay_cycle VARCHAR(16) NOT NULL DEFAULT 'monthly'"))
+                    logger.info("Migrated: Added users.pay_cycle.")
+                if "risk_comfort" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN risk_comfort VARCHAR(16) NOT NULL DEFAULT 'not_sure'"))
+                    logger.info("Migrated: Added users.risk_comfort.")
+                if "household_mode" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN household_mode VARCHAR(16) NOT NULL DEFAULT 'individual'"))
+                    logger.info("Migrated: Added users.household_mode.")
+                if "recurring_tolerance" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN recurring_tolerance VARCHAR(16) NOT NULL DEFAULT 'standard'"))
+                    logger.info("Migrated: Added users.recurring_tolerance.")
+                if "onboarding_completed" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE"))
+                    logger.info("Migrated: Added users.onboarding_completed.")
+                if "cloud_ai_enabled" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN cloud_ai_enabled BOOLEAN NOT NULL DEFAULT TRUE"))
+                    logger.info("Migrated: Added users.cloud_ai_enabled.")
+                if "insight_frequency" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN insight_frequency VARCHAR(16) NOT NULL DEFAULT 'daily'"))
+                    logger.info("Migrated: Added users.insight_frequency.")
+                if "quiet_hours_start" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN quiet_hours_start INTEGER NOT NULL DEFAULT 22"))
+                if "quiet_hours_end" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN quiet_hours_end INTEGER NOT NULL DEFAULT 7"))
+                if "proactive_daily_cap" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN proactive_daily_cap INTEGER NOT NULL DEFAULT 3"))
+                if "obligations_reviewed_at" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN obligations_reviewed_at TIMESTAMP"))
+                    logger.info("Migrated: Added users.obligations_reviewed_at.")
         if inspector.has_table("import_jobs"):
             columns = [col["name"] for col in inspector.get_columns("import_jobs")]
             with engine.begin() as conn:
@@ -229,6 +306,9 @@ if settings.run_db_bootstrap:
                 if "excluded_row_fingerprints" not in columns:
                     conn.execute(text("ALTER TABLE import_jobs ADD COLUMN excluded_row_fingerprints TEXT"))
                     logger.info("Migrated: Added import_jobs.excluded_row_fingerprints.")
+                if "review_overrides" not in columns:
+                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN review_overrides TEXT"))
+                    logger.info("Migrated: Added import_jobs.review_overrides.")
         if inspector.has_table("accounts"):
             columns = [col["name"] for col in inspector.get_columns("accounts")]
             with engine.begin() as conn:
@@ -241,6 +321,15 @@ if settings.run_db_bootstrap:
                 if "reconciliation_note" not in columns:
                     conn.execute(text("ALTER TABLE accounts ADD COLUMN reconciliation_note TEXT"))
                     logger.info("Migrated: Added accounts.reconciliation_note.")
+                if "credit_limit" not in columns:
+                    conn.execute(text("ALTER TABLE accounts ADD COLUMN credit_limit NUMERIC(14,2)"))
+                    logger.info("Migrated: Added accounts.credit_limit.")
+                if "minimum_payment" not in columns:
+                    conn.execute(text("ALTER TABLE accounts ADD COLUMN minimum_payment NUMERIC(14,2)"))
+                    logger.info("Migrated: Added accounts.minimum_payment.")
+                if "payment_due_date" not in columns:
+                    conn.execute(text("ALTER TABLE accounts ADD COLUMN payment_due_date DATE"))
+                    logger.info("Migrated: Added accounts.payment_due_date.")
         if inspector.has_table("transactions"):
             columns = [col["name"] for col in inspector.get_columns("transactions")]
             if "status" not in columns:
@@ -260,18 +349,20 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _import_recovery_task: asyncio.Task | None = None
+_maintenance_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def start_import_recovery() -> None:
     """Start the lightweight database-backed import worker."""
-    global _import_recovery_task
+    global _import_recovery_task, _maintenance_task
     _import_recovery_task = asyncio.create_task(_import_recovery_loop())
+    _maintenance_task = asyncio.create_task(_maintenance_loop())
 
 
 @app.on_event("shutdown")
 async def stop_import_recovery() -> None:
-    global _import_recovery_task
+    global _import_recovery_task, _maintenance_task
     if _import_recovery_task:
         _import_recovery_task.cancel()
         try:
@@ -279,6 +370,13 @@ async def stop_import_recovery() -> None:
         except asyncio.CancelledError:
             pass
         _import_recovery_task = None
+    if _maintenance_task:
+        _maintenance_task.cancel()
+        try:
+            await _maintenance_task
+        except asyncio.CancelledError:
+            pass
+        _maintenance_task = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -311,6 +409,28 @@ def _statement_row_fingerprint(row: dict, account_id: str | None = None) -> str:
     description = " ".join(str(row.get("description", "")).casefold().split())
     raw = f"statement:v2|{account_id or 'unassigned'}|{row_date}|{row.get('type', 'expense')}|{row['amount']}|{description}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _apply_import_review_overrides(
+    rows: list[dict],
+    review_overrides: dict,
+    account_id: str | None,
+) -> None:
+    """Apply user-confirmed inferred fields after model inference, in place."""
+    for row in rows:
+        original_fingerprint = _statement_row_fingerprint(row, account_id)
+        override = review_overrides.get(original_fingerprint, {})
+        if not isinstance(override, dict):
+            continue
+        category = override.get("category")
+        if isinstance(category, str) and category.strip() and len(category.strip()) <= 64:
+            row["category"] = category.strip()
+        merchant = override.get("merchant_normalized")
+        if isinstance(merchant, str) and len(merchant.strip()) <= 128:
+            row["merchant_normalized"] = merchant.strip() or None
+        tx_type = override.get("type")
+        if tx_type in {"income", "expense", "refund", "reimbursement", "transfer"}:
+            row["type"] = tx_type
 
 
 def _merchant_key(value: str | None) -> str:
@@ -476,15 +596,15 @@ def _wants_overspending(question: str) -> bool:
     return "overspending" in text or "spending most" in text or "spent most" in text or "most spend" in text
 
 
-def _format_transaction(tx: Transaction) -> str:
+def _format_transaction(tx: Transaction, currency: str = "INR") -> str:
     direction = {"income": "income", "expense": "expense", "refund": "refund", "transfer": "transfer"}.get(tx.type, tx.type)
     return (
-        f"Your latest transaction is {direction} of INR {tx.amount} on {tx.date.isoformat()} "
+        f"Your latest transaction is {direction} of {format_amount(tx.amount, currency)} on {tx.date.isoformat()} "
         f"for {tx.description} in {tx.category}."
     )
 
 
-def _format_overspending(transactions: list[Transaction]) -> str:
+def _format_overspending(transactions: list[Transaction], currency: str = "INR") -> str:
     from collections import defaultdict
 
     totals = defaultdict(lambda: {"amount": 0, "count": 0})
@@ -498,11 +618,11 @@ def _format_overspending(transactions: list[Transaction]) -> str:
         return "No expense transactions were found for this signed-in account."
     ranked = sorted(totals.items(), key=lambda item: item[1]["amount"], reverse=True)
     top = ranked[0]
-    runners = ", ".join(f"{cat}: INR {data['amount']:.0f}" for cat, data in ranked[1:4])
+    runners = ", ".join(f"{cat}: {format_amount(data['amount'], currency)}" for cat, data in ranked[1:4])
     extra = f" Next highest: {runners}." if runners else ""
     period = f" from {min(dates).isoformat()} to {max(dates).isoformat()}" if dates else ""
     return (
-        f"You are spending most{period} in {top[0]}: INR {top[1]['amount']:.0f} "
+        f"You are spending most{period} in {top[0]}: {format_amount(top[1]['amount'], currency)} "
         f"across {top[1]['count']} transactions.{extra}"
     )
 
@@ -541,7 +661,44 @@ def health():
     return {"ok": True, "version": "1.4.0"}
 
 
+@app.get("/currency/convert")
+async def currency_convert(
+    amount: Decimal = Query(..., ge=0, le=Decimal("1000000000000")),
+    base: str = Query(..., min_length=3, max_length=3),
+    quote: str = Query(..., min_length=3, max_length=3),
+):
+    """Convert using a dated public reference rate without changing ledger data."""
+    try:
+        return await convert_reference_rate(amount, base, quote)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Reference exchange rate unavailable") from exc
+
+
+@app.get("/currency/rates")
+async def currency_rates(base: str = Query(..., min_length=3, max_length=3)):
+    """Return dated public reference rates for display-only conversion."""
+    try:
+        return await get_reference_rates(base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Reference exchange rate unavailable") from exc
+
+
 # ── Profile ───────────────────────────────────────────────────────────────────
+def _relevant_account_currencies(db: Session, user_id: str) -> list[str]:
+    linked_account_ids = db.query(Transaction.account_id).filter(
+        Transaction.user_id == user_id,
+        Transaction.account_id.isnot(None),
+    )
+    return [currency for (currency,) in db.query(Account.currency).filter(
+        Account.user_id == user_id,
+        or_(Account.is_active.is_(True), Account.id.in_(linked_account_ids)),
+    ).all()]
+
+
 @app.get("/profile", response_model=UserProfileOut)
 def get_profile(
     user: UserContext = Depends(get_current_user),
@@ -566,9 +723,35 @@ def update_profile(
         db_user.display_name = payload.display_name.strip() or None
     if payload.avatar_url is not None:
         db_user.avatar_url = payload.avatar_url
-    db_user.currency_preference = payload.currency_preference
+    if payload.currency_preference is not None:
+        db_user.currency_preference = payload.currency_preference
+    if payload.region is not None:
+        db_user.region = payload.region
+    if payload.income_pattern is not None:
+        db_user.income_pattern = payload.income_pattern
+    if payload.pay_cycle is not None:
+        db_user.pay_cycle = payload.pay_cycle
+    if payload.risk_comfort is not None:
+        db_user.risk_comfort = payload.risk_comfort
+    if payload.household_mode is not None:
+        db_user.household_mode = payload.household_mode
+    if payload.recurring_tolerance is not None:
+        db_user.recurring_tolerance = payload.recurring_tolerance
+    if payload.onboarding_completed is not None:
+        db_user.onboarding_completed = payload.onboarding_completed
+    if payload.cloud_ai_enabled is not None:
+        db_user.cloud_ai_enabled = payload.cloud_ai_enabled
+    if payload.insight_frequency is not None:
+        db_user.insight_frequency = payload.insight_frequency
+    if payload.quiet_hours_start is not None:
+        db_user.quiet_hours_start = payload.quiet_hours_start
+    if payload.quiet_hours_end is not None:
+        db_user.quiet_hours_end = payload.quiet_hours_end
+    if payload.proactive_daily_cap is not None:
+        db_user.proactive_daily_cap = payload.proactive_daily_cap
     db.commit()
     db.refresh(db_user)
+    llm_cache.invalidate_user(user.id)
     logger.info("profile.updated user=%s", user.id)
     return db_user
 
@@ -749,6 +932,16 @@ def create_recurring_rule(
     values = payload.model_dump()
     evidence = _validated_evidence_ids(db, user.id, values.pop("evidence_transaction_ids"))
     confirmed = values.get("confirmed", False)
+    if confirmed and evidence:
+        existing_rules = db.query(RecurringRule).filter(
+            RecurringRule.user_id == user.id, RecurringRule.description == values["description"],
+            RecurringRule.category == values["category"], RecurringRule.confirmed.is_(True),
+        ).all()
+        for existing in existing_rules:
+            if json.loads(existing.evidence_transaction_ids or "[]") == evidence:
+                if existing.average_amount != values["average_amount"] or existing.cadence != values["cadence"]:
+                    raise HTTPException(status_code=409, detail="Recurring evidence was already used with different terms")
+                return _recurring_payload(existing)
     rule = RecurringRule(user_id=user.id, **values, evidence_transaction_ids=json.dumps(evidence), confirmed_at=datetime.now(UTC) if confirmed else None)
     db.add(rule)
     db.flush()
@@ -860,6 +1053,23 @@ def create_transaction(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if payload.source_ref and payload.source_ref.startswith("offline:"):
+        existing = db.query(Transaction).filter(
+            Transaction.user_id == user.id, Transaction.source_ref == payload.source_ref
+        ).first()
+        if existing:
+            if any((
+                existing.date != payload.date,
+                existing.type != payload.type,
+                existing.status != payload.status,
+                existing.category != payload.category,
+                existing.amount != payload.amount,
+                existing.description != payload.description,
+                existing.account_id != payload.account_id,
+                existing.source != payload.source,
+            )):
+                raise HTTPException(status_code=409, detail="Offline request ID was already used for a different transaction")
+            return existing
     if payload.account_id:
         account = db.get(Account, payload.account_id)
         if not account or account.user_id != user.id or not account.is_active:
@@ -883,6 +1093,63 @@ def create_transaction(
     db.refresh(tx)
     logger.info("transaction.created user=%s id=%s amount=%s balance=%s", user.id, tx.id, tx.amount, tx.running_balance)
     return tx
+
+
+@app.post("/transactions/split", response_model=SplitTransactionOut, status_code=201)
+def create_split_transaction(
+    payload: SplitTransactionIn,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Atomically record one purchase across multiple categories, without double-counting it."""
+    cent = Decimal("0.01")
+    amounts = [payload.amount, *(line.amount for line in payload.lines)]
+    if any(amount != amount.quantize(cent) for amount in amounts):
+        raise HTTPException(status_code=400, detail="Split amounts must have at most two decimal places")
+    if sum((line.amount for line in payload.lines), Decimal("0")) != payload.amount:
+        raise HTTPException(status_code=400, detail="Split line amounts must equal the total amount")
+    if payload.account_id:
+        account = db.get(Account, payload.account_id)
+        if not account or account.user_id != user.id or not account.is_active:
+            raise HTTPException(status_code=400, detail="Account is not available for this user")
+    group_id = f"split:{payload.client_request_id or uuid4()}"
+    if payload.client_request_id:
+        existing = db.query(Transaction).filter(
+            Transaction.user_id == user.id, Transaction.source_ref == group_id
+        ).order_by(Transaction.id).all()
+        if existing:
+            if (
+                len(existing) != len(payload.lines)
+                or sum((tx.amount for tx in existing), Decimal("0")) != payload.amount
+                or sorted((tx.category, tx.amount) for tx in existing) != sorted((line.category, line.amount) for line in payload.lines)
+                or any(
+                    tx.description != payload.description or tx.date != payload.date
+                    or tx.status != payload.status or tx.account_id != payload.account_id
+                    for tx in existing
+                )
+            ):
+                raise HTTPException(status_code=409, detail="Client request ID was already used for a different split")
+            return {"group_id": group_id, "items": existing}
+    items = []
+    for line in payload.lines:
+        tx = Transaction(
+            user_id=user.id, account_id=payload.account_id, date=payload.date,
+            type="expense", status=payload.status, category=line.category,
+            amount=line.amount, description=payload.description,
+            source="bank" if payload.account_id else "cash", source_ref=group_id,
+        )
+        tx.merchant_normalized = _resolve_merchant_alias(db, user.id, tx.description, tx.merchant_normalized)
+        db.add(tx)
+        items.append(tx)
+    db.flush()
+    log_event(
+        db, user_id=user.id, action="create", resource_type="split_transaction",
+        resource_id=group_id, details={"line_count": len(items), "total": str(payload.amount)},
+        ip_address=_client_ip(request),
+    )
+    db.commit()
+    return {"group_id": group_id, "items": items}
 
 
 @app.delete("/transactions/{transaction_id}")
@@ -1054,6 +1321,62 @@ def budget_suggestions(
 
 
 # ── Summary ───────────────────────────────────────────────────────────────────
+def _account_currency_mismatch_count(db: Session, user_id: str) -> int:
+    # Account currencies are source currencies; the profile currency is only a
+    # display preference and must not make valid foreign accounts unreliable.
+    return 0
+
+
+@app.post("/daily-position/review")
+def confirm_daily_obligations(
+    payload: ObligationsReviewIn,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Record a user's explicit review, not an assertion by Ledger that bills are complete."""
+    if not payload.confirmed:
+        raise HTTPException(status_code=400, detail="Confirm your obligations explicitly before recording a review")
+    db_user = db.get(User, user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_user.obligations_reviewed_at = datetime.now(UTC)
+    log_event(
+        db, user_id=user.id, action="confirm", resource_type="daily_obligations",
+        details={"reviewed_at": db_user.obligations_reviewed_at.isoformat()}, ip_address=_client_ip(request),
+    )
+    db.commit()
+    return {"reviewed_at": db_user.obligations_reviewed_at}
+
+
+@app.get("/daily-position", response_model=DailyPositionOut)
+def get_daily_position(
+    as_of: date | None = None,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Current-month facts and a discretionary estimate only when evidence is sufficient."""
+    if as_of and abs((as_of - date.today()).days) > 1:
+        raise HTTPException(status_code=400, detail="as_of must be within one day of the server date")
+    profile = db.get(User, user.id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
+    return calculate_daily_position(
+        accounts=db.query(Account).filter(Account.user_id == user.id).all(),
+        transactions=_tx_query(db, user.id, include_unposted=True).all(),
+        budgets=db.query(Budget).filter(Budget.user_id == user.id).all(),
+        recurring_rules=db.query(RecurringRule).filter(RecurringRule.user_id == user.id).all(),
+        currency=profile.currency_preference,
+        income_pattern=profile.income_pattern,
+        obligations_reviewed_at=profile.obligations_reviewed_at,
+        pending_imports=db.query(ImportJob.id).filter(
+            ImportJob.user_id == user.id, ImportJob.status.in_(("pending", "processing"))
+        ).count(),
+        currency_mismatch=bool(_account_currency_mismatch_count(db, user.id)),
+        as_of=as_of,
+    )
+
+
 @app.get("/summary")
 def get_summary(
     month: str | None = None,
@@ -1068,6 +1391,8 @@ def get_summary(
             q = q.filter(Transaction.date >= start)
     transactions = q.all()
     budgets = db.query(Budget).filter(Budget.user_id == user.id).all()
+    db_user = db.get(User, user.id)
+    currency = db_user.currency_preference if db_user else "INR"
     summary = monthly_summary(transactions)
     quality = data_quality(transactions)
     quality.update(
@@ -1097,6 +1422,7 @@ def get_summary(
             "excluded_transactions": db.query(Transaction.id).filter(
                 Transaction.user_id == user.id, Transaction.status == "excluded"
             ).count(),
+            "currency_mismatch_count": _account_currency_mismatch_count(db, user.id),
         }
     )
     quality["stale_account_count"] = max(0, quality["active_accounts"] - quality["reconciled_accounts"])
@@ -1113,6 +1439,8 @@ def get_summary(
         quality["warnings"].append("Review pending transactions before relying on committed totals")
     if quality["stale_account_count"]:
         quality["warnings"].append("Reconcile active account balances for a stronger balance picture")
+    if quality["currency_mismatch_count"]:
+        quality["warnings"].append("Account currencies differ from your Ledger currency; combined totals are unreliable")
 
     summary["closing_balance"] = _get_balance_at(db, user.id, as_of_date=None)
     summary["opening_balance"] = None
@@ -1125,13 +1453,16 @@ def get_summary(
         if period_start_d:
             summary["opening_balance"] = _get_balance_at(db, user.id, as_of_date=period_start_d)
 
-    summary["analysis"] = build_analysis_object(transactions, summary, quality)
+    recurring_rules = db.query(RecurringRule).filter(RecurringRule.user_id == user.id).all()
+    summary["analysis"] = build_analysis_object(transactions, summary, quality, recurring_rules)
     summary["analysis"]["comparison"] = compare_periods(transactions, days=30)
+    summary["analysis"]["insight_claims"] = compute_insight_claims(transactions, budgets, currency)
 
     return {
         **summary,
-        "insights": compute_insights(transactions, budgets),
-        "recurring": recurring_payments(transactions),
+        "insights": compute_insights(transactions, budgets, currency),
+        "insight_claims": summary["analysis"]["insight_claims"],
+        "recurring": recurring_payments(transactions, db_user.recurring_tolerance if db_user else "standard"),
         "data_quality": quality,
     }
 
@@ -1397,6 +1728,12 @@ async def _process_import_job(job_id: str) -> None:
             excluded_fingerprints = set(json.loads(worker_job.excluded_row_fingerprints or "[]"))
         except (TypeError, ValueError, json.JSONDecodeError):
             excluded_fingerprints = set()
+        try:
+            review_overrides = json.loads(worker_job.review_overrides or "{}")
+            if not isinstance(review_overrides, dict):
+                review_overrides = {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            review_overrides = {}
         if ext == "csv":
             rows = parse_csv(content)
         elif ext in ("xls", "xlsx", "ods"):
@@ -1439,6 +1776,9 @@ async def _process_import_job(job_id: str) -> None:
                         rows[idx]["merchant_normalized"] = res["merchant"]
             except Exception as ai_err:
                 logger.warning("Statement AI categorization pass failed: %s", ai_err)
+
+        # User review is authoritative over model/rule inference.
+        _apply_import_review_overrides(rows, review_overrides, account_id)
 
         prepared = []
         for seq, row in enumerate(rows):
@@ -1576,6 +1916,92 @@ async def _import_recovery_loop() -> None:
             await asyncio.sleep(5)
 
 
+async def _maintenance_loop() -> None:
+    """Run bounded, deterministic maintenance work in a recoverable loop.
+
+    Imports have their own worker above. This loop refreshes rule-based insight
+    cache entries, evaluates recurring observations through that same engine,
+    applies notification policy, and purges expired conversations. It never
+    calls a cloud provider, so a scheduler failure cannot create AI spend.
+    """
+    await asyncio.sleep(2)
+    while True:
+        db = SessionLocal()
+        try:
+            for db_user in db.query(User).all():
+                purge_expired_conversations(db, db_user.id, settings.ai_conversation_retention_days)
+                if db_user.insight_frequency == "off" or _account_currency_mismatch_count(db, db_user.id):
+                    continue
+                transactions = _tx_query(db, db_user.id).limit(300).all()
+                budgets = db.query(Budget).filter(Budget.user_id == db_user.id).all()
+                currency = db_user.currency_preference
+                deterministic = await generate_proactive_insights(
+                    transactions,
+                    budgets,
+                    detect_anomalies(transactions, currency),
+                    generate_forecast(transactions),
+                    currency,
+                    allow_ai=False,
+                    recurring_tolerance=db_user.recurring_tolerance,
+                )
+                deterministic = apply_insight_frequency(deterministic, db_user.insight_frequency)
+                deterministic = apply_notification_policy(
+                    deterministic,
+                    now=datetime.now(UTC),
+                    start=db_user.quiet_hours_start,
+                    end=db_user.quiet_hours_end,
+                    daily_cap=db_user.proactive_daily_cap,
+                )
+                day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+                already_notified = db.query(Notification.id).filter(
+                    Notification.user_id == db_user.id,
+                    Notification.created_at >= day_start,
+                ).first()
+                if deterministic and not already_notified:
+                    item = deterministic[0]
+                    db.add(Notification(
+                        user_id=db_user.id,
+                        kind="insight",
+                        insight_id=item.get("id", "unknown"),
+                        text=item.get("text", "Review your latest financial insight."),
+                        payload=json.dumps({"priority": item.get("priority", 0), "action": item.get("action")}),
+                    ))
+                    db.commit()
+                cache_key = f"{db_user.id}:proactive:{_user_cache_version(db, db_user.id)}:{currency}:cloud-0:frequency-{db_user.insight_frequency}"
+                llm_cache.put(cache_key, deterministic, ttl=settings.insight_cache_ttl_hours * 3600)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            db.rollback()
+            logger.exception("maintenance.cycle_failed")
+        finally:
+            db.close()
+        await asyncio.sleep(300)
+
+
+@app.get("/notifications")
+def list_notifications(
+    limit: int = Query(20, ge=1, le=100),
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return db.query(Notification).filter(Notification.user_id == user.id).order_by(Notification.created_at.desc()).limit(limit).all()
+
+
+@app.post("/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: str,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    notification = db.query(Notification).filter(Notification.id == notification_id, Notification.user_id == user.id).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    notification.read = True
+    db.commit()
+    return {"ok": True, "id": notification.id, "read": True}
+
+
 @app.post("/imports/statement", response_model=ImportJobOut, status_code=202)
 @limiter.limit(settings.import_rate_limit)
 async def import_statement(
@@ -1583,6 +2009,7 @@ async def import_statement(
     file: UploadFile = File(...),
     account_id: str | None = Form(default=None),
     excluded_row_fingerprints: str | None = Form(default=None),
+    review_overrides: str | None = Form(default=None),
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1615,6 +2042,24 @@ async def import_statement(
         if not isinstance(parsed_exclusions, list) or not all(isinstance(item, str) for item in parsed_exclusions):
             raise HTTPException(status_code=400, detail="Invalid excluded import rows")
         excluded_fingerprints = sorted(set(parsed_exclusions))[: settings.max_import_rows]
+    parsed_overrides: dict[str, dict[str, str]] = {}
+    if review_overrides:
+        try:
+            candidate_overrides = json.loads(review_overrides)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Invalid import review overrides") from exc
+        if not isinstance(candidate_overrides, dict):
+            raise HTTPException(status_code=400, detail="Invalid import review overrides")
+        for fingerprint, override in list(candidate_overrides.items())[: settings.max_import_rows]:
+            if not isinstance(fingerprint, str) or not isinstance(override, dict):
+                continue
+            clean: dict[str, str] = {}
+            for key in ("category", "merchant_normalized", "type"):
+                value = override.get(key)
+                if isinstance(value, str) and len(value) <= 128:
+                    clean[key] = value
+            if clean:
+                parsed_overrides[fingerprint] = clean
     existing_job = (
         db.query(ImportJob)
         .filter(
@@ -1641,6 +2086,7 @@ async def import_statement(
         processed_rows=0,
         cancel_requested=False,
         excluded_row_fingerprints=json.dumps(excluded_fingerprints),
+        review_overrides=json.dumps(parsed_overrides),
         status="pending",
     )
     db.add(job)
@@ -1738,24 +2184,116 @@ async def advisor_stream(
     db: Session = Depends(get_db),
 ):
     question = sanitize_user_input(payload.question)
+    ai_question = redact_sensitive_text(question)
+    db_user = db.get(User, user.id)
+    cloud_ai_enabled = bool(db_user.cloud_ai_enabled) if db_user else True
+    currency = db_user.currency_preference if db_user else "INR"
     transactions = _tx_query(db, user.id).limit(500).all()
+    advisor_entities = {
+        value.strip()
+        for tx in transactions
+        for value in (tx.category, tx.merchant_normalized or tx.description)
+        if isinstance(value, str) and value.strip()
+    }
     budgets = db.query(Budget).filter(Budget.user_id == user.id).all()
+    tool_results = select_advisor_tools(question, transactions, budgets, currency)
     advisor_quality = data_quality(transactions)
+    currency_mismatch_count = _account_currency_mismatch_count(db, user.id)
+    if currency_mismatch_count:
+        advisor_quality["warnings"].append(
+            "Account currencies differ from your Ledger currency; combined totals are unreliable"
+        )
     advisor_meta = {
         "type": "meta",
         "answer_type": "ai",
-        "cloud_ai_configured": bool(ai_router.configured_providers()),
-        "configured_providers": ai_router.configured_providers(),
+        "response_contract": "advisor.v1",
+        "answer_mode": payload.answer_mode,
+        "currency": currency,
+        "cloud_ai_configured": bool(ai_router.configured_providers("advisor")),
+        "cloud_ai_enabled": cloud_ai_enabled,
+        "configured_providers": ai_router.configured_providers("advisor"),
+        "provider_retention_policy": ai_router.provider_retention_policy(),
+        "calculation_source": "Ledger",
+        "explanation_source": "cloud_ai",
+        "privacy": {
+            "cloud_ai_enabled": cloud_ai_enabled,
+            "financial_history_sent": bool(cloud_ai_enabled),
+            "provider_retention": ai_router.provider_retention_policy(),
+        },
+        "data_range": {
+            "start": advisor_quality.get("period_start"),
+            "end": advisor_quality.get("period_end"),
+            "transaction_count": advisor_quality.get("transaction_count", len(transactions)),
+        },
         "period_start": advisor_quality.get("period_start"),
         "period_end": advisor_quality.get("period_end"),
         "transaction_count": advisor_quality.get("transaction_count", len(transactions)),
         "coverage": advisor_quality.get("coverage", "none"),
         "warnings": advisor_quality.get("warnings", []),
+        # Keep the transport contract stable for both deterministic and AI
+        # answers. Deterministic answers populate these fields below; the AI
+        # path starts conservatively and must not imply evidence it has not
+        # actually returned.
+        "facts": [],
+        "assumptions": [],
+        "uncertainties": ["This explanation is generated from the current Ledger context; verify important decisions against the evidence shown."],
+        "suggested_actions": [],
+        "source_links": [],
+        "tool_results": tool_results,
+        "grounding_status": "pending",
+        "evidence_coverage": 0.0,
     }
 
-    fact_answer = deterministic_answer(question, transactions, budgets)
+    if currency_mismatch_count:
+        advisor_meta["answer_type"] = "deterministic"
+        advisor_meta["explanation_source"] = "Ledger rules"
+        advisor_meta["privacy"]["financial_history_sent"] = False
+        advisor_meta["uncertainties"] = [
+            "Account currencies differ from the Ledger currency, so combined totals cannot be calculated reliably."
+        ]
+        advisor_meta["suggested_actions"] = [{
+            "type": "review_accounts",
+            "label": "Review account currencies",
+        }]
+
+        async def currency_warning_events():
+            yield f"data: {json.dumps(advisor_meta)}\n\n"
+            yield f"data: {json.dumps('I cannot give a reliable answer while account currencies differ from your Ledger currency. Review your accounts and currency setting first.')}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            currency_warning_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    if db_user and not db_user.cloud_ai_enabled:
+        advisor_meta["answer_type"] = "unavailable"
+        advisor_meta["explanation_source"] = "Ledger rules"
+        advisor_meta["privacy"]["financial_history_sent"] = False
+        advisor_meta["uncertainties"] = ["Cloud AI is disabled in Profile. Ledger can still answer direct factual questions without a provider."]
+        advisor_meta["suggested_actions"] = [{"type": "enable_cloud_ai", "label": "Enable cloud AI in Profile"}]
+
+        async def cloud_ai_disabled_events():
+            fact_answer = deterministic_answer(question, transactions, budgets, currency)
+            yield f"data: {json.dumps(advisor_meta)}\n\n"
+            if fact_answer:
+                yield f"data: {json.dumps(fact_answer['answer'])}\n\n"
+            else:
+                yield f"data: {json.dumps('Cloud AI is disabled, so I can only answer direct factual questions from your Ledger data. Enable it in Profile for explanations and planning.') }\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            cloud_ai_disabled_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    fact_answer = deterministic_answer(question, transactions, budgets, currency)
     if fact_answer:
         advisor_meta.update({k: v for k, v in fact_answer.items() if k != "answer"})
+        advisor_meta["explanation_source"] = "Ledger rules"
+        advisor_meta["privacy"]["financial_history_sent"] = False
 
         async def deterministic_event_generator():
             yield f"data: {json.dumps(advisor_meta)}\n\n"
@@ -1770,7 +2308,34 @@ async def advisor_stream(
 
     if _wants_last_transaction(question):
         latest = transactions[0] if transactions else None
-        answer = _format_transaction(latest) if latest else "No transactions were found for this signed-in account."
+        answer = _format_transaction(latest, currency) if latest else "No transactions were found for this signed-in account."
+        if latest:
+            advisor_meta["explanation_source"] = "Ledger rules"
+            advisor_meta["privacy"]["financial_history_sent"] = False
+            advisor_meta.update({
+                "answer_type": "deterministic",
+                "facts": [{"label": "Latest transaction", "transaction_id": latest.id, "value": str(latest.amount)}],
+                "evidence": [{
+                    "transaction_id": latest.id,
+                    "date": latest.date.isoformat(),
+                    "description": latest.merchant_normalized or latest.description,
+                    "amount": str(latest.amount),
+                    "type": latest.type,
+                    "category": latest.category,
+                }],
+                "assumptions": ["Transactions are ordered by recorded date."],
+                "uncertainties": [],
+                "suggested_actions": [{
+                    "type": "review_evidence",
+                    "label": "Open Activity",
+                    "transaction_ids": [latest.id],
+                }],
+                "source_links": [{
+                    "type": "transactions",
+                    "label": "View latest transaction in Activity",
+                    "transaction_ids": [latest.id],
+                }],
+            })
 
         async def last_tx_event_generator():
             yield f"data: {json.dumps(advisor_meta)}\n\n"
@@ -1784,7 +2349,10 @@ async def advisor_stream(
         )
 
     if _wants_overspending(question):
-        answer = _format_overspending(transactions)
+        answer = _format_overspending(transactions, currency)
+        advisor_meta["answer_type"] = "deterministic"
+        advisor_meta["explanation_source"] = "Ledger rules"
+        advisor_meta["privacy"]["financial_history_sent"] = False
 
         async def overspending_event_generator():
             yield f"data: {json.dumps(advisor_meta)}\n\n"
@@ -1797,15 +2365,57 @@ async def advisor_stream(
             headers={"Cache-Control": "no-cache"},
         )
 
+    if not transactions:
+        advisor_meta["answer_type"] = "deterministic"
+        advisor_meta["explanation_source"] = "Ledger rules"
+        advisor_meta["privacy"]["financial_history_sent"] = False
+        advisor_meta["uncertainties"] = ["There is no transaction history to support a personalized explanation."]
+        advisor_meta["suggested_actions"] = [{"type": "add_or_import", "label": "Add or import transactions"}]
+
+        async def no_data_event_generator():
+            yield f"data: {json.dumps(advisor_meta)}\n\n"
+            yield f"data: {json.dumps('I do not have enough Ledger history to answer that personally yet. Add or import a few transactions, then ask again so I can show the evidence and math.') }\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            no_data_event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
+
     # Enrich advisor context with anomalies + forecast
-    anomalies = detect_anomalies(transactions)
+    anomalies = detect_anomalies(transactions, currency)
     forecast = generate_forecast(transactions)
-    context = build_advisor_context(transactions, budgets, anomalies=anomalies, forecast=forecast)
+    if cloud_ai_enabled and ai_router.configured_providers("advisor_tools"):
+        try:
+            raw_tool_request = await ai_router.generate(
+                TOOL_SELECTION_SYSTEM,
+                [{"role": "user", "content": ai_question}],
+                task_type="advisor_tools",
+            )
+            tool_request = parse_tool_request(raw_tool_request)
+            selected_tool = execute_tool_request(tool_request, transactions, budgets, currency) if tool_request else None
+            if selected_tool:
+                tool_results = [result for result in tool_results if result.get("tool") != selected_tool.get("tool")]
+                tool_results.append(selected_tool)
+                advisor_meta["tool_results"] = tool_results
+        except Exception as tool_error:
+            logger.warning("advisor.tool_selection.failed user=%s error=%s", user.id, str(tool_error)[:120])
+    context = build_advisor_context(
+        transactions,
+        budgets,
+        anomalies=anomalies,
+        forecast=forecast,
+        currency=currency,
+        recurring_tolerance=db_user.recurring_tolerance if db_user else "standard",
+    )
+    context += f"\n\n[Deterministic advisor tools — calculated by Ledger]\n{json.dumps(tool_results, sort_keys=True, default=str)}\n[/Deterministic advisor tools]"
 
     # Load conversation history if continuing a thread
     history = []
     conversation = None
     if payload.conversation_id:
+        purge_expired_conversations(db, user.id, settings.ai_conversation_retention_days)
         conversation = (
             db.query(AIConversation)
             .filter(
@@ -1815,24 +2425,34 @@ async def advisor_stream(
             .first()
         )
         if conversation:
-            history = [
+            history = safe_conversation_memory([
                 {"role": m.role, "content": m.content}
                 for m in sorted(conversation.messages, key=lambda m: m.created_at)
-            ]
+            ])
 
-    messages = build_safe_messages(SYSTEM_PROMPT, context, question, history)
+    mode_instruction = {
+        "quick": "Answer mode: quick answer. Lead with the concise conclusion and one next step.",
+        "math": "Answer mode: show the math. State the relevant Ledger facts, period, assumptions, and calculation before the conclusion.",
+        "plan": "Answer mode: plan with me. Use only evidenced facts, state assumptions, and propose at most three reversible next steps.",
+    }[payload.answer_mode]
+    messages = build_safe_messages(
+        f"{SYSTEM_PROMPT}\n\n{ADVISOR_RESPONSE_INSTRUCTION}",
+        context,
+        f"{mode_instruction}\nUser question: {ai_question}",
+        history,
+    )
 
     # Create or update conversation
     if not conversation:
         conversation = AIConversation(
             user_id=user.id,
-            title=question[:80],
+            title=ai_question[:80],
         )
         db.add(conversation)
         db.commit()
         db.refresh(conversation)
 
-    user_msg = AIMessage(conversation_id=conversation.id, role="user", content=question)
+    user_msg = AIMessage(conversation_id=conversation.id, role="user", content=ai_question)
     db.add(user_msg)
     db.commit()
 
@@ -1841,22 +2461,65 @@ async def advisor_stream(
     # prefix) actually evicts these entries when the user corrects a category —
     # otherwise stale advice lingers. It also rules out cross-user cache hits.
     context_hash = hashlib.sha256(json.dumps(messages).encode()).hexdigest()
-    cache_key = f"{user.id}:advisor:{context_hash}"
+    cache_key = f"{user.id}:advisor:{_user_cache_version(db, user.id)}:{context_hash}"
     cached_reply = llm_cache.get(cache_key)
+
+    valid_evidence_ids = {tx.id for tx in transactions}
+    evidence_by_id = {
+        tx.id: {
+            "transaction_id": tx.id,
+            "date": tx.date.isoformat(),
+            "description": tx.merchant_normalized or tx.description,
+            "amount": str(tx.amount),
+            "type": tx.type,
+            "category": tx.category,
+        }
+        for tx in transactions
+    }
+
+    def ground_advisor_reply(raw: str) -> tuple[str, dict[str, object] | None]:
+        contract = validate_advisor_response(
+            raw, context, currency, valid_evidence_ids, advisor_entities,
+        )
+        if not contract.get("valid"):
+            logger.warning("advisor.structured_output.rejected user=%s reason=%s", user.id, contract.get("reason"))
+            advisor_meta["grounding_status"] = "rejected"
+            advisor_meta["uncertainties"] = [
+                "The AI response did not provide a verifiable structured claim set, so Ledger withheld it."
+            ]
+            advisor_meta["suggested_actions"] = [{"type": "ask_deterministic", "label": "Ask Ledger to show the math"}]
+            return (
+                "I couldn't verify that explanation against your current Ledger evidence. Try a direct factual question or ask me to show the math.",
+                None,
+            )
+        advisor_meta["grounding_status"] = "validated"
+        advisor_meta["facts"] = contract["claims"]
+        advisor_meta["assumptions"] = contract["assumptions"]
+        advisor_meta["uncertainties"] = contract["uncertainties"]
+        advisor_meta["suggested_actions"] = contract["suggested_actions"]
+        advisor_meta["evidence_coverage"] = contract["evidence_coverage"]
+        advisor_meta["evidence"] = [evidence_by_id[item] for item in contract["evidence_ids"] if item in evidence_by_id]
+        advisor_meta["source_links"] = ([{
+            "type": "transactions",
+            "label": "Review supporting transactions",
+            "transaction_ids": contract["evidence_ids"],
+        }] if contract["evidence_ids"] else [])
+        return contract["answer"], contract
 
     if cached_reply:
         logger.info("Cache hit for advisor stream.")
 
         async def cached_event_generator():
+            reply, _contract = ground_advisor_reply(cached_reply)
             yield f"data: {json.dumps(advisor_meta)}\n\n"
             # Yield cached string fully — JSON-encoded so embedded newlines
             # (markdown bullet points, paragraphs) survive SSE line parsing.
-            yield f"data: {json.dumps(cached_reply)}\n\n"
+            yield f"data: {json.dumps(reply)}\n\n"
 
             assistant_msg = AIMessage(
                 conversation_id=conversation.id,
                 role="assistant",
-                content=cached_reply,
+                content=reply,
             )
             db.add(assistant_msg)
             db.commit()
@@ -1874,18 +2537,21 @@ async def advisor_stream(
     async def event_generator():
         full_reply = []
         try:
-            yield f"data: {json.dumps(advisor_meta)}\n\n"
-            async for token in ai_router.stream(SYSTEM_PROMPT, messages):
+            async for token in ai_router.stream(f"{SYSTEM_PROMPT}\n\n{ADVISOR_RESPONSE_INSTRUCTION}", messages):
                 full_reply.append(token)
-                yield f"data: {json.dumps(token)}\n\n"
+            raw_reply = "".join(full_reply)
+            reply_text, _contract = ground_advisor_reply(raw_reply)
+            yield f"data: {json.dumps(advisor_meta)}\n\n"
+            yield f"data: {json.dumps(reply_text)}\n\n"
         except Exception as e:
             logger.exception("advisor.stream.error user=%s", user.id)
             yield f"data: [ERROR] {str(e)[:100]}\n\n"
         finally:
             # Persist assistant reply
             if full_reply:
-                reply_text = "".join(full_reply)
-                llm_cache.put(cache_key, reply_text)
+                raw_reply = "".join(full_reply)
+                reply_text, contract = ground_advisor_reply(raw_reply)
+                llm_cache.put(cache_key, raw_reply if contract else reply_text)
 
                 assistant_msg = AIMessage(
                     conversation_id=conversation.id,
@@ -1906,12 +2572,72 @@ async def advisor_stream(
     )
 
 
+@app.get("/ai/provider-health")
+def ai_provider_health(
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Expose credential-free provider health for diagnostics and settings UI."""
+    db_user = db.get(User, user.id)
+    return {
+        "cloud_ai_enabled": bool(db_user.cloud_ai_enabled) if db_user else True,
+        "providers": ai_router.provider_health("advisor"),
+        "provider_retention_policy": ai_router.provider_retention_policy(),
+    }
+
+
 # ── Conversations ─────────────────────────────────────────────────────────────
+@app.post("/advisor/actions/complete")
+def complete_advisor_action(
+    payload: AdvisorActionRequest,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Record explicit user confirmation of a suggested navigation/review action."""
+    valid_ids = {
+        tx_id for (tx_id,) in db.query(Transaction.id).filter(
+            Transaction.user_id == user.id,
+            Transaction.id.in_(payload.transaction_ids or ["__none__"]),
+        ).all()
+    }
+    evidence_ids = [tx_id for tx_id in payload.transaction_ids if tx_id in valid_ids]
+    if payload.conversation_id:
+        conversation_exists = db.query(AIConversation.id).filter(
+            AIConversation.id == payload.conversation_id,
+            AIConversation.user_id == user.id,
+        ).first()
+        if not conversation_exists:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    log_event(
+        db,
+        user_id=user.id,
+        action="completed_action",
+        resource_type="advisor_action",
+        resource_id=payload.action_type,
+        details={
+            "action_type": payload.action_type,
+            "evidence_count": len(evidence_ids),
+            "conversation_id": payload.conversation_id,
+        },
+        ip_address=_client_ip(request),
+    )
+    record_telemetry(
+        "advisor.action_completed",
+        user_id=user.id,
+        outcome=payload.action_type,
+        metadata={"evidence_count": len(evidence_ids)},
+    )
+    db.commit()
+    return {"ok": True, "action_type": payload.action_type, "evidence_count": len(evidence_ids)}
+
+
 @app.get("/conversations", response_model=list[ConversationOut])
 def list_conversations(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    purge_expired_conversations(db, user.id, settings.ai_conversation_retention_days)
     return (
         db.query(AIConversation)
         .filter(AIConversation.user_id == user.id)
@@ -1978,6 +2704,13 @@ def create_account(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    db_user = db.get(User, user.id)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        validate_currency(payload.currency)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     acct = Account(user_id=user.id, **payload.model_dump())
     db.add(acct)
     db.commit()
@@ -1997,11 +2730,19 @@ def update_account(
     acct = db.get(Account, account_id)
     if not acct or acct.user_id != user.id:
         raise HTTPException(status_code=404, detail="Account not found")
+    if payload.currency != acct.currency:
+        raise HTTPException(status_code=400, detail="Account currency cannot be changed without converting its history")
+    balance_changed = payload.balance != acct.balance
     for k, v in payload.model_dump().items():
         setattr(acct, k, v)
+    if balance_changed:
+        # Editing a number is not a fresh observed-bank-balance reconciliation.
+        acct.last_reconciled_at = None
+        acct.last_reconciled_balance = None
+        acct.reconciliation_note = None
     log_event(
         db, user_id=user.id, action="update", resource_type="account",
-        resource_id=account_id, ip_address=_client_ip(request),
+        resource_id=account_id, details={"reconciliation_cleared": balance_changed}, ip_address=_client_ip(request),
     )
     db.commit()
     db.refresh(acct)
@@ -2116,6 +2857,87 @@ async def scan_receipt(
     if not result:
         raise HTTPException(status_code=422, detail="Could not extract data from receipt")
     return result
+
+
+def _receipt_mime(content: bytes) -> str | None:
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return "image/webp"
+    if content.startswith(b"%PDF-"):
+        return "application/pdf"
+    return None
+
+
+@app.post("/transactions/{transaction_id}/receipt", status_code=201)
+async def attach_receipt(
+    transaction_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Keep a small receipt private and linked to its user-owned transaction."""
+    tx = db.get(Transaction, transaction_id)
+    if not tx or tx.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    content = await file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Receipt too large (max 5MB)")
+    mime = _receipt_mime(content)
+    if not mime:
+        raise HTTPException(status_code=400, detail="Upload a PNG, JPEG, WebP, or PDF receipt")
+    if tx.receipt:
+        if tx.receipt.content == content and tx.receipt.mime_type == mime:
+            return {"id": tx.receipt.id, "transaction_id": transaction_id, "mime_type": mime, "size": len(content)}
+        raise HTTPException(status_code=409, detail="Transaction already has a receipt; delete it before replacing")
+    receipt = ReceiptAttachment(user_id=user.id, transaction_id=transaction_id, content=content, mime_type=mime)
+    db.add(receipt)
+    db.flush()
+    log_event(db, user_id=user.id, action="create", resource_type="receipt", resource_id=receipt.id,
+              details={"transaction_id": transaction_id, "mime_type": mime}, ip_address=_client_ip(request))
+    db.commit()
+    return {"id": receipt.id, "transaction_id": transaction_id, "mime_type": mime, "size": len(content)}
+
+
+@app.get("/transactions/{transaction_id}/receipt")
+def download_receipt(
+    transaction_id: str,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    receipt = db.query(ReceiptAttachment).filter(
+        ReceiptAttachment.user_id == user.id, ReceiptAttachment.transaction_id == transaction_id
+    ).first()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    return Response(
+        content=receipt.content, media_type=receipt.mime_type,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+                 "Content-Disposition": 'attachment; filename="ledger-receipt"'},
+    )
+
+
+@app.delete("/transactions/{transaction_id}/receipt")
+def remove_receipt(
+    transaction_id: str,
+    request: Request,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    receipt = db.query(ReceiptAttachment).filter(
+        ReceiptAttachment.user_id == user.id, ReceiptAttachment.transaction_id == transaction_id
+    ).first()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    receipt_id = receipt.id
+    db.delete(receipt)
+    log_event(db, user_id=user.id, action="delete", resource_type="receipt", resource_id=receipt_id,
+              details={"transaction_id": transaction_id}, ip_address=_client_ip(request))
+    db.commit()
+    return {"deleted": True}
 
 
 # ── Transaction Update ────────────────────────────────────────────────────────
@@ -2354,12 +3176,25 @@ def export_full_data(
             "display_name": db_user.display_name,
             "avatar_url": db_user.avatar_url,
             "currency_preference": db_user.currency_preference,
+            "region": db_user.region,
+            "income_pattern": db_user.income_pattern,
+            "pay_cycle": db_user.pay_cycle,
+            "risk_comfort": db_user.risk_comfort,
+            "household_mode": db_user.household_mode,
+            "recurring_tolerance": db_user.recurring_tolerance,
+            "onboarding_completed": db_user.onboarding_completed,
+            "cloud_ai_enabled": db_user.cloud_ai_enabled,
+            "insight_frequency": db_user.insight_frequency,
+            "obligations_reviewed_at": db_user.obligations_reviewed_at.isoformat() if db_user.obligations_reviewed_at else None,
             "created_at": db_user.created_at.isoformat() if db_user.created_at else None,
         },
         "accounts": [
             {
                 "id": a.id, "name": a.name, "account_type": a.account_type,
                 "institution": a.institution, "balance": str(a.balance), "currency": a.currency,
+                "credit_limit": str(a.credit_limit) if a.credit_limit is not None else None,
+                "minimum_payment": str(a.minimum_payment) if a.minimum_payment is not None else None,
+                "payment_due_date": a.payment_due_date.isoformat() if a.payment_due_date else None,
                 "is_active": a.is_active, "last_reconciled_at": a.last_reconciled_at.isoformat() if a.last_reconciled_at else None,
                 "last_reconciled_balance": str(a.last_reconciled_balance) if a.last_reconciled_balance is not None else None,
                 "reconciliation_note": a.reconciliation_note,
@@ -2367,6 +3202,11 @@ def export_full_data(
             for a in db.query(Account).filter(Account.user_id == user.id).all()
         ],
         "transactions": json.loads(export_json(transactions))["transactions"],
+        "receipts": [
+            {"id": r.id, "transaction_id": r.transaction_id, "mime_type": r.mime_type,
+             "content_base64": base64.b64encode(r.content).decode("ascii")}
+            for r in db.query(ReceiptAttachment).filter(ReceiptAttachment.user_id == user.id).all()
+        ],
         "budgets": [
             {"id": b.id, "category": b.category, "monthly_limit": str(b.monthly_limit), "strategy": b.strategy}
             for b in db.query(Budget).filter(Budget.user_id == user.id).all()
@@ -2425,12 +3265,78 @@ def export_full_data(
              "details": a.details, "created_at": a.created_at.isoformat() if a.created_at else None}
             for a in db.query(AuditLog).filter(AuditLog.user_id == user.id).order_by(AuditLog.created_at.asc()).all()
         ],
+        "notifications": [
+            {"id": n.id, "kind": n.kind, "insight_id": n.insight_id, "text": n.text, "read": n.read,
+             "created_at": n.created_at.isoformat() if n.created_at else None}
+            for n in db.query(Notification).filter(Notification.user_id == user.id).order_by(Notification.created_at.asc()).all()
+        ],
     }
     return Response(
         content=json.dumps(payload, indent=2),
         media_type="application/json",
         headers={"Content-Disposition": "attachment; filename=ledger_full_export.json"},
     )
+
+
+@app.get("/backup/export")
+def encrypted_backup_export(
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Export the portable dataset as authenticated encrypted text."""
+    if not settings.backup_encryption_key:
+        raise HTTPException(status_code=503, detail="Encrypted backups are not configured")
+    exported = export_full_data(user, db)
+    token = encrypt_backup(json.loads(exported.body), settings.backup_encryption_key)
+    return {"format": "ledger-fernet-v1", "encrypted_backup": token}
+
+
+@app.post("/backup/restore")
+def encrypted_backup_restore(
+    payload: BackupRestoreRequest,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Validate or restore core portable records after explicit confirmation."""
+    if not settings.backup_encryption_key:
+        raise HTTPException(status_code=503, detail="Encrypted backups are not configured")
+    try:
+        backup = decrypt_backup(payload.encrypted_backup, settings.backup_encryption_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    accounts = backup.get("accounts", [])
+    transactions = backup.get("transactions", [])
+    if payload.dry_run:
+        return {"ok": True, "dry_run": True, "accounts": len(accounts), "transactions": len(transactions)}
+    restored_accounts = 0
+    for item in accounts:
+        if db.get(Account, item.get("id")):
+            continue
+        db.add(Account(
+            id=item["id"], user_id=user.id, name=item["name"], account_type=item["account_type"],
+            institution=item.get("institution"), balance=Decimal(item.get("balance", "0")),
+            currency=item.get("currency", "INR"), is_active=item.get("is_active", True),
+        ))
+        restored_accounts += 1
+    restored_transactions = 0
+    for item in transactions:
+        if db.get(Transaction, item.get("id")):
+            continue
+        account_id = item.get("account_id")
+        if account_id:
+            account = db.get(Account, account_id)
+            if not account or account.user_id != user.id:
+                account_id = None
+        db.add(Transaction(
+            id=item["id"], user_id=user.id, account_id=account_id,
+            date=date.fromisoformat(item["date"]), type=item["type"], status=item.get("status", "posted"),
+            category=item["category"], amount=Decimal(item["amount"]), description=item["description"],
+            source=item.get("source", "cash"), source_ref=item.get("source_ref"),
+        ))
+        restored_transactions += 1
+    db.commit()
+    llm_cache.invalidate_user(user.id)
+    return {"ok": True, "dry_run": False, "accounts": restored_accounts, "transactions": restored_transactions}
 
 
 @app.delete("/profile/data")
@@ -2454,6 +3360,7 @@ def delete_all_user_data(
     if conversation_ids:
         db.query(AIMessage).filter(AIMessage.conversation_id.in_(conversation_ids)).delete(synchronize_session=False)
     counts = {
+        "receipts": db.query(ReceiptAttachment).filter(ReceiptAttachment.user_id == user.id).delete(synchronize_session=False),
         "transactions": db.query(Transaction).filter(Transaction.user_id == user.id).delete(synchronize_session=False),
         "accounts": db.query(Account).filter(Account.user_id == user.id).delete(synchronize_session=False),
         "budgets": db.query(Budget).filter(Budget.user_id == user.id).delete(synchronize_session=False),
@@ -2467,6 +3374,7 @@ def delete_all_user_data(
         "conversations": db.query(AIConversation).filter(AIConversation.user_id == user.id).delete(synchronize_session=False),
         "category_corrections": db.query(CategoryCorrection).filter(CategoryCorrection.user_id == user.id).delete(synchronize_session=False),
         "audit_logs": db.query(AuditLog).filter(AuditLog.user_id == user.id).delete(synchronize_session=False),
+        "notifications": db.query(Notification).filter(Notification.user_id == user.id).delete(synchronize_session=False),
     }
     db.delete(db_user)
     db.commit()
@@ -2636,10 +3544,14 @@ def credit_health(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    transactions = _tx_query(db, user.id).limit(500).all()
-    budgets = db.query(Budget).filter(Budget.user_id == user.id).all()
-    accounts = db.query(Account).filter(Account.user_id == user.id, Account.is_active).all()
-    return compute_credit_health(transactions, budgets, accounts)
+    transactions = _tx_query(db, user.id).all()
+    accounts = db.query(Account).filter(Account.user_id == user.id, Account.is_active.is_(True)).all()
+    db_user = db.get(User, user.id)
+    currency = db_user.currency_preference if db_user else "INR"
+    return compute_credit_health(
+        transactions, accounts=accounts, currency=currency,
+        currency_mismatch=bool(_account_currency_mismatch_count(db, user.id)),
+    )
 
 
 # ── Bill Negotiator ───────────────────────────────────────────────────────────
@@ -2663,8 +3575,12 @@ def community_benchmarks(
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    transactions = _tx_query(db, user.id).limit(500).all()
-    return generate_benchmarks(transactions)
+    transactions = _tx_query(db, user.id).all()
+    db_user = db.get(User, user.id)
+    currency = db_user.currency_preference if db_user else "INR"
+    return generate_benchmarks(
+        transactions, currency, currency_mismatch=bool(_account_currency_mismatch_count(db, user.id))
+    )
 
 
 # ── Anomaly Detection ─────────────────────────────────────────────────────────
@@ -2675,7 +3591,9 @@ def get_anomalies(
     db: Session = Depends(get_db),
 ):
     """Detect anomalous transactions using IQR + velocity spike analysis."""
-    cache_key = f"{user.id}:anomalies:{range}"
+    db_user = db.get(User, user.id)
+    currency = db_user.currency_preference if db_user else "INR"
+    cache_key = f"{user.id}:anomalies:{_user_cache_version(db, user.id)}:{range}:{currency}"
     cached = llm_cache.get(cache_key)
     if cached:
         return cached
@@ -2689,7 +3607,7 @@ def get_anomalies(
         q = q.filter(Transaction.date >= start)
     transactions = q.order_by(Transaction.date.desc()).all()
 
-    anomalies = detect_anomalies(transactions)
+    anomalies = detect_anomalies(transactions, currency)
     quality = data_quality(transactions)
     result = {
         "items": anomalies,
@@ -2720,7 +3638,7 @@ def get_forecast(
     db: Session = Depends(get_db),
 ):
     """Project 30/60/90-day spending per category using EWMA."""
-    cache_key = f"{user.id}:forecast"
+    cache_key = f"{user.id}:forecast:{_user_cache_version(db, user.id)}"
     cached = llm_cache.get(cache_key)
     if cached:
         return cached
@@ -2746,6 +3664,48 @@ def get_forecast(
     return result
 
 
+@app.get("/analytics/runway")
+def get_runway(
+    as_of: date | None = None,
+    horizon_months: int = Query(3, ge=1, le=12),
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Project reconciled cash with an explicit regular/irregular income range."""
+    db_user = db.get(User, user.id)
+    currency = db_user.currency_preference if db_user else "INR"
+    if _account_currency_mismatch_count(db, user.id):
+        return {
+            "status": "unavailable",
+            "currency": currency,
+            "projection": [],
+            "data_quality": {"warnings": ["Resolve account currency mismatches before combining balances."]},
+        }
+    transactions = _tx_query(db, user.id).all()
+    accounts = db.query(Account).filter(Account.user_id == user.id).all()
+    recurring_rules = db.query(RecurringRule).filter(RecurringRule.user_id == user.id).all()
+    return calculate_runway(
+        accounts=accounts,
+        transactions=transactions,
+        recurring_rules=recurring_rules,
+        currency=currency,
+        income_pattern=db_user.income_pattern if db_user else None,
+        as_of=as_of,
+        horizon_months=horizon_months,
+    )
+
+
+@app.get("/analytics/leakage")
+def get_leakage(
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Find cautious merchant and recurring-payment review candidates."""
+    transactions = _tx_query(db, user.id).all()
+    recurring_rules = db.query(RecurringRule).filter(RecurringRule.user_id == user.id).all()
+    return detect_leakage(transactions, recurring_rules)
+
+
 @app.post("/analytics/scenario", response_model=ScenarioOut)
 def run_scenario(
     payload: ScenarioRequest,
@@ -2762,23 +3722,28 @@ def run_scenario(
     )
     return calculate_scenario(
         transactions,
+        scenario_type=payload.scenario_type,
         category=payload.category,
         reduction_pct=payload.reduction_pct,
         income_change_pct=payload.income_change_pct,
         one_time_expense=payload.one_time_expense,
         horizon_months=payload.horizon_months,
+        target_amount=payload.target_amount,
     )
 
 
 @app.get("/analytics/compare")
 def analytics_compare(
     days: int = Query(30, ge=7, le=365),
+    comparison: str | None = Query(None, pattern="^(mom|yoy)$"),
     end: date | None = None,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Compare two equal-length periods with evidence and sufficiency metadata."""
     transactions = _tx_query(db, user.id).all()
+    if comparison:
+        return compare_calendar_periods(transactions, comparison=comparison, end_date=end)
     return compare_periods(transactions, end_date=end, days=days)
 
 
@@ -2796,10 +3761,14 @@ def portfolio_analytics(
         .all()
     )
     if not portfolios:
-        return {"allocation": [], "total_return_pct": 0, "sharpe_ratio": None}
+        return {"allocation": [], "total_return_pct": 0, "sharpe_ratio": None, "risk_comfort": db.get(User, user.id).risk_comfort}
 
     holdings_by_portfolio = {p.id: p.holdings for p in portfolios}
-    return compute_portfolio_analytics(portfolios, holdings_by_portfolio)
+    return {
+        **compute_portfolio_analytics(portfolios, holdings_by_portfolio),
+        "risk_comfort": db.get(User, user.id).risk_comfort,
+        "risk_preference_disclosure": "This is a stated preference, not a risk score or investment recommendation.",
+    }
 
 
 # ── Proactive Insights (upgraded — with anomaly + forecast context) ────────────
@@ -2812,20 +3781,44 @@ async def proactive_insights_v2(
 ):
     """AI-powered proactive insights with anomaly and forecast injection."""
     # Check cache first (insight_cache_ttl_hours)
-    cache_key = f"{user.id}:proactive"
+    db_user = db.get(User, user.id)
+    currency = db_user.currency_preference if db_user else "INR"
+    if _account_currency_mismatch_count(db, user.id):
+        return []
+    cloud_ai_enabled = bool(db_user.cloud_ai_enabled) if db_user else True
+    insight_frequency = db_user.insight_frequency if db_user else "daily"
+    if insight_frequency == "off":
+        return []
+    cache_key = f"{user.id}:proactive:{_user_cache_version(db, user.id)}:{currency}:cloud-{int(cloud_ai_enabled)}:frequency-{insight_frequency}"
     cached = llm_cache.get(cache_key)
-    if cached:
+    if cached and cloud_ai_enabled:
         return cached
 
     transactions = _tx_query(db, user.id).limit(300).all()
     budgets = db.query(Budget).filter(Budget.user_id == user.id).all()
 
     # Enrich with anomalies and forecast
-    anomalies = detect_anomalies(transactions)
+    anomalies = detect_anomalies(transactions, currency)
     forecast = generate_forecast(transactions)
 
     started = time.perf_counter()
-    result = await generate_proactive_insights(transactions, budgets, anomalies, forecast)
+    result = await generate_proactive_insights(
+        transactions,
+        budgets,
+        anomalies,
+        forecast,
+        currency,
+        allow_ai=cloud_ai_enabled,
+        recurring_tolerance=db_user.recurring_tolerance if db_user else "standard",
+    )
+    result = apply_insight_frequency(result, insight_frequency)
+    result = apply_notification_policy(
+        result,
+        now=datetime.now(UTC),
+        start=db_user.quiet_hours_start if db_user else 22,
+        end=db_user.quiet_hours_end if db_user else 7,
+        daily_cap=db_user.proactive_daily_cap if db_user else 3,
+    )
     record_telemetry(
         "insights.generated",
         user_id=user.id,
@@ -2867,6 +3860,29 @@ def insight_feedback(
     )
     db.commit()
     return {"ok": True, "insight_id": payload.insight_id, "feedback": payload.feedback}
+
+
+@app.get("/insights/feedback/summary")
+def insight_feedback_summary(
+    days: int = Query(90, ge=1, le=365),
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return user-scoped, text-free feedback counts for insight quality work."""
+    since = datetime.now(UTC) - timedelta(days=days)
+    rows = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.user_id == user.id,
+            AuditLog.action == "feedback",
+            AuditLog.resource_type == "insight",
+            AuditLog.created_at >= since,
+        )
+        .all()
+    )
+    result = aggregate_insight_feedback(rows)
+    result["window_days"] = days
+    return result
 
 
 # ── Category Correction (user feedback for learning) ─────────────────────────
