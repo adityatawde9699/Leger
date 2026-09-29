@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createGoogleSession, saveGoogleSession } from '../googleAuth';
+import { createGoogleSession } from '../googleAuth';
 import { ArrowUpRight, ChartNoAxesCombined, Loader2, ScanLine, ShieldCheck, Sparkles } from 'lucide-react';
 import { LedgerLogo } from '../components/ui';
 
@@ -24,10 +24,10 @@ export default function Auth() {
 
       window.google.accounts.id.initialize({
         client_id: clientId,
-        callback: ({ credential }) => {
+        callback: async ({ credential }) => {
           setError(null);
           try {
-            saveGoogleSession(createGoogleSession(credential));
+            await createGoogleSession(credential);
             window.location.reload();
           } catch (err) {
             setError(err.message || 'Google authentication failed.');

@@ -130,7 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security policy with responsible disclosure
 
 ### Security
-- JWT authentication (multi-provider: Supabase, Firebase, dev)
+- JWT authentication (Google in production, local dev mode)
 - Production hard-block for `AUTH_PROVIDER=dev`
 - Rate limiting on all endpoints via slowapi
 - CORS restricted to configured origins

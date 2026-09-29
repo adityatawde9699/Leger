@@ -45,7 +45,7 @@ class User(Base):
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     # User-controlled privacy preference. Existing users retain current
     # behavior after migration; new users can turn cloud AI off explicitly.
-    cloud_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    cloud_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     insight_frequency: Mapped[str] = mapped_column(String(16), default="daily", nullable=False)
     quiet_hours_start: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
     quiet_hours_end: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
@@ -58,6 +58,15 @@ class User(Base):
     webhooks: Mapped[list["Webhook"]] = relationship(back_populates="user")
     portfolios: Mapped[list["Portfolio"]] = relationship(back_populates="user")
     goals: Mapped[list["Goal"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class AppSession(Base):
+    __tablename__ = "app_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    reauthed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class Account(Base):
@@ -292,7 +301,7 @@ class Webhook(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     url: Mapped[str] = mapped_column(String(2048))
     events: Mapped[str] = mapped_column(String(512))
-    secret: Mapped[str] = mapped_column(String(64))
+    secret: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_triggered: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failure_count: Mapped[int] = mapped_column(Integer, default=0)

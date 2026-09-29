@@ -1,6 +1,8 @@
 import json
 import sys
+from urllib.parse import urlparse
 
+from cryptography.fernet import Fernet
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,8 +13,8 @@ class Settings(BaseSettings):
 
     # Auth
     auth_provider: str = "dev"
-    supabase_jwks_url: str | None = None
     google_client_id: str | None = None
+    webhook_encryption_keys: str = ""
 
     # AI Providers (free tiers)
     groq_api_key: str | None = None
@@ -87,9 +89,11 @@ class Settings(BaseSettings):
     # Fernet key used for portable encrypted backups. Generate with
     # `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`.
     backup_encryption_key: str | None = None
+    backup_previous_encryption_keys: str = ""
     # JSON map such as {"Groq": "provider-configured-30d"}; unknown values
     # remain visible to users instead of being presented as guarantees.
     ai_provider_retention_policy: str = "{}"
+    ai_provider_regions: str = "{}"
 
     # Anomaly detection sensitivity (IQR multiplier — higher = less sensitive)
     anomaly_iqr_multiplier: float = 1.5
@@ -114,11 +118,29 @@ class Settings(BaseSettings):
 
     def validate_for_production(self) -> None:
         """Call at startup. Hard-fails if unsafe config is used in production."""
+        if self.auth_provider not in {"google", "dev"}:
+            print(
+                f"FATAL: Unsupported AUTH_PROVIDER={self.auth_provider!r}. Use google or dev.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if self.environment == "production":
-            if self.auth_provider == "dev":
+            origins = self.get_cors_origins()
+            if not origins or any(
+                urlparse(origin).scheme != "https" or not urlparse(origin).hostname or
+                urlparse(origin).hostname in {"localhost", "127.0.0.1"} or
+                urlparse(origin).path or urlparse(origin).query or urlparse(origin).fragment or
+                urlparse(origin).username or urlparse(origin).password or "*" in origin
+                for origin in origins
+            ):
+                print("FATAL: CORS_ORIGINS must contain only explicit HTTPS production origins.", file=sys.stderr)
+                sys.exit(1)
+            if not self.redis_url or self.redis_url == "redis://localhost:6379/0":
+                print("FATAL: REDIS_URL must point to a shared Redis service in production.", file=sys.stderr)
+                sys.exit(1)
+            if self.auth_provider != "google":
                 print(
-                    "FATAL: AUTH_PROVIDER=dev is not allowed in production. "
-                    "Set AUTH_PROVIDER=google.",
+                    "FATAL: Production requires AUTH_PROVIDER=google.",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -127,6 +149,25 @@ class Settings(BaseSettings):
                     "FATAL: GOOGLE_CLIENT_ID is required when AUTH_PROVIDER=google.",
                     file=sys.stderr,
                 )
+                sys.exit(1)
+            if not self.webhook_encryption_keys:
+                print("FATAL: WEBHOOK_ENCRYPTION_KEYS is required in production.", file=sys.stderr)
+                sys.exit(1)
+            if not self.backup_encryption_key:
+                print("FATAL: BACKUP_ENCRYPTION_KEY is required in production.", file=sys.stderr)
+                sys.exit(1)
+            if self.backup_encryption_key in {key.strip() for key in self.webhook_encryption_keys.split(",")}:
+                print("FATAL: Backup and webhook encryption keys must be separate.", file=sys.stderr)
+                sys.exit(1)
+            try:
+                for key in self.webhook_encryption_keys.split(","):
+                    Fernet(key.strip().encode())
+                Fernet(self.backup_encryption_key.encode())
+                for key in self.backup_previous_encryption_keys.split(","):
+                    if key.strip():
+                        Fernet(key.strip().encode())
+            except (ValueError, TypeError):
+                print("FATAL: Encryption keys must be valid Fernet keys.", file=sys.stderr)
                 sys.exit(1)
             if not any(
                 [

@@ -20,7 +20,7 @@ class UserContext(BaseModel):
 
 class UserProfileIn(BaseModel):
     display_name: str | None = Field(default=None, max_length=128)
-    avatar_url: str | None = None
+    avatar_url: str | None = Field(default=None, max_length=2_800_000)
     currency_preference: str | None = Field(default=None, pattern="^[A-Z]{3}$")
     region: str | None = Field(default=None, pattern="^(IN|US|GB|CA|AU|SG|AE|JP|CH|CN|HK|OTHER)$")
     income_pattern: str | None = Field(default=None, pattern="^(regular|irregular|mixed|not_sure)$")

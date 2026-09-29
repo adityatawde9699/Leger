@@ -97,5 +97,5 @@ async def parse_receipt_image(image_bytes: bytes) -> dict | None:
         }
 
     except Exception as e:
-        logger.warning("Gemini extraction failed or returned invalid JSON: %s", e)
+        logger.warning("Gemini extraction failed or returned invalid JSON: %s", type(e).__name__)
         return None

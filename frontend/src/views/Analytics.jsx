@@ -9,6 +9,8 @@ import {
 } from "recharts";
 
 const TIME_FILTERS = [
+  { id: "this_month",   label: "This Month" },
+  { id: "30d",          label: "30 Days" },
   { id: "3m",          label: "3 Months"  },
   { id: "current_year",label: "This Year" },
   { id: "all",         label: "All Time"  },

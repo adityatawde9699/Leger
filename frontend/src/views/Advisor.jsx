@@ -67,6 +67,7 @@ export default function Advisor({ onNavigate }) {
       const body = JSON.stringify({ question: q, conversation_id: activeId || undefined, answer_mode: answerMode });
       const res  = await fetch(`${API_BASE}/advisor/stream`, {
         method: "POST",
+        credentials: "include",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body,
       });

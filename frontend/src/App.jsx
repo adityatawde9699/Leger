@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { apiFetch, API_BASE, EXPENSE_CATEGORIES, currencySymbol, getCurrencyPreference, money, setAuthToken, setCurrencyPreference, setDisplayRates, setRegionPreference, today } from "./lib";
-import { clearGoogleSession, loadGoogleSession, silentlyRefreshGoogleSession, msUntilRefresh } from "./googleAuth";
+import { apiFetch, API_BASE, EXPENSE_CATEGORIES, currencySymbol, getCurrencyPreference, money, moneyInCurrency, setAuthToken, setCurrencyPreference, setDisplayRates, setRegionPreference, today } from "./lib";
+import { clearGoogleSession, loadGoogleSession } from "./googleAuth";
 import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
 import Auth from "./views/Auth";
 import CommandPalette from "./components/CommandPalette";
@@ -138,49 +138,23 @@ export default function App() {
       return;
     }
 
-    const googleSession = loadGoogleSession();
-    setSession(googleSession);
-    setAuthToken(googleSession?.access_token || null);
-    setLoadingAuth(false);
-
-    if (!googleSession) return undefined;
-
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    let refreshTimer = null;
-
-    // Schedules a silent re-auth attempt. On success the session is updated
-    // transparently; only falls back to logout if Google cannot silently
-    // re-authenticate (e.g. user has signed out of Google entirely).
-    function scheduleRefresh(currentSession) {
-      const delay = msUntilRefresh(currentSession);
-      refreshTimer = window.setTimeout(async () => {
-        try {
-          const freshSession = await silentlyRefreshGoogleSession(clientId);
-          setSession(freshSession);
-          setAuthToken(freshSession.access_token);
-          // Schedule the next refresh cycle for the new token.
-          scheduleRefresh(freshSession);
-        } catch {
-          // Silent re-auth failed — user must log in manually.
-          clearGoogleSession();
-          setAuthToken(null);
-          setSession(null);
-        }
-      }, delay);
-    }
-
-    scheduleRefresh(googleSession);
-    return () => window.clearTimeout(refreshTimer);
+    loadGoogleSession().then(setSession).catch(() => setSession(null)).finally(() => setLoadingAuth(false));
   }, []);
 
   useEffect(() => {
     if (!session) return;
-    apiFetch("/profile").then((profile) => {
+    Promise.all([apiFetch("/profile"), apiFetch("/accounts").catch(() => [])]).then(([profile, accounts]) => {
       setProfileData(profile);
       localStorage.setItem("ledger-last-profile-id", profile.id);
       setCurrencyPreference(profile.currency_preference);
       setRegionPreference(profile.region);
-      const recordCurrency = localStorage.getItem("ledger-record-currency") || profile.currency_preference;
+      const accountCurrency = Array.isArray(accounts) && accounts.length > 0 ? accounts[0].currency : null;
+      const savedRecordCurrency = localStorage.getItem("ledger-record-currency");
+      // Existing accounts are the most reliable source for legacy records. If
+      // the preferred currency differs, do not trust a stale browser cache.
+      const recordCurrency = accountCurrency && accountCurrency !== profile.currency_preference
+        ? accountCurrency
+        : savedRecordCurrency || accountCurrency || profile.currency_preference;
       localStorage.setItem("ledger-record-currency", recordCurrency);
       apiFetch(`/currency/rates?base=${recordCurrency}`)
         .then((rates) => setDisplayRates(rates.base, rates.rates, rates.date))
@@ -191,6 +165,12 @@ export default function App() {
   useEffect(() => {
     if (session) startKeepAlive(); else stopKeepAlive();
   }, [session]);
+
+  useEffect(() => {
+    const expired = () => { setSession(null); setProfileData(null); setAuthToken(null); };
+    window.addEventListener("ledger-session-expired", expired);
+    return () => window.removeEventListener("ledger-session-expired", expired);
+  }, []);
 
   // Close more drawer on Escape
   useEffect(() => {
@@ -215,13 +195,21 @@ export default function App() {
   }, [moreDrawerOpen]);
 
   const handleSignOut = async () => {
+    if (import.meta.env.VITE_AUTH_PROVIDER === "dev") {
+      stopKeepAlive();
+      localStorage.removeItem("ledger-last-profile-id");
+      setProfileData(null);
+      localStorage.removeItem("dev-session"); setSession(null); setAuthToken(null); return;
+    }
+    try {
+      await clearGoogleSession();
+    } catch (error) {
+      toast(error.message || "Could not sign out. Please try again.", "error");
+      return;
+    }
     stopKeepAlive();
     localStorage.removeItem("ledger-last-profile-id");
     setProfileData(null);
-    if (import.meta.env.VITE_AUTH_PROVIDER === "dev") {
-      localStorage.removeItem("dev-session"); setSession(null); setAuthToken(null); return;
-    }
-    clearGoogleSession();
     setSession(null);
     setAuthToken(null);
   };
@@ -972,7 +960,7 @@ function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
             <strong>{queuedDrafts.length} entr{queuedDrafts.length === 1 ? "y" : "ies"} saved on this device</strong>
             <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0" }}>They do not affect balances or budgets until you sync them. Nothing is sent automatically.</p>
             {queuedDrafts.map((draft) => <div key={draft.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", fontSize: 12 }}>
-              <span style={{ flex: 1 }}>{draft.payload.description} · {money(draft.payload.amount, activeCurrency)} · {draft.status === "needs_retry" ? `Needs retry: ${draft.error || "sync failed"}` : "Queued"}</span>
+              <span style={{ flex: 1 }}>{draft.payload.description} · {moneyInCurrency(draft.payload.amount, activeCurrency)} · {draft.status === "needs_retry" ? `Needs retry: ${draft.error || "sync failed"}` : "Queued"}</span>
               <button type="button" className="btn-secondary" disabled={syncingDrafts} onClick={() => discardDraft(draft.id)} aria-label={`Discard unsynced ${draft.payload.description}`}>Discard</button>
             </div>)}
             <button type="button" className="btn-primary" disabled={!online || syncingDrafts} onClick={syncDrafts}>
@@ -1020,7 +1008,7 @@ function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
                     })} aria-label={`${excluded ? "Include" : "Exclude"} ${row.description}`} />
                     <span style={{ width: 76, color: "var(--text-muted)" }}>{row.date}</span>
                     <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>{row.description}</span>
-                    <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{money(row.amount, activeCurrency)}</span>
+                    <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{moneyInCurrency(row.amount, activeCurrency)}</span>
                     <input value={merchant} disabled={row.duplicate} onChange={(event) => updateEdit("merchant_normalized", event.target.value)} placeholder="Merchant" aria-label={`Merchant for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "5px 6px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }} />
                     <select value={category} disabled={row.duplicate} onChange={(event) => updateEdit("category", event.target.value)} aria-label={`Category for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "5px 4px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }}>
                       {importCategories.map((option) => <option key={option} value={option}>{option}</option>)}
@@ -1118,7 +1106,7 @@ function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
                       {splitLines.length > 2 && <button type="button" className="btn-secondary" aria-label={`Remove split ${index + 1}`} onClick={() => setSplitLines((rows) => rows.filter((_, i) => i !== index))}>−</button>}
                     </div>)}
                     {splitLines.length < 10 && <button type="button" className="btn-secondary" onClick={() => setSplitLines((rows) => [...rows, { category: activeCategories[0], amount: "" }])}>Add category</button>}
-                    <div style={{ marginTop: 6 }}>Assigned: {money(splitLines.reduce((total, line) => total + Number(line.amount || 0), 0), activeCurrency)} of {money(amountStr, activeCurrency)}. The receipt attaches to the first split line.</div>
+                    <div style={{ marginTop: 6 }}>Assigned: {moneyInCurrency(splitLines.reduce((total, line) => total + Number(line.amount || 0), 0), activeCurrency)} of {moneyInCurrency(amountStr, activeCurrency)}. The receipt attaches to the first split line.</div>
                   </div>}
                 </>}
                 {form.type === "expense" && form.status === "posted" && !splitEnabled && <>

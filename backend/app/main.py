@@ -5,28 +5,36 @@ import json
 import logging
 import sys
 import time
+import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from io import BytesIO
+from types import SimpleNamespace
 from uuid import uuid4
+from zipfile import BadZipFile, ZipFile
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, Field
+from redis import Redis
+from redis.exceptions import RedisError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import case, func, inspect, or_, text
 from sqlalchemy.orm import Session, selectinload
 
-from .auth import get_current_user
+from .auth import SESSION_COOKIE, SESSION_HOURS, _verify_token, create_session, get_current_user, require_recent_auth
 from .config import settings
 from .db import Base, SessionLocal, engine, get_db
 from .models import (
     Account,
     AIConversation,
     AIMessage,
+    AppSession,
     AuditLog,
     Budget,
     CategoryCorrection,
@@ -150,6 +158,8 @@ from .services.sms_parser import parse_sms
 from .services.statements import parse_csv, parse_excel, parse_pdf
 from .services.telemetry import record_telemetry
 from .services.url_guard import UnsafeURLError, validate_webhook_url
+from .services.webhook_dispatcher import _deliver
+from .services.webhook_secrets import encrypt_secret, migrate_plaintext_secrets
 
 
 # ── Tiered TTL Cache (L1: in-memory with TTL) ─────────────────────────────────
@@ -231,10 +241,21 @@ logger = logging.getLogger("ledger.api")
 # these redundant inspector round-trips on every cold start.
 if settings.run_db_bootstrap:
     Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE webhooks ALTER COLUMN secret TYPE TEXT"))
+    with SessionLocal() as migration_db:
+        migrate_plaintext_secrets(migration_db)
 
     # Ad-hoc migration: Ensure avatar_url exists since Alembic is not configured
     try:
         inspector = inspect(engine)
+        if inspector.has_table("app_sessions"):
+            session_columns = [col["name"] for col in inspector.get_columns("app_sessions")]
+            if "reauthed_at" not in session_columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE app_sessions ADD COLUMN reauthed_at TIMESTAMP"))
+                    conn.execute(text("UPDATE app_sessions SET reauthed_at = created_at WHERE reauthed_at IS NULL"))
         if inspector.has_table("users"):
             columns = [col["name"] for col in inspector.get_columns("users")]
             with engine.begin() as conn:
@@ -338,15 +359,181 @@ if settings.run_db_bootstrap:
                     conn.execute(text("CREATE INDEX IF NOT EXISTS ix_transactions_status ON transactions (status)"))
                     logger.info("Migrated: Added transactions.status.")
     except Exception as e:
-        logger.warning("Failed to auto-migrate schema: %s", e)
+        logger.warning("Failed to auto-migrate schema: %s", type(e).__name__)
 
 # ── Rate limiter ──────────────────────────────────────────────────────────────
-limiter = Limiter(key_func=get_remote_address)
+def _rate_limit_identity(request: Request) -> str:
+    session_token = request.cookies.get(SESSION_COOKIE)
+    identity = hashlib.sha256(session_token.encode()).hexdigest()[:24] if session_token else "anonymous"
+    return f"{get_remote_address(request)}:{identity}"
+
+
+limiter = Limiter(key_func=_rate_limit_identity,
+                  storage_uri=settings.redis_url if settings.environment == "production" else "memory://",
+                  default_limits=["120/minute"])
+security_rate_store = Redis.from_url(settings.redis_url) if settings.environment == "production" else None
 
 # ── App ───────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Ledger API", version="1.4.0", docs_url="/docs")
+app = FastAPI(title="Ledger API", version="1.4.0", docs_url=None if settings.environment == "production" else "/docs",
+              redoc_url=None if settings.environment == "production" else "/redoc",
+              openapi_url=None if settings.environment == "production" else "/openapi.json")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    response = await call_next(request)
+    if response.status_code in {401, 403, 429}:
+        logger.warning("security.request_denied request_id=%s status=%d path=%s ip=%s",
+                       request_id, response.status_code, request.url.path, get_remote_address(request))
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+    if settings.environment == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if request.cookies.get(SESSION_COOKIE) or request.headers.get("authorization"):
+        response.headers.setdefault("Cache-Control", "private, no-store")
+    return response
+
+
+@app.middleware("http")
+async def bound_request_body(request: Request, call_next):
+    def too_large():
+        return Response(status_code=413, content="Request body too large", headers={
+            "X-Request-ID": str(uuid.uuid4()), "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        })
+
+    if request.method in {"POST", "PUT", "PATCH"}:
+        content_type = request.headers.get("content-type", "").lower()
+        if content_type.startswith("multipart/form-data"):
+            limit = settings.max_upload_mb * 1024 * 1024 + 1024 * 1024
+        elif request.url.path == "/backup/restore":
+            limit = 20 * 1024 * 1024
+        elif request.url.path == "/profile":
+            limit = 3 * 1024 * 1024
+        else:
+            limit = 1024 * 1024
+        length = request.headers.get("content-length", "0")
+        if length.isdigit() and int(length) > limit:
+            return too_large()
+        chunks = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > limit:
+                return too_large()
+            chunks.append(chunk)
+        request._body = b"".join(chunks)
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def categorized_rate_limits(request: Request, call_next):
+    if security_rate_store is not None and request.method != "OPTIONS":
+        path = request.url.path
+        if path.startswith("/auth/"):
+            category, limit, window = "auth", 10, 60
+        elif path.startswith(("/export/", "/backup/")):
+            category, limit, window = "export", 10, 3600
+        elif path.startswith(("/imports/", "/receipts/")) or path.endswith("/receipt"):
+            category, limit, window = "upload", 20, 3600
+        elif path.startswith("/webhooks"):
+            category, limit, window = "webhook", 30, 3600
+        elif path.startswith(("/advisor", "/insights", "/categorize")):
+            category, limit, window = "ai", 30, 3600
+        elif request.method not in {"GET", "HEAD"}:
+            category, limit, window = "mutation", 120, 60
+        else:
+            category = None
+        if category:
+            token = request.cookies.get(SESSION_COOKIE)
+            identity = "anonymous"
+            if token:
+                with SessionLocal() as db:
+                    session = db.get(AppSession, hashlib.sha256(token.encode()).hexdigest())
+                    if session:
+                        identity = session.user_id
+            raw = f"{get_remote_address(request)}:{identity}"
+            subject = hashlib.sha256(raw.encode()).hexdigest()
+            key = f"security-rate:{category}:{subject}:{int(time.time()) // window}"
+            try:
+                count, _ = security_rate_store.pipeline().incr(key).expire(key, window * 2).execute()
+            except RedisError:
+                return Response(status_code=503, content="Rate limiter unavailable", headers={
+                    "X-Request-ID": str(uuid.uuid4()), "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+                })
+            if count > limit:
+                return Response(status_code=429, content="Rate limit exceeded", headers={
+                    "Retry-After": str(window), "X-Request-ID": str(uuid.uuid4()),
+                    "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+                })
+    return await call_next(request)
+
+
+class GoogleLogin(BaseModel):
+    credential: str = Field(min_length=20, max_length=8192)
+
+
+@app.post("/auth/session")
+def login_session(payload: GoogleLogin, request: Request, response: Response, db: Session = Depends(get_db)):
+    if settings.auth_provider != "google":
+        raise HTTPException(status_code=404, detail="Unavailable")
+    if request.headers.get("origin") not in settings.get_cors_origins():
+        raise HTTPException(status_code=403, detail="Invalid request origin")
+    user = _verify_token(payload.credential)
+    old_token = request.cookies.get(SESSION_COOKIE)
+    if old_token:
+        db.query(AppSession).filter(AppSession.token_hash == hashlib.sha256(old_token.encode()).hexdigest()).delete()
+    token = create_session(db, user)
+    response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_HOURS * 3600, httponly=True,
+                        secure=settings.environment == "production",
+                        samesite="lax", path="/")
+    response.headers["Cache-Control"] = "no-store"
+    return {"user": user.model_dump()}
+
+
+@app.get("/auth/session")
+def read_session(user: UserContext = Depends(get_current_user)):
+    return {"user": user.model_dump()}
+
+
+@app.post("/auth/reauth")
+def reauthenticate(payload: GoogleLogin, request: Request, user: UserContext = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    claims = _verify_token(payload.credential)
+    try:
+        encoded = payload.credential.split(".")[1]
+        decoded = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    except (IndexError, ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid Google credential") from exc
+    if claims.id != user.id or not isinstance(decoded.get("iat"), (int, float)) or not (
+        datetime.now(UTC).timestamp() - 300 <= decoded["iat"] <= datetime.now(UTC).timestamp() + 60
+    ):
+        raise HTTPException(status_code=401, detail="Recent Google authentication required")
+    token = request.cookies.get(SESSION_COOKIE)
+    session = db.get(AppSession, hashlib.sha256(token.encode()).hexdigest())
+    session.reauthed_at = datetime.now(UTC)
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/auth/session")
+def logout_session(request: Request, response: Response, db: Session = Depends(get_db)):
+    if request.headers.get("origin") not in settings.get_cors_origins():
+        raise HTTPException(status_code=403, detail="Invalid request origin")
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        db.query(AppSession).filter(AppSession.token_hash == hashlib.sha256(token.encode()).hexdigest()).delete()
+        db.commit()
+    response.delete_cookie(SESSION_COOKIE, path="/", secure=settings.environment == "production",
+                           samesite="lax")
+    return {"ok": True}
 
 _import_recovery_task: asyncio.Task | None = None
 _maintenance_task: asyncio.Task | None = None
@@ -563,7 +750,9 @@ def _history_start(range_key: str | None) -> date | None:
     from datetime import timedelta
 
     today = dt_date.today()
-    if range_key in ("this_month", "30d"):
+    if range_key == "this_month":
+        return today.replace(day=1)
+    if range_key == "30d":
         return today - timedelta(days=30)
     if range_key == "current_year":
         return today.replace(month=1, day=1)
@@ -573,7 +762,7 @@ def _history_start(range_key: str | None) -> date | None:
         return today - timedelta(days=365)
     if range_key == "all":
         return None
-    raise HTTPException(status_code=400, detail="range must be this_month, 3m, current_year, 1y, or all")
+    raise HTTPException(status_code=400, detail="range must be this_month, 30d, 3m, current_year, 1y, or all")
 
 
 def _cursor_encode(tx: Transaction) -> str:
@@ -710,6 +899,12 @@ def get_profile(
     return db_user
 
 
+@app.get("/privacy/retention")
+def get_retention_policy(user: UserContext = Depends(get_current_user)):
+    return {"ai_conversation_days": settings.ai_conversation_retention_days,
+            "financial_records": "until_deleted", "external_backups": "user_or_operator_managed"}
+
+
 @app.put("/profile", response_model=UserProfileOut)
 def update_profile(
     payload: UserProfileIn,
@@ -722,6 +917,22 @@ def update_profile(
     if payload.display_name is not None:
         db_user.display_name = payload.display_name.strip() or None
     if payload.avatar_url is not None:
+        if payload.avatar_url.startswith("data:"):
+            try:
+                prefix, encoded = payload.avatar_url.split(",", 1)
+                if prefix not in {"data:image/png;base64", "data:image/jpeg;base64", "data:image/webp;base64"}:
+                    raise ValueError("Unsupported avatar type")
+                raw = base64.b64decode(encoded, validate=True)
+                if len(raw) > 2 * 1024 * 1024:
+                    raise ValueError("Avatar too large")
+                with Image.open(BytesIO(raw)) as image:
+                    if image.format not in {"PNG", "JPEG", "WEBP"} or image.width * image.height > 16_000_000:
+                        raise ValueError("Invalid avatar dimensions or format")
+                    image.verify()
+            except (ValueError, UnidentifiedImageError, OSError, SyntaxError) as exc:
+                raise HTTPException(status_code=400, detail="Invalid avatar image") from exc
+        elif payload.avatar_url and not (payload.avatar_url.startswith("https://") and len(payload.avatar_url) <= 2048):
+            raise HTTPException(status_code=400, detail="Invalid avatar URL")
         db_user.avatar_url = payload.avatar_url
     if payload.currency_preference is not None:
         db_user.currency_preference = payload.currency_preference
@@ -1091,7 +1302,7 @@ def create_transaction(
 
     db.commit()
     db.refresh(tx)
-    logger.info("transaction.created user=%s id=%s amount=%s balance=%s", user.id, tx.id, tx.amount, tx.running_balance)
+    logger.info("transaction.created user=%s id=%s", user.id, tx.id)
     return tx
 
 
@@ -1516,7 +1727,7 @@ async def import_sms(
                     tx.merchant_normalized = res["merchant"]
             db.commit()
         except Exception as ai_err:
-            logger.warning("SMS AI categorization pass failed: %s", ai_err)
+            logger.warning("SMS AI categorization pass failed: %s", type(ai_err).__name__)
 
     for tx in pending_txs:
         db.refresh(tx)
@@ -1572,16 +1783,42 @@ async def import_sms_webhook(
                     tx.merchant_normalized = res["merchant"]
             db.commit()
         except Exception as ai_err:
-            logger.warning("SMS webhook AI categorization pass failed: %s", ai_err)
+            logger.warning("SMS webhook AI categorization pass failed: %s", type(ai_err).__name__)
 
     for tx in pending_txs:
         db.refresh(tx)
         saved.append(tx)
-    logger.info("sms.webhook user=%s device=%s imported=%d", user.id, payload.device_id, len(saved))
+    logger.info("sms.webhook user=%s imported=%d", user.id, len(saved))
     return saved
 
 
 # ── Statement Import (async job) ──────────────────────────────────────────────
+def _validate_statement_content(content: bytes, ext: str) -> None:
+    if not content:
+        raise HTTPException(status_code=400, detail="Statement is empty")
+    if ext == "pdf" and not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="Invalid PDF statement")
+    if ext == "xls" and not content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        raise HTTPException(status_code=400, detail="Invalid Excel statement")
+    if ext == "csv" and b"\x00" in content:
+        raise HTTPException(status_code=400, detail="Invalid CSV statement")
+    if ext in {"xlsx", "ods"}:
+        try:
+            with ZipFile(BytesIO(content)) as archive:
+                entries = archive.infolist()
+                if (len(entries) > 1000 or
+                    sum(entry.file_size for entry in entries) > 50 * 1024 * 1024 or
+                    any(entry.file_size > 20 * 1024 * 1024 for entry in entries)):
+                    raise HTTPException(status_code=413, detail="Statement expands beyond the allowed size")
+                names = {entry.filename for entry in entries}
+                if ext == "xlsx" and "[Content_Types].xml" not in names:
+                    raise HTTPException(status_code=400, detail="Invalid Excel statement")
+                if ext == "ods" and "mimetype" not in names:
+                    raise HTTPException(status_code=400, detail="Invalid OpenDocument statement")
+        except BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="Invalid compressed statement") from exc
+
+
 @app.post("/imports/statement/preview", response_model=ImportPreviewOut)
 @limiter.limit(settings.import_rate_limit)
 async def preview_statement_import(
@@ -1602,17 +1839,19 @@ async def preview_statement_import(
         account = db.get(Account, account_id)
         if not account or account.user_id != user.id or not account.is_active:
             raise HTTPException(status_code=400, detail="Account is not available for this user")
-    content = await file.read()
     max_bytes = settings.max_upload_mb * 1024 * 1024
+    content = await file.read(max_bytes + 1)
     if len(content) > max_bytes:
         raise HTTPException(status_code=400, detail=f"File too large (max {settings.max_upload_mb}MB)")
+    _validate_statement_content(content, ext)
 
     if ext == "csv":
         rows = parse_csv(content)
     elif ext in ("xls", "xlsx", "ods"):
         rows = parse_excel(content, ext)
     else:
-        rows = await parse_pdf(content)
+        owner = db.get(User, user.id)
+        rows = await parse_pdf(content, allow_cloud_ai=bool(owner and owner.cloud_ai_enabled))
 
     if len(rows) > settings.max_import_rows:
         raise HTTPException(status_code=400, detail=f"Statement has more than {settings.max_import_rows} rows")
@@ -1642,7 +1881,7 @@ async def preview_statement_import(
                 )
             }
         except Exception as ai_err:
-            logger.warning("Statement preview AI categorization failed: %s", ai_err)
+            logger.warning("Statement preview AI categorization failed: %s", type(ai_err).__name__)
     preview_rows = []
     for index, (row, fingerprint) in enumerate(zip(rows, fingerprints, strict=True)):
         duplicate = fingerprint in existing_refs or fingerprint in seen
@@ -1739,7 +1978,8 @@ async def _process_import_job(job_id: str) -> None:
         elif ext in ("xls", "xlsx", "ods"):
             rows = parse_excel(content, ext)
         else:
-            rows = await parse_pdf(content)
+            owner = worker_db.get(User, worker_job.user_id)
+            rows = await parse_pdf(content, allow_cloud_ai=bool(owner and owner.cloud_ai_enabled))
 
         if len(rows) > settings.max_import_rows:
             worker_job.status = "failed"
@@ -1775,7 +2015,7 @@ async def _process_import_job(job_id: str) -> None:
                     if res.get("merchant"):
                         rows[idx]["merchant_normalized"] = res["merchant"]
             except Exception as ai_err:
-                logger.warning("Statement AI categorization pass failed: %s", ai_err)
+                logger.warning("Statement AI categorization pass failed: %s", type(ai_err).__name__)
 
         # User review is authoritative over model/rule inference.
         _apply_import_review_overrides(rows, review_overrides, account_id)
@@ -1928,6 +2168,8 @@ async def _maintenance_loop() -> None:
     while True:
         db = SessionLocal()
         try:
+            db.query(AppSession).filter(AppSession.expires_at < datetime.now(UTC)).delete()
+            db.commit()
             for db_user in db.query(User).all():
                 purge_expired_conversations(db, db_user.id, settings.ai_conversation_retention_days)
                 if db_user.insight_frequency == "off" or _account_currency_mismatch_count(db, db_user.id):
@@ -2028,9 +2270,10 @@ async def import_statement(
         if not account or account.user_id != user.id or not account.is_active:
             raise HTTPException(status_code=400, detail="Account is not available for this user")
 
-    content = await file.read()
+    content = await file.read(max_bytes + 1)
     if len(content) > max_bytes:
         raise HTTPException(status_code=400, detail=f"File too large (max {settings.max_upload_mb}MB)")
+    _validate_statement_content(content, ext)
 
     file_fingerprint = hashlib.sha256(content).hexdigest()
     excluded_fingerprints: list[str] = []
@@ -2094,7 +2337,7 @@ async def import_statement(
     db.refresh(job)
 
     asyncio.create_task(_process_import_job(job.id))
-    logger.info("import.started user=%s job=%s file=%s", user.id, job.id, file.filename)
+    logger.info("import.started user=%s job=%s", user.id, job.id)
     return job
 
 
@@ -2186,7 +2429,7 @@ async def advisor_stream(
     question = sanitize_user_input(payload.question)
     ai_question = redact_sensitive_text(question)
     db_user = db.get(User, user.id)
-    cloud_ai_enabled = bool(db_user.cloud_ai_enabled) if db_user else True
+    cloud_ai_enabled = bool(db_user.cloud_ai_enabled) if db_user else False
     currency = db_user.currency_preference if db_user else "INR"
     transactions = _tx_query(db, user.id).limit(500).all()
     advisor_entities = {
@@ -2213,6 +2456,7 @@ async def advisor_stream(
         "cloud_ai_enabled": cloud_ai_enabled,
         "configured_providers": ai_router.configured_providers("advisor"),
         "provider_retention_policy": ai_router.provider_retention_policy(),
+        "provider_regions": ai_router.provider_regions(),
         "calculation_source": "Ledger",
         "explanation_source": "cloud_ai",
         "privacy": {
@@ -2400,7 +2644,7 @@ async def advisor_stream(
                 tool_results.append(selected_tool)
                 advisor_meta["tool_results"] = tool_results
         except Exception as tool_error:
-            logger.warning("advisor.tool_selection.failed user=%s error=%s", user.id, str(tool_error)[:120])
+            logger.warning("advisor.tool_selection.failed user=%s error=%s", user.id, type(tool_error).__name__)
     context = build_advisor_context(
         transactions,
         budgets,
@@ -2482,7 +2726,7 @@ async def advisor_stream(
             raw, context, currency, valid_evidence_ids, advisor_entities,
         )
         if not contract.get("valid"):
-            logger.warning("advisor.structured_output.rejected user=%s reason=%s", user.id, contract.get("reason"))
+            logger.warning("advisor.structured_output.rejected user=%s", user.id)
             advisor_meta["grounding_status"] = "rejected"
             advisor_meta["uncertainties"] = [
                 "The AI response did not provide a verifiable structured claim set, so Ledger withheld it."
@@ -2580,9 +2824,10 @@ def ai_provider_health(
     """Expose credential-free provider health for diagnostics and settings UI."""
     db_user = db.get(User, user.id)
     return {
-        "cloud_ai_enabled": bool(db_user.cloud_ai_enabled) if db_user else True,
+        "cloud_ai_enabled": bool(db_user.cloud_ai_enabled) if db_user else False,
         "providers": ai_router.provider_health("advisor"),
         "provider_retention_policy": ai_router.provider_retention_policy(),
+        "provider_regions": ai_router.provider_regions(),
     }
 
 
@@ -2715,7 +2960,7 @@ def create_account(
     db.add(acct)
     db.commit()
     db.refresh(acct)
-    logger.info("account.created user=%s id=%s name=%s", user.id, acct.id, acct.name)
+    logger.info("account.created user=%s id=%s", user.id, acct.id)
     return acct
 
 
@@ -2843,6 +3088,7 @@ async def scan_receipt(
     request: Request,
     file: UploadFile = File(...),
     user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -2850,9 +3096,23 @@ async def scan_receipt(
     if ext not in ("jpg", "jpeg", "png", "webp"):
         raise HTTPException(status_code=400, detail="Upload an image (jpg, png, webp)")
     if file.size and file.size > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Image too large (max 5MB)")
+        raise HTTPException(status_code=413, detail="Image too large (max 5MB)")
 
-    content = await file.read()
+    content = await file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image too large (max 5MB)")
+    if _receipt_mime(content) not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(status_code=400, detail="Upload a PNG, JPEG, or WebP image")
+    try:
+        with Image.open(BytesIO(content)) as image:
+            if image.width * image.height > 16_000_000:
+                raise ValueError("Image dimensions exceed limit")
+            image.verify()
+    except (ValueError, UnidentifiedImageError, OSError, SyntaxError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid receipt image") from exc
+    owner = db.get(User, user.id)
+    if not owner or not owner.cloud_ai_enabled:
+        raise HTTPException(status_code=403, detail="Enable cloud AI in Profile before scanning a receipt")
     result = await parse_receipt_image(content)
     if not result:
         raise HTTPException(status_code=422, detail="Could not extract data from receipt")
@@ -3065,7 +3325,8 @@ def create_webhook(
     except UnsafeURLError as e:
         raise HTTPException(status_code=400, detail=f"Unsafe webhook URL: {e}") from e
 
-    hook = Webhook(user_id=user.id, **payload.model_dump())
+    hook = Webhook(user_id=user.id, url=payload.url, events=payload.events,
+                   secret=encrypt_secret(payload.secret))
     db.add(hook)
     log_event(
         db,
@@ -3077,7 +3338,27 @@ def create_webhook(
     )
     db.commit()
     db.refresh(hook)
-    logger.info("webhook.created user=%s id=%s url=%s", user.id, hook.id, hook.url[:60])
+    logger.info("webhook.created user=%s id=%s", user.id, hook.id)
+    return hook
+
+
+@app.post("/webhooks/{webhook_id}/rotate", response_model=WebhookOut)
+async def rotate_webhook_secret(webhook_id: str, payload: WebhookIn,
+                                user: UserContext = Depends(get_current_user), db: Session = Depends(get_db)):
+    hook = db.query(Webhook).filter(Webhook.id == webhook_id, Webhook.user_id == user.id).first()
+    if not hook:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    if payload.url != hook.url or payload.events != hook.events:
+        raise HTTPException(status_code=400, detail="URL and events must match the existing webhook")
+    candidate = encrypt_secret(payload.secret)
+    try:
+        await _deliver(SimpleNamespace(url=hook.url, secret=candidate), "webhook.test", {"rotation": True})
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Webhook test delivery failed; secret was not rotated") from exc
+    hook.secret = candidate
+    hook.failure_count = 0
+    db.commit()
+    db.refresh(hook)
     return hook
 
 
@@ -3120,7 +3401,7 @@ def gst_report(
 def export_data(
     fmt: str,
     month: str | None = Query(None),
-    user: UserContext = Depends(get_current_user),
+    user: UserContext = Depends(require_recent_auth),
     db: Session = Depends(get_db),
 ):
     # Keep the legacy parameterized route compatible with the static full-data
@@ -3130,6 +3411,9 @@ def export_data(
     transactions = _tx_query(db, user.id, month).all()
     if not transactions:
         raise HTTPException(status_code=404, detail="No transactions to export")
+    if fmt in {"csv", "json", "tally"}:
+        log_event(db, user_id=user.id, action="export", resource_type="transactions", details={"format": fmt})
+        db.commit()
 
     if fmt == "csv":
         content = export_csv(transactions)
@@ -3158,13 +3442,15 @@ def export_data(
 
 @app.get("/export/full")
 def export_full_data(
-    user: UserContext = Depends(get_current_user),
+    user: UserContext = Depends(require_recent_auth),
     db: Session = Depends(get_db),
 ):
     """Export the user's portable data without secrets or uploaded statement payloads."""
     db_user = db.get(User, user.id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Profile not found")
+    log_event(db, user_id=user.id, action="export", resource_type="full_data")
+    db.commit()
     transactions = _tx_query(db, user.id, include_unposted=True).order_by(Transaction.date.asc()).all()
     conversations = db.query(AIConversation).filter(AIConversation.user_id == user.id).all()
     payload = {
@@ -3280,7 +3566,7 @@ def export_full_data(
 
 @app.get("/backup/export")
 def encrypted_backup_export(
-    user: UserContext = Depends(get_current_user),
+    user: UserContext = Depends(require_recent_auth),
     db: Session = Depends(get_db),
 ):
     """Export the portable dataset as authenticated encrypted text."""
@@ -3288,25 +3574,30 @@ def encrypted_backup_export(
         raise HTTPException(status_code=503, detail="Encrypted backups are not configured")
     exported = export_full_data(user, db)
     token = encrypt_backup(json.loads(exported.body), settings.backup_encryption_key)
+    log_event(db, user_id=user.id, action="export", resource_type="encrypted_backup")
+    db.commit()
     return {"format": "ledger-fernet-v1", "encrypted_backup": token}
 
 
 @app.post("/backup/restore")
 def encrypted_backup_restore(
     payload: BackupRestoreRequest,
-    user: UserContext = Depends(get_current_user),
+    user: UserContext = Depends(require_recent_auth),
     db: Session = Depends(get_db),
 ):
     """Validate or restore core portable records after explicit confirmation."""
     if not settings.backup_encryption_key:
         raise HTTPException(status_code=503, detail="Encrypted backups are not configured")
     try:
-        backup = decrypt_backup(payload.encrypted_backup, settings.backup_encryption_key)
+        backup = decrypt_backup(payload.encrypted_backup, settings.backup_encryption_key,
+                                settings.backup_previous_encryption_keys)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     accounts = backup.get("accounts", [])
     transactions = backup.get("transactions", [])
     if payload.dry_run:
+        log_event(db, user_id=user.id, action="validate", resource_type="backup_restore")
+        db.commit()
         return {"ok": True, "dry_run": True, "accounts": len(accounts), "transactions": len(transactions)}
     restored_accounts = 0
     for item in accounts:
@@ -3334,6 +3625,8 @@ def encrypted_backup_restore(
             source=item.get("source", "cash"), source_ref=item.get("source_ref"),
         ))
         restored_transactions += 1
+    log_event(db, user_id=user.id, action="restore", resource_type="backup",
+              details={"accounts": restored_accounts, "transactions": restored_transactions})
     db.commit()
     llm_cache.invalidate_user(user.id)
     return {"ok": True, "dry_run": False, "accounts": restored_accounts, "transactions": restored_transactions}
@@ -3343,7 +3636,7 @@ def encrypted_backup_restore(
 def delete_all_user_data(
     payload: DataDeletionRequest,
     request: Request,
-    user: UserContext = Depends(get_current_user),
+    user: UserContext = Depends(require_recent_auth),
     db: Session = Depends(get_db),
 ):
     """Permanently erase all Ledger data for the signed-in user after explicit confirmation."""
@@ -3375,6 +3668,7 @@ def delete_all_user_data(
         "category_corrections": db.query(CategoryCorrection).filter(CategoryCorrection.user_id == user.id).delete(synchronize_session=False),
         "audit_logs": db.query(AuditLog).filter(AuditLog.user_id == user.id).delete(synchronize_session=False),
         "notifications": db.query(Notification).filter(Notification.user_id == user.id).delete(synchronize_session=False),
+        "sessions": db.query(AppSession).filter(AppSession.user_id == user.id).delete(synchronize_session=False),
     }
     db.delete(db_user)
     db.commit()
@@ -3785,7 +4079,7 @@ async def proactive_insights_v2(
     currency = db_user.currency_preference if db_user else "INR"
     if _account_currency_mismatch_count(db, user.id):
         return []
-    cloud_ai_enabled = bool(db_user.cloud_ai_enabled) if db_user else True
+    cloud_ai_enabled = bool(db_user.cloud_ai_enabled) if db_user else False
     insight_frequency = db_user.insight_frequency if db_user else "daily"
     if insight_frequency == "off":
         return []

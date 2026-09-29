@@ -1,4 +1,8 @@
+import base64
 from decimal import Decimal
+from io import BytesIO
+
+from PIL import Image
 
 from app.models import Account
 
@@ -33,7 +37,9 @@ def test_profile_setup_preferences_are_persisted(client):
     assert updated.json()["cloud_ai_enabled"] is False
     assert updated.json()["onboarding_completed"] is True
 
-    avatar_update = client.put("/profile", json={"avatar_url": "data:image/png;base64,AA=="}, headers=AUTH_HEADER)
+    avatar_buffer = BytesIO()
+    Image.new("RGB", (1, 1)).save(avatar_buffer, format="PNG")
+    avatar_update = client.put("/profile", json={"avatar_url": "data:image/png;base64," + base64.b64encode(avatar_buffer.getvalue()).decode()}, headers=AUTH_HEADER)
     assert avatar_update.status_code == 200
     assert avatar_update.json()["currency_preference"] == "USD"
 

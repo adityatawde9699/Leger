@@ -128,14 +128,17 @@ CEREBRAS_API_KEY="your_cerebras_key"
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | Yes | `sqlite:///./ledger_dev.db` | PostgreSQL or SQLite connection string |
-| `AUTH_PROVIDER` | Yes | `dev` | Auth mode: `dev` or `google` (Google Identity Services) |
+| `AUTH_PROVIDER` | Yes | `dev` | Auth mode: `dev` locally or `google` in production (Google Identity Services) |
 | `ENVIRONMENT` | No | `development` | `development`, `staging`, or `production` |
-| `CORS_ORIGINS` | No | `http://localhost:5173` | Comma-separated allowed origins |
+| `CORS_ORIGINS` | Production | Local frontend origins | Comma-separated exact HTTPS frontend origins in production |
 | `GROQ_API_KEY` | No | — | Groq API key (primary) |
 | `GEMINI_API_KEY` | No | — | Gemini API key (multimodal extraction) |
 | `CEREBRAS_API_KEY` | No | — | Cerebras API key (high speed fallback) |
 | `GOOGLE_CLIENT_ID` | If Google auth | — | Google Cloud Web OAuth client ID used to verify ID tokens |
-| `REDIS_URL` | No | `redis://localhost:6379/0` | Redis URL for caching |
+| `REDIS_URL` | Production | `redis://localhost:6379/0` | Shared Redis for rate limits and caching |
+| `WEBHOOK_ENCRYPTION_KEYS` | Production | — | Comma-separated Fernet key ring; first key encrypts |
+| `BACKUP_ENCRYPTION_KEY` | Production | — | Fernet key for new portable backups |
+| `BACKUP_PREVIOUS_ENCRYPTION_KEYS` | No | — | Previous backup keys accepted for restore |
 | `ADVISOR_RATE_LIMIT` | No | `10/minute` | Rate limit for Amadeus AI endpoint |
 | `DEBUG` | No | `false` | Enable debug logging |
 

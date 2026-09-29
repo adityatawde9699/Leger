@@ -18,6 +18,10 @@ jobs:
         run: ruff check backend/
       - name: Test backend
         run: pytest backend/tests/ -v
+      - name: Audit Python dependencies
+        run: |
+          python -m pip install pip-audit
+          pip-audit -r backend/requirements.txt
 
   frontend:
     runs-on: ubuntu-latest
@@ -34,3 +38,38 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+      - name: Audit production frontend dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+  image-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t ledger-api:security -f backend/Dockerfile backend
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ledger-api:security
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+
+  licenses:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          deny-licenses: AGPL-3.0, GPL-3.0

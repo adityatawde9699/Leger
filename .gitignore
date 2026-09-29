@@ -18,6 +18,7 @@ env/
 backend/.env
 backend/.env.*
 !backend/.env.example
+backend/env
 frontend/.env
 frontend/.env.*
 !frontend/.env.example

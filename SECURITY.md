@@ -36,12 +36,12 @@ Please report security issues responsibly:
 ### Authentication
 - JWT-based authentication with Google Identity Services (plus local dev mode)
 - `AUTH_PROVIDER=dev` is **hard-blocked** in production environments
-- All API endpoints require `Authorization: Bearer <token>` header
+- Production API requests use a short-lived HttpOnly application session cookie; local development uses bearer identity tokens
 
 ### Data Protection
 - Financial data is stored locally by default (no cloud transmission)
 - AI queries to cloud providers (Anthropic) contain anonymized context only
-- Webhook secrets are HMAC-SHA256 signed
+- Webhook delivery is HMAC-SHA256 signed; signing secrets are encrypted at rest when a deployment key is configured
 - Audit log provides immutable trail of all data mutations
 
 ### Input Validation

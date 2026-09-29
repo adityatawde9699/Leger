@@ -1,5 +1,5 @@
 // ── API Base & helpers ────────────────────────────────────────────────────────
-export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+export const API_BASE = import.meta.env.PROD ? "/api" : (import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000");
 let currentToken = import.meta.env.VITE_AUTH_PROVIDER === "dev"
   ? (import.meta.env.VITE_DEV_AUTH_TOKEN || "dev-user")
   : null;
@@ -68,15 +68,25 @@ export function authHeaders(extra = {}) {
 
 export async function apiFetch(path, opts = {}) {
   const isFormData = opts.body instanceof FormData;
-  const res = await fetch(`${API_BASE}${path}`, {
+  const requestOptions = {
     ...opts,
+    credentials: "include",
     headers: {
       ...authHeaders(),
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(opts.headers || {}),
     },
-  });
+  };
+  let res = await fetch(`${API_BASE}${path}`, requestOptions);
+  if (res.status === 428 && import.meta.env.VITE_AUTH_PROVIDER !== "dev") {
+    const { reauthenticate } = await import("./googleAuth");
+    await reauthenticate();
+    res = await fetch(`${API_BASE}${path}`, requestOptions);
+  }
   if (!res.ok) {
+    if (res.status === 401 && import.meta.env.VITE_AUTH_PROVIDER !== "dev") {
+      window.dispatchEvent(new Event("ledger-session-expired"));
+    }
     const responseText = await res.text();
     let message = responseText;
     try {
@@ -170,10 +180,26 @@ export function paletteColor(key, i) {
 }
 
 export const money = (v, currency = getRecordCurrency()) =>
+  (() => {
+    const targetCurrency = getCurrencyPreference();
+    const requestedCurrency = /^[A-Z]{3}$/.test(currency || "") ? currency : getRecordCurrency();
+    // API responses can echo the preferred currency while the numeric value
+    // remains in the original record currency. Use the record currency as the
+    // source whenever the requested code is the display target.
+    const sourceCurrency = requestedCurrency === targetCurrency
+      ? getRecordCurrency()
+      : requestedCurrency;
+    return new Intl.NumberFormat(getLocalePreference(), {
+      style: "currency", currency: targetCurrency,
+      minimumFractionDigits: 0, maximumFractionDigits: 2,
+    }).format(convertDisplayAmount(v, sourceCurrency, targetCurrency));
+  })();
+
+export const moneyInCurrency = (v, currency = getCurrencyPreference()) =>
   new Intl.NumberFormat(getLocalePreference(), {
-    style: "currency", currency: getCurrencyPreference(),
+    style: "currency", currency: /^[A-Z]{3}$/.test(currency || "") ? currency : "INR",
     minimumFractionDigits: 0, maximumFractionDigits: 2,
-  }).format(convertDisplayAmount(v, /^[A-Z]{3}$/.test(currency || "") ? currency : "INR", getCurrencyPreference()));
+  }).format(Number(v || 0));
 
 export const currencySymbol = (currency = getCurrencyPreference()) =>
   new Intl.NumberFormat(getLocalePreference(), {

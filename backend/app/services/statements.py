@@ -377,7 +377,7 @@ Rules:
         response = await model.generate_content_async([pdf_part, prompt])
         return response.text
     except Exception as e:
-        logger.warning("Gemini PDF extraction failed: %s", e)
+        logger.warning("Gemini PDF extraction failed: %s", type(e).__name__)
         return ""
 
 
@@ -456,7 +456,7 @@ def parse_excel(content: bytes, file_format: str | None = None) -> list[dict]:
     return rows
 
 
-async def parse_pdf(content: bytes) -> list[dict]:
+async def parse_pdf(content: bytes, allow_cloud_ai: bool = False) -> list[dict]:
     import pandas as pd
     import pdfplumber
 
@@ -465,7 +465,13 @@ async def parse_pdf(content: bytes) -> list[dict]:
     has_any_text = False
 
     with pdfplumber.open(BytesIO(content)) as pdf:
+        if len(pdf.pages) > 100:
+            logger.warning("PDF exceeds the 100-page parsing limit")
+            return []
         for page in pdf.pages:
+            if page.width * page.height > 20_000_000:
+                logger.warning("PDF contains an oversized page")
+                return []
             # ── 1. Structured table extraction ──
             for table in page.extract_tables() or []:
                 if len(table) < 2:
@@ -486,7 +492,7 @@ async def parse_pdf(content: bytes) -> list[dict]:
         rows = _parse_text_rows("\n".join(full_text_lines))
 
     # ── 3. AI Parsing fallback (image-based / scanned PDF) ──
-    if not rows:
+    if not rows and allow_cloud_ai:
         logger.info("PDF local extraction found no rows; attempting Mistral OCR")
         ocr_text = await _mistral_ocr_pdf(content)
         rows = _parse_ai_rows(ocr_text)

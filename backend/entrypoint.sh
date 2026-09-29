@@ -7,9 +7,22 @@ python - <<'PY'
 from app.db import Base, engine
 from app.models import *  # noqa: import all models so they register
 from sqlalchemy import text, inspect
+from app.db import SessionLocal
+from app.services.webhook_secrets import migrate_plaintext_secrets
 
 # 1. Create any missing tables first (fresh DBs get every column from the model).
 Base.metadata.create_all(bind=engine)
+if engine.dialect.name == 'postgresql':
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE webhooks ALTER COLUMN secret TYPE TEXT'))
+session_cols = [c['name'] for c in inspect(engine).get_columns('app_sessions')]
+if 'reauthed_at' not in session_cols:
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE app_sessions ADD COLUMN reauthed_at TIMESTAMP'))
+        conn.execute(text('UPDATE app_sessions SET reauthed_at = created_at WHERE reauthed_at IS NULL'))
+with SessionLocal() as db:
+    migrated = migrate_plaintext_secrets(db)
+    print(f'Encrypted {migrated} legacy webhook secrets')
 
 # 2. Ad-hoc column adds for pre-existing 'users' tables (Alembic is not configured).
 existing_cols = [c['name'] for c in inspect(engine).get_columns('users')]

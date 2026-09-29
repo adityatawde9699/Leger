@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { API_BASE, apiFetch, authHeaders, money, setCurrencyPreference, setDisplayRates, setRegionPreference } from "../lib";
+import { apiFetch, authHeaders, money, setCurrencyPreference, setDisplayRates, setRegionPreference } from "../lib";
+import { fetchWithReauth } from "../googleAuth";
 import { useToast } from "../components/ui";
 import {
   User, Mail, Calendar, TrendingUp, TrendingDown,
@@ -44,11 +45,12 @@ export default function Profile({ onSignOut }) {
   const fileInputRef = useRef(null);
   const [profile, setProfile] = useState(null);
   const [stats, setStats] = useState(null);
+  const [retentionDays, setRetentionDays] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
-  const [form, setForm] = useState({ display_name: "", currency_preference: "INR", region: "IN", income_pattern: "not_sure", pay_cycle: "monthly", risk_comfort: "not_sure", household_mode: "individual", recurring_tolerance: "standard", cloud_ai_enabled: true, insight_frequency: "daily", quiet_hours_start: 22, quiet_hours_end: 7, proactive_daily_cap: 3 });
+  const [form, setForm] = useState({ display_name: "", currency_preference: "INR", region: "IN", income_pattern: "not_sure", pay_cycle: "monthly", risk_comfort: "not_sure", household_mode: "individual", recurring_tolerance: "standard", cloud_ai_enabled: false, insight_frequency: "daily", quiet_hours_start: 22, quiet_hours_end: 7, proactive_daily_cap: 3 });
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [exportingData, setExportingData] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
@@ -68,12 +70,13 @@ export default function Profile({ onSignOut }) {
         apiFetch("/merchant-aliases"),
       ]);
       setProfile(p);
+      apiFetch("/privacy/retention").then((policy) => setRetentionDays(policy.ai_conversation_days)).catch(() => {});
       setCurrencyPreference(p.currency_preference);
       setRegionPreference(p.region);
       setStats(s);
       setCustomCategories((categories || []).filter((item) => item.is_custom));
       setMerchantAliases(aliases || []);
-      setForm({ display_name: p.display_name || "", currency_preference: p.currency_preference || "INR", region: p.region || "IN", income_pattern: p.income_pattern || "not_sure", pay_cycle: p.pay_cycle || "monthly", risk_comfort: p.risk_comfort || "not_sure", household_mode: p.household_mode || "individual", recurring_tolerance: p.recurring_tolerance || "standard", cloud_ai_enabled: p.cloud_ai_enabled !== false, insight_frequency: p.insight_frequency || "daily", quiet_hours_start: p.quiet_hours_start ?? 22, quiet_hours_end: p.quiet_hours_end ?? 7, proactive_daily_cap: p.proactive_daily_cap ?? 3 });
+      setForm({ display_name: p.display_name || "", currency_preference: p.currency_preference || "INR", region: p.region || "IN", income_pattern: p.income_pattern || "not_sure", pay_cycle: p.pay_cycle || "monthly", risk_comfort: p.risk_comfort || "not_sure", household_mode: p.household_mode || "individual", recurring_tolerance: p.recurring_tolerance || "standard", cloud_ai_enabled: p.cloud_ai_enabled === true, insight_frequency: p.insight_frequency || "daily", quiet_hours_start: p.quiet_hours_start ?? 22, quiet_hours_end: p.quiet_hours_end ?? 7, proactive_daily_cap: p.proactive_daily_cap ?? 3 });
     } catch (e) {
       if (e.message?.startsWith("Currency cannot be changed")) {
         // Do not leave a rejected currency in the form: subsequent saves would
@@ -163,14 +166,14 @@ export default function Profile({ onSignOut }) {
   };
 
   const handleCancelEdit = () => {
-    setForm({ display_name: profile?.display_name || "", currency_preference: profile?.currency_preference || "INR", region: profile?.region || "IN", income_pattern: profile?.income_pattern || "not_sure", pay_cycle: profile?.pay_cycle || "monthly", risk_comfort: profile?.risk_comfort || "not_sure", household_mode: profile?.household_mode || "individual", recurring_tolerance: profile?.recurring_tolerance || "standard", cloud_ai_enabled: profile?.cloud_ai_enabled !== false, insight_frequency: profile?.insight_frequency || "daily", quiet_hours_start: profile?.quiet_hours_start ?? 22, quiet_hours_end: profile?.quiet_hours_end ?? 7, proactive_daily_cap: profile?.proactive_daily_cap ?? 3 });
+    setForm({ display_name: profile?.display_name || "", currency_preference: profile?.currency_preference || "INR", region: profile?.region || "IN", income_pattern: profile?.income_pattern || "not_sure", pay_cycle: profile?.pay_cycle || "monthly", risk_comfort: profile?.risk_comfort || "not_sure", household_mode: profile?.household_mode || "individual", recurring_tolerance: profile?.recurring_tolerance || "standard", cloud_ai_enabled: profile?.cloud_ai_enabled === true, insight_frequency: profile?.insight_frequency || "daily", quiet_hours_start: profile?.quiet_hours_start ?? 22, quiet_hours_end: profile?.quiet_hours_end ?? 7, proactive_daily_cap: profile?.proactive_daily_cap ?? 3 });
     setEditing(false);
   };
 
   const handleFullExport = async () => {
     setExportingData(true);
     try {
-      const res = await fetch(`${API_BASE}/export/full`, { headers: authHeaders() });
+      const res = await fetchWithReauth("/export/full", { headers: authHeaders() });
       if (!res.ok) throw new Error("Could not prepare your data export");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -590,7 +593,7 @@ export default function Profile({ onSignOut }) {
         <div className="settings-section">
           <h2 className="settings-title"><Shield size={18} /> Privacy & your data</h2>
           <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.6, margin: "0 0 16px" }}>
-            Export a portable copy of your profile, accounts, transactions, goals, investments, conversations, and category corrections. Uploaded statement files and webhook secrets are never included.
+            Export a portable copy of your profile, accounts, transactions, receipts, goals, investments, conversations, and category corrections. Uploaded statement files and webhook secrets are never included. AI conversations {retentionDays > 0 ? `are removed after ${retentionDays} days` : retentionDays === 0 ? "are kept until you delete them" : "follow the configured retention period"}; financial records and receipts remain until you delete them. External backup copies must be deleted separately.
           </p>
           <button className="btn-secondary" onClick={handleFullExport} disabled={exportingData}>
             <Download size={15} /> {exportingData ? "Preparing export…" : "Download all my data"}

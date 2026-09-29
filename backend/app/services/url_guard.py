@@ -30,19 +30,29 @@ def _ip_is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
-def validate_webhook_url(url: str) -> None:
+def validate_webhook_url(url: str) -> list[str]:
     """
     Raise UnsafeURLError unless `url` is an http(s) URL whose host resolves
     exclusively to public IP addresses. Performs DNS resolution.
     """
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError as exc:
+        raise UnsafeURLError("Malformed webhook URL") from exc
+    if "\r" in url or "\n" in url or parsed.username or parsed.password or parsed.fragment:
+        raise UnsafeURLError("URL contains unsupported components")
     if parsed.scheme not in ALLOWED_SCHEMES:
         raise UnsafeURLError("URL must use http or https")
     host = parsed.hostname
     if not host:
         raise UnsafeURLError("URL has no host")
 
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError as exc:
+        raise UnsafeURLError("Invalid URL port") from exc
+    if port != (443 if parsed.scheme == "https" else 80):
+        raise UnsafeURLError("Webhook must use the standard port for its scheme")
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as e:
@@ -59,6 +69,7 @@ def validate_webhook_url(url: str) -> None:
             raise UnsafeURLError(f"invalid resolved address: {addr}") from e
         if _ip_is_blocked(ip):
             raise UnsafeURLError(f"host resolves to a non-public address ({addr})")
+    return sorted(addrs)
 
 
 def is_safe_webhook_url(url: str) -> bool:

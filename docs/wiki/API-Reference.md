@@ -1,7 +1,7 @@
 # API Reference
 
 Base URL: `http://127.0.0.1:8000`  
-Auth: `Authorization: Bearer <token>` on all endpoints.
+Auth: production uses the `ledger_session` Secure, HttpOnly cookie issued by `POST /auth/session` after server-side Google token verification. Browser requests use the same-origin `/api` proxy. Local `AUTH_PROVIDER=dev` accepts `Authorization: Bearer <user-id>`. Sensitive export, restore, and account deletion routes require a Google reauthentication within five minutes.
 
 ## Health & Status
 | Method | Endpoint | Body | Response |

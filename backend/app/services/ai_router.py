@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 
 from ..config import settings
 from .ai_budget import AIRequestBudget
+from .privacy import redact_sensitive_text
 from .telemetry import record_telemetry
 
 logger = logging.getLogger("ledger.ai_router")
@@ -441,6 +442,13 @@ class AIRouter:
         except (TypeError, ValueError, json.JSONDecodeError):
             return {}
 
+    def provider_regions(self) -> dict[str, str]:
+        try:
+            regions = json.loads(settings.ai_provider_regions or "{}")
+            return {str(key): str(value) for key, value in regions.items()} if isinstance(regions, dict) else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+
     def _allowed_providers(self, task_type: str) -> set[str] | None:
         """Resolve explicit provider policy; malformed policy fails closed."""
         allowlist = {name.strip() for name in settings.ai_provider_allowlist.split(",") if name.strip()}
@@ -477,6 +485,9 @@ class AIRouter:
         prefer_local: bool = False,
     ) -> AsyncIterator[str]:
         """Stream tokens from the first available provider."""
+        system = redact_sensitive_text(system)
+        messages = [{**message, "content": redact_sensitive_text(str(message.get("content", "")))}
+                    for message in messages]
         effective_tokens = TASK_TOKENS.get(task_type, max_tokens)
 
         last_error = None
@@ -525,10 +536,10 @@ class AIRouter:
             except Exception as e:
                 status = _status_code(e)
                 if status in (401, 403):
-                    logger.error("%s auth failed status=%s: %s", name, status, e)
-                    last_error = AIProviderAuthError(name, status, str(e))
+                    logger.error("%s auth failed status=%s", name, status)
+                    last_error = AIProviderAuthError(name, status, "credential rejected")
                 else:
-                    logger.warning("%s stream failed status=%s: %s", name, status, str(e)[:120])
+                    logger.warning("%s stream failed status=%s", name, status)
                     last_error = e
                 record_telemetry(
                     "ai.provider",
@@ -545,7 +556,7 @@ class AIRouter:
             if isinstance(last_error, AIProviderAuthError):
                 yield "\n[AI Error: Authentication failed. Check your API keys.]"
             else:
-                yield f"\n[AI Error: All providers failed. Last: {str(last_error)[:80]}]"
+                yield "\n[AI Error: All providers failed.]"
         else:
             yield "\n[AI Error: No API keys configured. Set GROQ_API_KEY or GEMINI_API_KEY in .env]"
 
@@ -564,6 +575,9 @@ class AIRouter:
         """
         if messages is None:
             messages = [{"role": "user", "content": user_message or ""}]
+        system = redact_sensitive_text(system)
+        messages = [{**message, "content": redact_sensitive_text(str(message.get("content", "")))}
+                    for message in messages]
 
         effective_tokens = TASK_TOKENS.get(task_type, max_tokens)
 
@@ -600,10 +614,10 @@ class AIRouter:
             except Exception as e:
                 status = _status_code(e)
                 if status in (401, 403):
-                    logger.error("%s auth failed: %s", name, e)
-                    last_error = AIProviderAuthError(name, status, str(e))
+                    logger.error("%s auth failed status=%s", name, status)
+                    last_error = AIProviderAuthError(name, status, "credential rejected")
                 else:
-                    logger.warning("%s generate failed: %s", name, str(e)[:120])
+                    logger.warning("%s generate failed status=%s", name, status)
                     last_error = e
                 record_telemetry(
                     "ai.provider",
@@ -616,8 +630,7 @@ class AIRouter:
                 self._record_provider_failure(name, (time.perf_counter() - started) * 1000)
                 continue
 
-        err_msg = str(last_error)[:100] if last_error else "No API keys configured"
-        raise RuntimeError(f"All AI providers failed. Last error: {err_msg}")
+        raise RuntimeError("All AI providers failed" if last_error else "No API keys configured")
 
 
 ai_router = AIRouter()
