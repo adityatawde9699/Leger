@@ -8,7 +8,15 @@ export async function createGoogleSession(credential) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ credential }),
   });
-  if (!response.ok) throw new Error("Google authentication failed.");
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("Google rejected this sign-in. Check that VITE_GOOGLE_CLIENT_ID matches the backend GOOGLE_CLIENT_ID, and use a verified Google account.");
+    }
+    if (response.status === 403) {
+      throw new Error("This site is not authorized for Google sign-in. Check CORS_ORIGINS and the OAuth authorized JavaScript origins.");
+    }
+    throw new Error("Google authentication failed. Please try again.");
+  }
   return response.json();
 }
 

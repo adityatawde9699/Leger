@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
@@ -16,6 +17,7 @@ from .schemas import UserContext
 _google_verify_lock = Lock()
 SESSION_COOKIE = "ledger_session"
 SESSION_HOURS = 12
+logger = logging.getLogger("ledger.auth")
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -64,12 +66,21 @@ def _verify_token(token: str) -> UserContext:
                     _get_google_request(),
                     settings.google_client_id,
                 )
-            if (decoded.get("email_verified") is not True or
-                decoded.get("iss") not in {"accounts.google.com", "https://accounts.google.com"} or
-                decoded.get("aud") != settings.google_client_id or
-                not isinstance(decoded.get("sub"), str) or not (1 <= len(decoded["sub"]) <= 64) or
-                not isinstance(decoded.get("email"), str) or not decoded["email"] or
-                not isinstance(decoded.get("exp"), (int, float)) or decoded["exp"] <= datetime.now(UTC).timestamp()):
+            invalid_claims = []
+            if decoded.get("email_verified") is not True:
+                invalid_claims.append("email_unverified")
+            if decoded.get("iss") not in {"accounts.google.com", "https://accounts.google.com"}:
+                invalid_claims.append("issuer_invalid")
+            if decoded.get("aud") != settings.google_client_id:
+                invalid_claims.append("audience_mismatch")
+            if not isinstance(decoded.get("sub"), str) or not (1 <= len(decoded["sub"]) <= 64):
+                invalid_claims.append("subject_invalid")
+            if not isinstance(decoded.get("email"), str) or not decoded.get("email"):
+                invalid_claims.append("email_missing")
+            if not isinstance(decoded.get("exp"), (int, float)) or decoded["exp"] <= datetime.now(UTC).timestamp():
+                invalid_claims.append("token_expired")
+            if invalid_claims:
+                logger.warning("auth.google_token_rejected reasons=%s", ",".join(invalid_claims))
                 raise HTTPException(status_code=401, detail="Google ID token has invalid claims")
             return UserContext(
                 id=decoded["sub"],
