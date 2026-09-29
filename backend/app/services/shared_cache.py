@@ -7,7 +7,6 @@ the existing TTL cache remains authoritative for the request.
 
 import json
 import logging
-from collections.abc import Callable
 
 logger = logging.getLogger("ledger.shared_cache")
 
@@ -19,43 +18,29 @@ class SharedTTLCache:
         self,
         local_cache,
         *,
-        redis_url: str = "",
         redis_client=None,
-        redis_factory: Callable | None = None,
         namespace: str = "ledger:derived",
     ):
         self.local = local_cache
-        self.redis_url = redis_url.strip()
         self._redis = redis_client
-        self._redis_factory = redis_factory
         self.namespace = namespace
-        self._disabled = False
+        self._disabled = redis_client is None
+        self._checked = False
 
     def _key(self, key: str) -> str:
         return f"{self.namespace}:{key}"
 
     def _client(self):
-        if self._disabled or self._redis is not None:
-            return self._redis
-        if not self.redis_url:
-            self._disabled = True
+        if self._disabled or self._redis is None:
             return None
+        if self._checked:
+            return self._redis
         try:
-            if self._redis_factory:
-                self._redis = self._redis_factory(self.redis_url)
-            else:
-                import redis
-
-                self._redis = redis.Redis.from_url(
-                    self.redis_url,
-                    socket_connect_timeout=0.2,
-                    socket_timeout=0.2,
-                    decode_responses=False,
-                )
             self._redis.ping()
+            self._checked = True
             return self._redis
         except Exception as exc:  # Redis is an optimization, never a hard dependency.
-            logger.warning("shared cache unavailable; using local cache only: %s", str(exc)[:120])
+            logger.warning("shared cache unavailable (%s); using local cache only", type(exc).__name__)
             self._redis = None
             self._disabled = True
             return None
@@ -75,7 +60,7 @@ class SharedTTLCache:
             self.local.put(key, value)
             return value
         except Exception as exc:
-            logger.warning("shared cache read failed; using local cache only: %s", str(exc)[:120])
+            logger.warning("shared cache read failed (%s); using local cache only", type(exc).__name__)
             self._disabled = True
             return None
 
@@ -86,9 +71,9 @@ class SharedTTLCache:
             return
         try:
             effective_ttl = ttl or self.local.default_ttl
-            client.setex(self._key(key), max(1, int(effective_ttl)), json.dumps(value, default=str))
+            client.set(self._key(key), json.dumps(value, default=str), ex=max(1, int(effective_ttl)))
         except Exception as exc:
-            logger.warning("shared cache write failed; using local cache only: %s", str(exc)[:120])
+            logger.warning("shared cache write failed (%s); using local cache only", type(exc).__name__)
             self._disabled = True
 
     def invalidate_user(self, user_id: str):
@@ -98,9 +83,15 @@ class SharedTTLCache:
             return
         try:
             pattern = f"{self._key(str(user_id))}:*"
-            keys = list(client.scan_iter(match=pattern, count=100))
+            keys = []
+            cursor = 0
+            while True:
+                cursor, batch = client.scan(cursor, match=pattern, count=100)
+                keys.extend(batch)
+                if int(cursor) == 0:
+                    break
             if keys:
                 client.delete(*keys)
         except Exception as exc:
-            logger.warning("shared cache invalidation failed: %s", str(exc)[:120])
+            logger.warning("shared cache invalidation failed (%s)", type(exc).__name__)
             self._disabled = True

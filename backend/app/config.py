@@ -27,8 +27,10 @@ class Settings(BaseSettings):
     # Kept for .env compatibility — not actively used
     anthropic_api_key: str | None = None
 
-    # Redis (optional — L2 cache, gracefully skipped if unavailable)
-    redis_url: str = "redis://localhost:6379/0"
+    # Upstash Redis REST API credentials. L2 cache is optional in development;
+    # production startup requires both values for shared rate limits and budgets.
+    upstash_redis_rest_url: str = ""
+    upstash_redis_rest_token: str = ""
 
     # CORS — comma-separated list of allowed origins.
     # Set CORS_ORIGINS on Render as:
@@ -137,20 +139,24 @@ class Settings(BaseSettings):
                 print("FATAL: CORS_ORIGINS must contain only explicit HTTPS production origins.", file=sys.stderr)
                 sys.exit(1)
             try:
-                redis_url = urlparse(self.redis_url)
-                valid_redis_url = (
-                    redis_url.scheme in {"redis", "rediss"}
+                redis_url = urlparse(self.upstash_redis_rest_url)
+                valid_rest_url = (
+                    redis_url.scheme == "https"
                     and bool(redis_url.hostname)
-                    and redis_url.hostname not in {"localhost", "127.0.0.1"}
+                    and not redis_url.username
+                    and not redis_url.password
+                    and redis_url.path in {"", "/"}
+                    and not redis_url.query
                     and not redis_url.fragment
-                    and not any(char.isspace() for char in self.redis_url)
-                    and (not redis_url.hostname.endswith(".upstash.io") or redis_url.scheme == "rediss")
+                    and not any(char.isspace() for char in self.upstash_redis_rest_url)
                 )
-                _ = redis_url.port  # Reject malformed ports without logging credentials.
             except (TypeError, ValueError):
-                valid_redis_url = False
-            if not valid_redis_url:
-                print("FATAL: REDIS_URL must be a shared Redis URL (rediss:// for Upstash), not a CLI command.", file=sys.stderr)
+                valid_rest_url = False
+            if not valid_rest_url or not self.upstash_redis_rest_token.strip():
+                print(
+                    "FATAL: UPSTASH_REDIS_REST_URL must be an HTTPS endpoint and UPSTASH_REDIS_REST_TOKEN must be set.",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             if self.auth_provider != "google":
                 print(

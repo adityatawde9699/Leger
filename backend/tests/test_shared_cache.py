@@ -14,13 +14,13 @@ class FakeRedis:
     def get(self, key):
         return self.values.get(key)
 
-    def setex(self, key, ttl, value):
+    def set(self, key, value, ex=None):
         self.values[key] = value.encode() if isinstance(value, str) else value
-        self.ttls[key] = ttl
+        self.ttls[key] = ex
 
-    def scan_iter(self, match, count=100):
+    def scan(self, cursor, match, count=100):
         prefix = match.removesuffix("*")
-        return iter([key for key in self.values if key.startswith(prefix)])
+        return 0, [key for key in self.values if key.startswith(prefix)]
 
     def delete(self, *keys):
         self.deleted.extend(keys)

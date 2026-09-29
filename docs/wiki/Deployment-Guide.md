@@ -9,7 +9,8 @@ AUTH_PROVIDER=google       # Google Identity Services; NEVER dev in production
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 DATABASE_URL=postgresql+psycopg://user:pass@host:5432/ledger?sslmode=require
 CORS_ORIGINS=https://your-domain.com
-REDIS_URL=rediss://user:password@your-shared-redis:6379/0
+UPSTASH_REDIS_REST_URL=https://your-database.upstash.io
+UPSTASH_REDIS_REST_TOKEN=<rest-token>
 WEBHOOK_ENCRYPTION_KEYS=<fernet-key>
 BACKUP_ENCRYPTION_KEY=<different-fernet-key>
 BACKUP_PREVIOUS_ENCRYPTION_KEYS=
@@ -23,8 +24,9 @@ existing records can still be decrypted with the old key. Re-encrypt existing re
 new key before removing the old key. When rotating backups, move the former
 `BACKUP_ENCRYPTION_KEY` into `BACKUP_PREVIOUS_ENCRYPTION_KEYS` and set a new primary key.
 Keep old keys until those encrypted backups expire or have been re-encrypted.
-For Upstash, copy only the TLS TCP URL from the Console's connection command into Render's
-`REDIS_URL` value. It starts with `rediss://`; do not include `redis-cli --tls -u`.
+For Upstash, copy the HTTPS endpoint and REST token from the database's REST tab into
+`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Do not use the TCP connection URL
+or the `redis-cli` command for these settings.
 
 The API uses a 12-hour Secure, HttpOnly, SameSite=Lax session cookie. Production browser requests
 use the frontend's same-origin `/api` rewrite; update `frontend/vercel.json` if the backend URL

@@ -21,8 +21,10 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false     # comma-separated, e.g. https://your-app.vercel.app
-      - key: REDIS_URL
-        sync: false     # TCP URL only, e.g. rediss://default:<token>@<endpoint>:6379; omit redis-cli --tls -u
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false     # HTTPS REST endpoint from the Upstash Console's REST tab
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false     # REST token from the Upstash Console's REST tab
       - key: WEBHOOK_ENCRYPTION_KEYS
         sync: false
       - key: BACKUP_ENCRYPTION_KEY

@@ -92,7 +92,8 @@ def test_production_accepts_root_slash_cors_origin_but_rejects_paths():
                       google_client_id="client", cors_origins="https://ledger-beta-two.vercel.app/",
                       webhook_encryption_keys=Fernet.generate_key().decode(),
                       backup_encryption_key=Fernet.generate_key().decode(),
-                      redis_url="rediss://redis.example:6379/0")
+                      upstash_redis_rest_url="https://redis.example",
+                      upstash_redis_rest_token="rest-token")
     assert config.get_cors_origins() == ["https://ledger-beta-two.vercel.app"]
     config.validate_for_production()
     config.cors_origins = "https://ledger-beta-two.vercel.app/private/"
@@ -105,30 +106,32 @@ def test_production_requires_distinct_keys_and_shared_redis():
     config = Settings(_env_file=None, environment="production", auth_provider="google",
                       google_client_id="client", cors_origins="https://ledger.example",
                       webhook_encryption_keys=key, backup_encryption_key=key,
-                      redis_url="rediss://redis.example:6379/0")
+                      upstash_redis_rest_url="https://redis.example",
+                      upstash_redis_rest_token="rest-token")
     with pytest.raises(SystemExit):
         config.validate_for_production()
     config.backup_encryption_key = Fernet.generate_key().decode()
-    config.redis_url = "redis://localhost:6379/0"
+    config.upstash_redis_rest_url = "http://localhost:6379"
     with pytest.raises(SystemExit):
         config.validate_for_production()
 
 
 @pytest.mark.parametrize("redis_url", [
     "redis-cli --tls -u redis://default:example-secret@redis.example:6379",
-    "redis://default:example-secret@redis.example.upstash.io:6379",
-    "rediss://default:example-secret@redis.example.upstash.io:not-a-port",
+    "http://redis.example.upstash.io",
+    "https://default:example-secret@redis.example.upstash.io",
 ])
 def test_production_rejects_invalid_redis_url_without_leaking_credentials(redis_url, capsys):
     config = Settings(_env_file=None, environment="production", auth_provider="google",
                       google_client_id="client", cors_origins="https://ledger.example",
                       webhook_encryption_keys=Fernet.generate_key().decode(),
                       backup_encryption_key=Fernet.generate_key().decode(),
-                      redis_url=redis_url)
+                      upstash_redis_rest_url=redis_url,
+                      upstash_redis_rest_token="rest-token")
     with pytest.raises(SystemExit):
         config.validate_for_production()
     message = capsys.readouterr().err
-    assert "REDIS_URL" in message
+    assert "UPSTASH_REDIS_REST_URL" in message
     assert "example-secret" not in message
 
 
@@ -142,7 +145,8 @@ def test_production_identifies_invalid_encryption_key_without_leaking_it(field, 
                       google_client_id="client", cors_origins="https://ledger.example",
                       webhook_encryption_keys=Fernet.generate_key().decode(),
                       backup_encryption_key=Fernet.generate_key().decode(),
-                      redis_url="rediss://redis.example:6379/0")
+                      upstash_redis_rest_url="https://redis.example",
+                      upstash_redis_rest_token="rest-token")
     setattr(config, field, "invalid-secret-value")
     with pytest.raises(SystemExit):
         config.validate_for_production()

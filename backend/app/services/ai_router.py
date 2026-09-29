@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 
 from ..config import settings
 from .ai_budget import AIRequestBudget
+from .upstash_redis import get_redis_client
 from .privacy import redact_sensitive_text
 from .telemetry import record_telemetry
 
@@ -308,10 +309,9 @@ class AIRouter:
         self._provider_failures: dict[str, int] = {}
         self._provider_opened_at: dict[str, float] = {}
         self._provider_health: dict[str, dict[str, object]] = {}
-        self._health_redis = None
-        self._health_redis_checked = False
+        self._health_redis = get_redis_client()
         self._budget = AIRequestBudget(
-            redis_url=settings.redis_url,
+            redis_client=get_redis_client(),
             global_limit=settings.ai_daily_request_budget,
             provider_limits=settings.ai_provider_daily_request_budgets,
         )
@@ -364,15 +364,6 @@ class AIRouter:
         """Best-effort deployment-wide counters; local health remains authoritative on failure."""
         if settings.environment != "production":
             return
-        if not self._health_redis_checked and settings.redis_url:
-            self._health_redis_checked = True
-            try:
-                import redis
-                client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=0.2, socket_timeout=0.2)
-                client.ping()
-                self._health_redis = client
-            except Exception:
-                self._health_redis = None
         if self._health_redis is None:
             return
         try:

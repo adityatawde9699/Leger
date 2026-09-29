@@ -135,7 +135,8 @@ CEREBRAS_API_KEY="your_cerebras_key"
 | `GEMINI_API_KEY` | No | — | Gemini API key (multimodal extraction) |
 | `CEREBRAS_API_KEY` | No | — | Cerebras API key (high speed fallback) |
 | `GOOGLE_CLIENT_ID` | If Google auth | — | Google Cloud Web OAuth client ID used to verify ID tokens |
-| `REDIS_URL` | Production | `redis://localhost:6379/0` | Shared Redis for rate limits and caching |
+| `UPSTASH_REDIS_REST_URL` | Production | — | HTTPS REST endpoint from the Upstash Console |
+| `UPSTASH_REDIS_REST_TOKEN` | Production | — | Upstash REST token; store as a deployment secret |
 | `WEBHOOK_ENCRYPTION_KEYS` | Production | — | Comma-separated Fernet key ring; first key encrypts |
 | `BACKUP_ENCRYPTION_KEY` | Production | — | Fernet key for new portable backups |
 | `BACKUP_PREVIOUS_ENCRYPTION_KEYS` | No | — | Previous backup keys accepted for restore |

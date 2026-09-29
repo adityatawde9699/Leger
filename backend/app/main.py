@@ -19,8 +19,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
-from redis import Redis
-from redis.exceptions import RedisError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -158,6 +156,7 @@ from .services.sms_parser import parse_sms
 from .services.statements import parse_csv, parse_excel, parse_pdf
 from .services.telemetry import record_telemetry
 from .services.url_guard import UnsafeURLError, validate_webhook_url
+from .services.upstash_redis import get_redis_client
 from .services.webhook_dispatcher import _deliver
 from .services.webhook_secrets import encrypt_secret, migrate_plaintext_secrets
 
@@ -209,7 +208,7 @@ class TTLCache:
 
 llm_cache = SharedTTLCache(
     TTLCache(maxsize=512, default_ttl=settings.llm_cache_ttl_seconds),
-    redis_url=settings.redis_url,
+    redis_client=get_redis_client(),
 )
 
 
@@ -369,9 +368,9 @@ def _rate_limit_identity(request: Request) -> str:
 
 
 limiter = Limiter(key_func=_rate_limit_identity,
-                  storage_uri=settings.redis_url if settings.environment == "production" else "memory://",
+                  storage_uri="memory://",
                   default_limits=["120/minute"])
-security_rate_store = Redis.from_url(settings.redis_url) if settings.environment == "production" else None
+security_rate_store = get_redis_client() if settings.environment == "production" else None
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Ledger API", version="1.4.0", docs_url=None if settings.environment == "production" else "/docs",
@@ -463,8 +462,11 @@ async def categorized_rate_limits(request: Request, call_next):
             subject = hashlib.sha256(raw.encode()).hexdigest()
             key = f"security-rate:{category}:{subject}:{int(time.time()) // window}"
             try:
-                count, _ = security_rate_store.pipeline().incr(key).expire(key, window * 2).execute()
-            except RedisError:
+                pipeline = security_rate_store.pipeline()
+                pipeline.incr(key)
+                pipeline.expire(key, window * 2)
+                count, _ = pipeline.exec()
+            except Exception:
                 return Response(status_code=503, content="Rate limiter unavailable", headers={
                     "X-Request-ID": str(uuid.uuid4()), "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
                 })
