@@ -136,8 +136,21 @@ class Settings(BaseSettings):
             ):
                 print("FATAL: CORS_ORIGINS must contain only explicit HTTPS production origins.", file=sys.stderr)
                 sys.exit(1)
-            if not self.redis_url or self.redis_url == "redis://localhost:6379/0":
-                print("FATAL: REDIS_URL must point to a shared Redis service in production.", file=sys.stderr)
+            try:
+                redis_url = urlparse(self.redis_url)
+                valid_redis_url = (
+                    redis_url.scheme in {"redis", "rediss"}
+                    and bool(redis_url.hostname)
+                    and redis_url.hostname not in {"localhost", "127.0.0.1"}
+                    and not redis_url.fragment
+                    and not any(char.isspace() for char in self.redis_url)
+                    and (not redis_url.hostname.endswith(".upstash.io") or redis_url.scheme == "rediss")
+                )
+                _ = redis_url.port  # Reject malformed ports without logging credentials.
+            except (TypeError, ValueError):
+                valid_redis_url = False
+            if not valid_redis_url:
+                print("FATAL: REDIS_URL must be a shared Redis URL (rediss:// for Upstash), not a CLI command.", file=sys.stderr)
                 sys.exit(1)
             if self.auth_provider != "google":
                 print(

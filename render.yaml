@@ -22,7 +22,7 @@ services:
       - key: CORS_ORIGINS
         sync: false     # comma-separated, e.g. https://your-app.vercel.app
       - key: REDIS_URL
-        sync: false
+        sync: false     # TCP URL only, e.g. rediss://default:<token>@<endpoint>:6379; omit redis-cli --tls -u
       - key: WEBHOOK_ENCRYPTION_KEYS
         sync: false
       - key: BACKUP_ENCRYPTION_KEY

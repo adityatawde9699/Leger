@@ -23,6 +23,8 @@ existing records can still be decrypted with the old key. Re-encrypt existing re
 new key before removing the old key. When rotating backups, move the former
 `BACKUP_ENCRYPTION_KEY` into `BACKUP_PREVIOUS_ENCRYPTION_KEYS` and set a new primary key.
 Keep old keys until those encrypted backups expire or have been re-encrypted.
+For Upstash, copy only the TLS TCP URL from the Console's connection command into Render's
+`REDIS_URL` value. It starts with `rediss://`; do not include `redis-cli --tls -u`.
 
 The API uses a 12-hour Secure, HttpOnly, SameSite=Lax session cookie. Production browser requests
 use the frontend's same-origin `/api` rewrite; update `frontend/vercel.json` if the backend URL

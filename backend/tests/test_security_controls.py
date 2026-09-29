@@ -114,6 +114,24 @@ def test_production_requires_distinct_keys_and_shared_redis():
         config.validate_for_production()
 
 
+@pytest.mark.parametrize("redis_url", [
+    "redis-cli --tls -u redis://default:example-secret@redis.example:6379",
+    "redis://default:example-secret@redis.example.upstash.io:6379",
+    "rediss://default:example-secret@redis.example.upstash.io:not-a-port",
+])
+def test_production_rejects_invalid_redis_url_without_leaking_credentials(redis_url, capsys):
+    config = Settings(_env_file=None, environment="production", auth_provider="google",
+                      google_client_id="client", cors_origins="https://ledger.example",
+                      webhook_encryption_keys=Fernet.generate_key().decode(),
+                      backup_encryption_key=Fernet.generate_key().decode(),
+                      redis_url=redis_url)
+    with pytest.raises(SystemExit):
+        config.validate_for_production()
+    message = capsys.readouterr().err
+    assert "REDIS_URL" in message
+    assert "example-secret" not in message
+
+
 @pytest.mark.parametrize("field,env_name", [
     ("webhook_encryption_keys", "WEBHOOK_ENCRYPTION_KEYS"),
     ("backup_encryption_key", "BACKUP_ENCRYPTION_KEY"),
