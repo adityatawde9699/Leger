@@ -161,16 +161,18 @@ class Settings(BaseSettings):
             if self.backup_encryption_key in {key.strip() for key in self.webhook_encryption_keys.split(",")}:
                 print("FATAL: Backup and webhook encryption keys must be separate.", file=sys.stderr)
                 sys.exit(1)
-            try:
-                for key in self.webhook_encryption_keys.split(","):
-                    Fernet(key.strip().encode())
-                Fernet(self.backup_encryption_key.encode())
-                for key in self.backup_previous_encryption_keys.split(","):
-                    if key.strip():
-                        Fernet(key.strip().encode())
-            except (ValueError, TypeError):
-                print("FATAL: Encryption keys must be valid Fernet keys.", file=sys.stderr)
-                sys.exit(1)
+            key_groups = (
+                ("WEBHOOK_ENCRYPTION_KEYS", [key.strip() for key in self.webhook_encryption_keys.split(",")]),
+                ("BACKUP_ENCRYPTION_KEY", [self.backup_encryption_key]),
+                ("BACKUP_PREVIOUS_ENCRYPTION_KEYS", [key.strip() for key in self.backup_previous_encryption_keys.split(",") if key.strip()]),
+            )
+            for name, keys in key_groups:
+                try:
+                    for key in keys:
+                        Fernet(key.encode())
+                except (ValueError, TypeError):
+                    print(f"FATAL: {name} must contain valid Fernet keys.", file=sys.stderr)
+                    sys.exit(1)
             if not any(
                 [
                     self.groq_api_key,

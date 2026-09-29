@@ -114,6 +114,25 @@ def test_production_requires_distinct_keys_and_shared_redis():
         config.validate_for_production()
 
 
+@pytest.mark.parametrize("field,env_name", [
+    ("webhook_encryption_keys", "WEBHOOK_ENCRYPTION_KEYS"),
+    ("backup_encryption_key", "BACKUP_ENCRYPTION_KEY"),
+    ("backup_previous_encryption_keys", "BACKUP_PREVIOUS_ENCRYPTION_KEYS"),
+])
+def test_production_identifies_invalid_encryption_key_without_leaking_it(field, env_name, capsys):
+    config = Settings(_env_file=None, environment="production", auth_provider="google",
+                      google_client_id="client", cors_origins="https://ledger.example",
+                      webhook_encryption_keys=Fernet.generate_key().decode(),
+                      backup_encryption_key=Fernet.generate_key().decode(),
+                      redis_url="rediss://redis.example:6379/0")
+    setattr(config, field, "invalid-secret-value")
+    with pytest.raises(SystemExit):
+        config.validate_for_production()
+    message = capsys.readouterr().err
+    assert env_name in message
+    assert "invalid-secret-value" not in message
+
+
 @pytest.mark.parametrize("content,extension", [
     (b"not-a-pdf", "pdf"),
     (b"not-an-excel-file", "xls"),
