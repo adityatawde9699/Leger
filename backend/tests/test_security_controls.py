@@ -133,6 +133,12 @@ def test_production_identifies_invalid_encryption_key_without_leaking_it(field, 
     assert "invalid-secret-value" not in message
 
 
+def test_empty_previous_backup_keys_environment_value_remains_a_string(monkeypatch):
+    monkeypatch.setenv("BACKUP_PREVIOUS_ENCRYPTION_KEYS", "")
+    config = Settings(_env_file=None)
+    assert config.backup_previous_encryption_keys == ""
+
+
 @pytest.mark.parametrize("content,extension", [
     (b"not-a-pdf", "pdf"),
     (b"not-an-excel-file", "xls"),
