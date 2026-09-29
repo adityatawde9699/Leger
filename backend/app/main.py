@@ -1533,9 +1533,14 @@ def budget_suggestions(
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 def _account_currency_mismatch_count(db: Session, user_id: str) -> int:
-    # Account currencies are source currencies; the profile currency is only a
-    # display preference and must not make valid foreign accounts unreliable.
-    return 0
+    db_user = db.get(User, user_id)
+    if not db_user:
+        return 0
+    return db.query(Account.id).filter(
+        Account.user_id == user_id,
+        Account.is_active.is_(True),
+        Account.currency != db_user.currency_preference,
+    ).count()
 
 
 @app.post("/daily-position/review")
@@ -2956,6 +2961,8 @@ def create_account(
         validate_currency(payload.currency)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload.currency != db_user.currency_preference:
+        raise HTTPException(status_code=400, detail="Account currency must match your Ledger currency")
     acct = Account(user_id=user.id, **payload.model_dump())
     db.add(acct)
     db.commit()

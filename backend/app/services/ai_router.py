@@ -362,6 +362,8 @@ class AIRouter:
 
     def _record_shared_health(self, name: str, outcome: str, latency_ms: float | None) -> None:
         """Best-effort deployment-wide counters; local health remains authoritative on failure."""
+        if settings.environment != "production":
+            return
         if not self._health_redis_checked and settings.redis_url:
             self._health_redis_checked = True
             try:
@@ -375,7 +377,8 @@ class AIRouter:
             return
         try:
             key = f"ledger:ai-health:{datetime.now(UTC).date().isoformat()}:{name}"
-            self._health_redis.hincrby(key, f"{outcome}s", 1)
+            field = "successes" if outcome == "success" else "failures"
+            self._health_redis.hincrby(key, field, 1)
             if latency_ms is not None:
                 self._health_redis.hset(key, "last_latency_ms", round(latency_ms, 1))
             self._health_redis.hset(key, "last_outcome", outcome)
