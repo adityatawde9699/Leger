@@ -42,8 +42,10 @@ class Settings(BaseSettings):
         """Parse CORS_ORIGINS string into a list. Supports comma-sep or JSON array."""
         raw = self.cors_origins.strip()
         if raw.startswith("["):
-            return json.loads(raw)
-        return [o.strip() for o in raw.split(",") if o.strip()]
+            origins = json.loads(raw)
+        else:
+            origins = raw.split(",")
+        return [origin.strip().removesuffix("/") for origin in origins if origin.strip()]
 
     # Rate limiting (slowapi format, e.g. "10/minute", "5/hour"). These guard the
     # endpoints that burn CPU/RAM or free-tier AI provider quota on the single

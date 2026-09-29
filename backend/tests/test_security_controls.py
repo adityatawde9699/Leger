@@ -87,6 +87,19 @@ def test_production_rejects_localhost_cors():
         config.validate_for_production()
 
 
+def test_production_accepts_root_slash_cors_origin_but_rejects_paths():
+    config = Settings(_env_file=None, environment="production", auth_provider="google",
+                      google_client_id="client", cors_origins="https://ledger-beta-two.vercel.app/",
+                      webhook_encryption_keys=Fernet.generate_key().decode(),
+                      backup_encryption_key=Fernet.generate_key().decode(),
+                      redis_url="rediss://redis.example:6379/0")
+    assert config.get_cors_origins() == ["https://ledger-beta-two.vercel.app"]
+    config.validate_for_production()
+    config.cors_origins = "https://ledger-beta-two.vercel.app/private/"
+    with pytest.raises(SystemExit):
+        config.validate_for_production()
+
+
 def test_production_requires_distinct_keys_and_shared_redis():
     key = Fernet.generate_key().decode()
     config = Settings(_env_file=None, environment="production", auth_provider="google",

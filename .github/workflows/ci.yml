@@ -48,13 +48,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build backend image
         run: docker build -t ledger-api:security -f backend/Dockerfile backend
-      - name: Scan image
+      # Keep unfixed base-image findings visible while blocking on fixes we can apply.
+      - name: Report all image vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ledger-api:security
+          format: table
+          exit-code: '0'
+          severity: HIGH,CRITICAL
+      - name: Fail on fixable image vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ledger-api:security
           format: table
           exit-code: '1'
           severity: HIGH,CRITICAL
+          ignore-unfixed: 'true'
 
   secrets:
     runs-on: ubuntu-latest
