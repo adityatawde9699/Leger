@@ -1,5 +1,7 @@
 import { API_BASE } from "./lib";
 
+let reauthenticationPromise = null;
+
 export async function createGoogleSession(credential) {
   const response = await fetch(`${API_BASE}/auth/session`, {
     method: "POST", credentials: "include",
@@ -22,7 +24,9 @@ export async function clearGoogleSession() {
 }
 
 export function reauthenticate() {
-  return new Promise((resolve, reject) => {
+  if (reauthenticationPromise) return reauthenticationPromise;
+
+  reauthenticationPromise = new Promise((resolve, reject) => {
     const google = window.google?.accounts?.id;
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
     if (!google || !clientId) {
@@ -58,7 +62,10 @@ export function reauthenticate() {
         finish(new Error("Google authentication is unavailable. Sign out and sign in again."));
       }
     });
+  }).finally(() => {
+    reauthenticationPromise = null;
   });
+  return reauthenticationPromise;
 }
 
 export async function fetchWithReauth(path, options) {
