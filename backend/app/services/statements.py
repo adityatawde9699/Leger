@@ -377,7 +377,7 @@ Rules:
         response = await model.generate_content_async([pdf_part, prompt])
         return response.text
     except Exception as e:
-        logger.warning("Gemini PDF extraction failed: %s", type(e).__name__)
+        logger.warning("Gemini PDF extraction failed: %s: %s", type(e).__name__, e)
         return ""
 
 
