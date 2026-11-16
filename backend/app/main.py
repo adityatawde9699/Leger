@@ -155,8 +155,8 @@ from .services.shared_cache import SharedTTLCache
 from .services.sms_parser import parse_sms
 from .services.statements import parse_csv, parse_excel, parse_pdf
 from .services.telemetry import record_telemetry
-from .services.url_guard import UnsafeURLError, validate_webhook_url
 from .services.upstash_redis import get_redis_client
+from .services.url_guard import UnsafeURLError, validate_webhook_url
 from .services.webhook_dispatcher import _deliver
 from .services.webhook_secrets import encrypt_secret, migrate_plaintext_secrets
 
@@ -362,9 +362,12 @@ if settings.run_db_bootstrap:
 
 # ── Rate limiter ──────────────────────────────────────────────────────────────
 def _rate_limit_identity(request: Request) -> str:
+    # Signed-in traffic is keyed on the session alone: behind the Vercel/Render proxies the
+    # client IP is shared (or spoofable), so mixing it in would merge users or mint new buckets.
     session_token = request.cookies.get(SESSION_COOKIE)
-    identity = hashlib.sha256(session_token.encode()).hexdigest()[:24] if session_token else "anonymous"
-    return f"{get_remote_address(request)}:{identity}"
+    if session_token:
+        return f"session:{hashlib.sha256(session_token.encode()).hexdigest()[:24]}"
+    return f"ip:{get_remote_address(request)}"
 
 
 limiter = Limiter(key_func=_rate_limit_identity,
@@ -452,13 +455,15 @@ async def categorized_rate_limits(request: Request, call_next):
             category = None
         if category:
             token = request.cookies.get(SESSION_COOKIE)
-            identity = "anonymous"
+            # Authenticated requests: one bucket per user, independent of IP (see
+            # _rate_limit_identity). Anonymous requests: one bucket per client IP, which
+            # uvicorn resolves from the proxy's X-Forwarded-For (entrypoint.sh).
+            raw = f"ip:{get_remote_address(request)}"
             if token:
                 with SessionLocal() as db:
                     session = db.get(AppSession, hashlib.sha256(token.encode()).hexdigest())
                     if session:
-                        identity = session.user_id
-            raw = f"{get_remote_address(request)}:{identity}"
+                        raw = f"user:{session.user_id}"
             subject = hashlib.sha256(raw.encode()).hexdigest()
             key = f"security-rate:{category}:{subject}:{int(time.time()) // window}"
             try:
@@ -538,6 +543,15 @@ def logout_session(request: Request, response: Response, db: Session = Depends(g
     return {"ok": True}
 
 _import_recovery_task: asyncio.Task | None = None
+# Strong references keep in-flight import tasks from being garbage-collected mid-run.
+_import_tasks: set[asyncio.Task] = set()
+
+
+def _schedule_import(job_id: str) -> None:
+    """Start processing a stored import job on the running event loop."""
+    task = asyncio.create_task(_process_import_job(job_id))
+    _import_tasks.add(task)
+    task.add_done_callback(_import_tasks.discard)
 _maintenance_task: asyncio.Task | None = None
 
 
@@ -576,6 +590,12 @@ def _month_range(month: str) -> tuple[date, date]:
     else:
         end = date(start.year, start.month + 1, 1)
     return start, end
+
+
+def _cloud_ai_allowed(db: Session, user_id: str) -> bool:
+    """True only when the user has opted in to sending data to cloud AI providers."""
+    owner = db.get(User, user_id)
+    return bool(owner and owner.cloud_ai_enabled)
 
 
 def _tx_query(db: Session, user_id: str, month: str | None = None, *, include_unposted: bool = False):
@@ -1723,7 +1743,9 @@ async def import_sms(
             db.flush()  # ensure tx.id is assigned before we reference it
             user_overrides = get_user_overrides(db, user.id)
             batch_input = [{"id": tx.id, "description": tx.description, "type": tx.type} for tx in pending_txs]
-            ai_results = await categorize_batch(batch_input, user_overrides=user_overrides)
+            ai_results = await categorize_batch(
+                batch_input, user_overrides=user_overrides, allow_cloud_ai=_cloud_ai_allowed(db, user.id)
+            )
             ai_map = {r["id"]: r for r in ai_results}
             for tx in pending_txs:
                 res = ai_map.get(tx.id)
@@ -1779,7 +1801,9 @@ async def import_sms_webhook(
         try:
             user_overrides = get_user_overrides(db, user.id)
             batch_input = [{"id": tx.id, "description": tx.description, "type": tx.type} for tx in pending_txs]
-            ai_results = await categorize_batch(batch_input, user_overrides=user_overrides)
+            ai_results = await categorize_batch(
+                batch_input, user_overrides=user_overrides, allow_cloud_ai=_cloud_ai_allowed(db, user.id)
+            )
             ai_map = {r["id"]: r for r in ai_results}
             for tx in pending_txs:
                 res = ai_map.get(tx.id)
@@ -1885,6 +1909,7 @@ async def preview_statement_import(
                         for index, row in enumerate(rows)
                     ],
                     user_overrides=user_overrides,
+                    allow_cloud_ai=_cloud_ai_allowed(db, user.id),
                 )
             }
         except Exception as ai_err:
@@ -2013,7 +2038,10 @@ async def _process_import_job(job_id: str) -> None:
                 for i, r in enumerate(rows)
             ]
             try:
-                ai_results = await categorize_batch(batch_input, user_overrides=user_overrides)
+                ai_results = await categorize_batch(
+                    batch_input, user_overrides=user_overrides,
+                    allow_cloud_ai=_cloud_ai_allowed(worker_db, user_id),
+                )
                 for res in ai_results:
                     idx = int(res["id"])
                     if res.get("confidence", 0) >= 0.6 and res.get("category", "Other") != "Other":
@@ -2343,7 +2371,7 @@ async def import_statement(
     db.commit()
     db.refresh(job)
 
-    asyncio.create_task(_process_import_job(job.id))
+    _schedule_import(job.id)
     logger.info("import.started user=%s job=%s", user.id, job.id)
     return job
 
@@ -2378,7 +2406,7 @@ def get_import_job(
 
 @app.post("/imports/jobs/{job_id}/retry", response_model=ImportJobOut)
 @limiter.limit(settings.import_rate_limit)
-def retry_import(
+async def retry_import(
     request: Request,
     job_id: str,
     user: UserContext = Depends(get_current_user),
@@ -2399,7 +2427,7 @@ def retry_import(
     job.error_message = None
     db.commit()
     db.refresh(job)
-    asyncio.create_task(_process_import_job(job.id))
+    _schedule_import(job.id)
     return job
 
 
@@ -3070,8 +3098,11 @@ async def auto_categorize(
     request: Request,
     payload: CategorizeSingleRequest,
     user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    result = await categorize_single(payload.description, payload.tx_type)
+    result = await categorize_single(
+        payload.description, payload.tx_type, allow_cloud_ai=_cloud_ai_allowed(db, user.id)
+    )
     return result
 
 
@@ -3081,8 +3112,9 @@ async def auto_categorize_batch(
     request: Request,
     payload: CategorizeBatchRequest,
     user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    results = await categorize_batch(payload.transactions)
+    results = await categorize_batch(payload.transactions, allow_cloud_ai=_cloud_ai_allowed(db, user.id))
     return results
 
 
@@ -3869,7 +3901,7 @@ async def negotiate_bills(
     recurring = recurring_payments(transactions)
     if not recurring:
         return []
-    return await analyze_bills(recurring)
+    return await analyze_bills(recurring, allow_cloud_ai=_cloud_ai_allowed(db, user.id))
 
 
 # ── Community Benchmarks ──────────────────────────────────────────────────────
@@ -4274,7 +4306,7 @@ async def recategorize_uncategorized(
     # Load user overrides for personalized categorization
     user_overrides = get_user_overrides(db, user.id)
     batch = [{"id": tx.id, "description": tx.description, "type": tx.type} for tx in txs]
-    results = await categorize_batch(batch, user_overrides=user_overrides)
+    results = await categorize_batch(batch, user_overrides=user_overrides, allow_cloud_ai=_cloud_ai_allowed(db, user.id))
 
     updated = 0
     for result in results:

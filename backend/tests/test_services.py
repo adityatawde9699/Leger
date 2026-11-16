@@ -2,6 +2,7 @@
 Tests for AI/analytics service endpoints (credit health, benchmarks).
 """
 
+from datetime import date, timedelta
 from decimal import Decimal
 
 from app.models import Account
@@ -87,7 +88,7 @@ def test_credit_readiness_uses_only_entered_account_facts(client):
         "/accounts",
         json={
             "name": "Card", "account_type": "credit", "balance": "200.00", "currency": "INR",
-            "credit_limit": "1000.00", "minimum_payment": "50.00", "payment_due_date": "2026-10-05",
+            "credit_limit": "1000.00", "minimum_payment": "50.00", "payment_due_date": (date.today() + timedelta(days=20)).isoformat(),
         },
         headers=AUTH_HEADER,
     )

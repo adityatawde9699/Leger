@@ -19,9 +19,9 @@ from datetime import UTC, datetime
 
 from ..config import settings
 from .ai_budget import AIRequestBudget
-from .upstash_redis import get_redis_client
 from .privacy import redact_sensitive_text
 from .telemetry import record_telemetry
+from .upstash_redis import get_redis_client
 
 logger = logging.getLogger("ledger.ai_router")
 
