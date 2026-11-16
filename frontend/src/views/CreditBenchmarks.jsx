@@ -9,9 +9,9 @@ function Period({ start, end, count }) {
 
 function AmountCard({ label, value, currency }) {
   return (
-    <div className="card" style={{ padding: 22 }}>
+    <div className="card" style={{ padding: 24 }}>
       <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 700, marginTop: 8 }}>
+      <div style={{ fontSize: 24, fontWeight: 500, marginTop: 8 }}>
         {value === null ? "Not available" : money(value, currency)}
       </div>
     </div>
@@ -52,12 +52,12 @@ export default function CreditBenchmarks() {
         </button>
       </div>
 
-      {loading && <div className="card" role="status">Loading your financial picture…</div>}
+      {loading && <div className="card" role="status">Loading your financial picture</div>}
       {error && <div className="card" role="alert">{error}</div>}
 
       {!loading && !error && tab === "cash-flow" && snapshot && (
         <div role="region" aria-label="Cash-flow picture">
-          <div className="card" style={{ padding: 22, marginBottom: 20 }}>
+          <div className="card" style={{ padding: 24, marginBottom: 20 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
               <Info size={18} style={{ flexShrink: 0 }} />
               <div>
@@ -67,7 +67,7 @@ export default function CreditBenchmarks() {
             </div>
           </div>
           {snapshot.status === "currency_mismatch" ? (
-            <div className="card" role="alert" style={{ padding: 22 }}>{snapshot.warnings[0]}</div>
+            <div className="card" role="alert" style={{ padding: 24 }}>{snapshot.warnings[0]}</div>
           ) : (
             <>
               <p style={{ color: "var(--text-secondary)", marginBottom: 20 }}>
@@ -78,7 +78,7 @@ export default function CreditBenchmarks() {
                 <AmountCard label="Net spending" value={snapshot.expenses} currency={snapshot.currency} />
                 <AmountCard label="Recorded cash flow" value={snapshot.net} currency={snapshot.currency} />
               </div>
-              <div className="card" style={{ padding: 22, marginTop: 20 }}>
+              <div className="card" style={{ padding: 24, marginTop: 20 }}>
                 <strong>Savings rate: {snapshot.savings_rate_pct === null ? "Not enough income data" : `${snapshot.savings_rate_pct}%`}</strong>
                 <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>
                   {snapshot.savings_rate_pct === null
@@ -87,13 +87,13 @@ export default function CreditBenchmarks() {
                 </p>
               </div>
               {snapshot.warnings.length > 0 && (
-                <div className="card" style={{ padding: 22, marginTop: 20 }}>
+                <div className="card" style={{ padding: 24, marginTop: 20 }}>
                   <strong>Before relying on this picture</strong>
                   <ul>{snapshot.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
                 </div>
               )}
               {snapshot.credit_readiness && snapshot.credit_readiness.status !== "unavailable" && (
-                <div className="card" style={{ padding: 22, marginTop: 20 }}>
+                <div className="card" style={{ padding: 24, marginTop: 20 }}>
                   <strong>Recorded credit-account readiness</strong>
                   <p style={{ margin: "8px 0", color: "var(--text-secondary)" }}>{snapshot.credit_readiness.reason}</p>
                   {snapshot.credit_readiness.accounts.map((account) => (
@@ -113,17 +113,17 @@ export default function CreditBenchmarks() {
 
       {!loading && !error && tab === "peers" && comparison && (
         <div role="region" aria-label="Peer comparison status">
-          <div className="card" style={{ padding: 22, marginBottom: 20 }}>
+          <div className="card" style={{ padding: 24, marginBottom: 20 }}>
             <strong>Peer ranking unavailable</strong>
             <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>{comparison.reason}</p>
           </div>
           {comparison.total_spending !== null && (
-            <div className="card" style={{ padding: 22 }}>
+            <div className="card" style={{ padding: 24 }}>
               <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>Your recorded spending</h2>
-              <p style={{ color: "var(--text-secondary)", margin: "0 0 18px" }}>
+              <p style={{ color: "var(--text-secondary)", margin: "0 0 16px" }}>
                 <Period start={comparison.period_start} end={comparison.period_end} count={comparison.transaction_count} />
               </p>
-              <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 18 }}>{money(comparison.total_spending, comparison.currency)}</div>
+              <div style={{ fontSize: 24, fontWeight: 500, marginBottom: 16 }}>{money(comparison.total_spending, comparison.currency)}</div>
               {comparison.categories.length === 0 ? (
                 <p>No expenses recorded yet. Add or import transactions to see your category breakdown.</p>
               ) : comparison.categories.map((item) => (

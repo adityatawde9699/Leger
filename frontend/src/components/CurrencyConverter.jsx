@@ -27,7 +27,7 @@ export default function CurrencyConverter({ defaultCurrency = "INR" }) {
     <section className="card currency-converter" aria-label="Currency converter">
       <div className="chart-card-header">
         <div><div className="chart-title">Currency converter</div><div className="chart-subtitle">Reference rate only · does not change Ledger records</div></div>
-        <ArrowRightLeft size={18} style={{ color: "var(--primary)" }} />
+        <ArrowRightLeft size={16} strokeWidth={1.5} style={{ color: "var(--text-muted)" }} />
       </div>
       <form className="currency-converter-form" onSubmit={convert}>
         <label><span>Amount</span><input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></label>

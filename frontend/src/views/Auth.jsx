@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createGoogleSession } from '../googleAuth';
-import { ArrowUpRight, ChartNoAxesCombined, Loader2, ScanLine, ShieldCheck, Sparkles } from 'lucide-react';
+import { ChartNoAxesCombined, Loader2, MessageSquare, ScanLine, ShieldCheck } from 'lucide-react';
 import { LedgerLogo } from '../components/ui';
 
 export default function Auth() {
@@ -70,58 +70,60 @@ export default function Auth() {
 
   return (
     <div className="auth-container">
-      <div className="auth-orb auth-orb-one" />
-      <div className="auth-orb auth-orb-two" />
-
       <main className="auth-shell">
         <section className="auth-story">
           <div className="auth-brand">
-            <LedgerLogo size={42} />
+            <LedgerLogo size={20} />
             <span>Ledger</span>
           </div>
 
           <div className="auth-story-copy">
-            <div className="auth-kicker"><Sparkles size={14} /> Finance, made clear</div>
-            <h1>Your money.<br /><span>Finally in focus.</span></h1>
-            <p>Track every rupee, spot patterns early, and make confident decisions with one intelligent financial workspace.</p>
+            <h1>Every rupee you earn and spend, <span>in one ruled ledger</span></h1>
+            <p>Import bank statements, see where the month went, and keep budgets, goals and GST records in the same place.</p>
 
             <div className="auth-feature-list">
-              <div className="auth-feature"><ChartNoAxesCombined size={18} /><span>Live spending intelligence</span></div>
-              <div className="auth-feature"><ScanLine size={18} /><span>Effortless statement imports</span></div>
-              <div className="auth-feature"><Sparkles size={18} /><span>Personal AI guidance</span></div>
+              <div className="auth-feature"><ScanLine strokeWidth={1.5} /><span>Statement and receipt imports</span></div>
+              <div className="auth-feature"><ChartNoAxesCombined strokeWidth={1.5} /><span>Spending by category and merchant</span></div>
+              <div className="auth-feature"><MessageSquare strokeWidth={1.5} /><span>Questions answered from your own transactions</span></div>
             </div>
           </div>
 
           <div className="auth-preview" aria-hidden="true">
             <div className="auth-preview-top">
               <div>
-                <span>MONTHLY OVERVIEW</span>
+                <span>Closing balance</span>
                 <strong>₹84,240</strong>
               </div>
-              <div className="auth-preview-growth"><ArrowUpRight size={14} /> 12.4%</div>
+              <div className="auth-preview-growth">1–17 Nov 2026</div>
             </div>
-            <div className="auth-preview-chart">
-              {[38, 55, 46, 72, 61, 88, 78, 100].map((height, index) => (
-                <i key={index} style={{ height: `${height}%` }} />
+            <div className="auth-preview-rows">
+              {[
+                ["1 Nov", "Salary", "Income", "+₹1,24,500", true],
+                ["3 Nov", "Prestige Lakeside", "Rent", "−₹22,000"],
+                ["6 Nov", "BigBasket", "Groceries", "−₹2,340"],
+                ["9 Nov", "Airtel Fiber", "Utilities", "−₹1,178"],
+                ["12 Nov", "Swiggy", "Dining", "−₹486"],
+              ].map(([d, n, c, a, inc]) => (
+                <div className="auth-preview-row" key={d + n}>
+                  <span className="d">{d}</span><span className="n">{n}</span><span className="c">{c}</span><span className={`a${inc ? " in" : ""}`}>{a}</span>
+                </div>
               ))}
             </div>
-            <div className="auth-preview-meta"><span>Income</span><b>₹1,24,500</b><span>Saved</span><b className="positive">₹40,260</b></div>
           </div>
 
-          <div className="auth-story-foot"><ShieldCheck size={15} /> Private by design · Your financial data stays yours</div>
+          <div className="auth-story-foot"><ShieldCheck strokeWidth={1.5} /> Your data stays in your account</div>
         </section>
 
         <section className="auth-form-panel">
           <div className="auth-mobile-brand">
-            <LedgerLogo size={38} />
+            <LedgerLogo size={20} />
             <span>Ledger</span>
           </div>
 
           <div className="auth-card">
             <div className="auth-header">
-              <div className="auth-secure-label"><span /> Secure access</div>
-              <h2>Welcome back</h2>
-              <p>Sign in to continue to your financial dashboard.</p>
+              <h2>Sign in to Ledger</h2>
+              <p>Use your Google account. Ledger never sees your password</p>
             </div>
 
             {error && <div className="auth-alert error" role="alert">{error}</div>}
@@ -135,15 +137,10 @@ export default function Auth() {
               </div>
             )}
 
-            <div className="auth-trust-note">
-              <ShieldCheck size={17} />
-              <span>Google verifies your identity.<br />Ledger never sees your password.</span>
-            </div>
-
-            <p className="auth-legal">By continuing, you agree to use Ledger responsibly and keep your account secure.</p>
+            <p className="auth-legal">By continuing you agree to use Ledger responsibly and keep your account secure.</p>
           </div>
 
-          <div className="auth-form-foot"><span>Encrypted connection</span><i /> <span>Privacy-first finance</span></div>
+          <div className="auth-form-foot"><span>Encrypted connection</span></div>
         </section>
       </main>
     </div>

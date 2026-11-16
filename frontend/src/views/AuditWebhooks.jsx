@@ -2,8 +2,7 @@ import React from "react";
 import { apiFetch } from "../lib";
 import { useToast } from "../components/ui";
 import {
-  Shield, Clock, Edit3, Trash2, Plus, Globe, AlertCircle,
-} from "lucide-react";
+  Shield, Clock, Edit3, Trash2, Plus, Globe, AlertCircle, ClipboardList } from "lucide-react";
 
 function timeAgo(dateStr) {
   const d = new Date(dateStr);
@@ -76,18 +75,14 @@ export default function AuditWebhooks() {
   return (
     <div className="view-audit">
       <div className="page-title-block">
-        <h1 className="page-title">Audit & Webhooks</h1>
-        <p className="page-subtitle">Activity log and event integrations</p>
+        <h1 className="page-title">Audit log and webhooks</h1>
+        <p className="page-subtitle">Every change to your ledger, and where events are sent</p>
       </div>
 
       {/* Tab toggle */}
-      <div className="type-toggle" style={{ marginBottom: 20 }}>
-        <button className={`type-btn${tab === "audit" ? " active expense" : ""}`} onClick={() => setTab("audit")} style={tab === "audit" ? { borderColor: "var(--primary)", background: "rgba(56,189,248,0.12)", color: "var(--primary)" } : {}}>
-          <Shield size={14} style={{ marginRight: 4 }} /> Audit Log
-        </button>
-        <button className={`type-btn${tab === "webhooks" ? " active income" : ""}`} onClick={() => setTab("webhooks")}>
-          <Globe size={14} style={{ marginRight: 4 }} /> Webhooks
-        </button>
+      <div className="segmented" role="tablist" aria-label="Audit sections" style={{ marginBottom: 16 }}>
+        <button type="button" role="tab" aria-selected={tab === "audit"} aria-pressed={tab === "audit"} onClick={() => setTab("audit")}>Audit log</button>
+        <button type="button" role="tab" aria-selected={tab === "webhooks"} aria-pressed={tab === "webhooks"} onClick={() => setTab("webhooks")}>Webhooks</button>
       </div>
 
       {/* Audit Log */}
@@ -99,7 +94,7 @@ export default function AuditWebhooks() {
             </div>
           ) : logs.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-state-icon">📋</div>
+              <div className="empty-state-icon"><ClipboardList size={18} strokeWidth={1.5} /></div>
               <div className="empty-state-title">No activity yet</div>
               <div className="empty-state-sub">Actions will appear here as you use the app</div>
             </div>

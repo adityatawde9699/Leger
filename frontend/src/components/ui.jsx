@@ -1,4 +1,5 @@
 import React from "react";
+import { X } from "lucide-react";
 
 // ── Toast ──────────────────────────────────────────────────────────────────────
 const ToastCtx = React.createContext(null);
@@ -20,43 +21,21 @@ export function ToastProvider({ children }) {
 
   const remove = (id) => setToasts((t) => t.filter((x) => x.id !== id));
 
-  const TYPE_STYLES = {
-    success: { background: '#A8FF2F', color: '#0A0A0B', icon: '✓' },
-    error:   { background: 'var(--accent)', color: '#FFFFFF', icon: '✕' },
-    info:    { background: '#26262D', color: '#FFFFFF', icon: 'ℹ' },
-  };
+  const DOT = { success: 'var(--positive)', error: 'var(--negative)', info: 'var(--text-muted)' };
 
   return (
     <ToastCtx.Provider value={add}>
       {children}
       <div className="toast-container">
-        {toasts.map(({ id, message, type }) => {
-          const s = TYPE_STYLES[type] || TYPE_STYLES.info;
-          return (
-            <div
-              key={id}
-              role="alert"
-              className="toast"
-              style={{
-                background: s.background,
-                color: s.color,
-                boxShadow: type === 'success' ? '0 10px 30px rgba(168, 255, 47, 0.2)' : 'var(--shadow)'
-              }}
-            >
-              <div style={{ width: 24, height: 24, borderRadius: '6px', background: 'rgba(0,0,0,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
-                {s.icon}
-              </div>
-              <span style={{ flex: 1 }}>{message}</span>
-              <button
-                onClick={() => remove(id)}
-                aria-label="Dismiss"
-                style={{ background: 'none', border: 'none', color: 'inherit', opacity: 0.7, cursor: 'pointer', fontSize: 16, padding: 0, lineHeight: 1 }}
-              >
-                ✕
-              </button>
-            </div>
-          );
-        })}
+        {toasts.map(({ id, message, type }) => (
+          <div key={id} role={type === 'error' ? 'alert' : 'status'} className="toast">
+            <span className="status-dot" style={{ background: DOT[type] || DOT.info }} aria-hidden="true" />
+            <span style={{ flex: 1 }}>{message}</span>
+            <button className="toast-close" onClick={() => remove(id)} aria-label="Dismiss">
+              <X size={14} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+          </div>
+        ))}
       </div>
     </ToastCtx.Provider>
   );
@@ -69,9 +48,8 @@ export function Skeleton({ width = "100%", height = 20, radius = 8 }) {
       aria-hidden="true"
       style={{
         width, height, borderRadius: radius,
-        background: 'linear-gradient(90deg, #1C1C21 25%, #26262D 50%, #1C1C21 75%)',
-        backgroundSize: '200% 100%',
-        animation: 'shimmer 1.5s infinite',
+        background: 'var(--surface-secondary)',
+        animation: 'skeleton-pulse 1.6s var(--ease) infinite alternate',
       }}
     />
   );
@@ -82,7 +60,7 @@ export function CardSkeleton() {
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Skeleton height={13} width="40%" radius={6} />
-        <Skeleton height={36} width={36} radius={10} />
+        <Skeleton height={16} width={16} radius={4} />
       </div>
       <Skeleton height={36} width="65%" radius={8} />
       <Skeleton height={12} width="35%" radius={6} />
@@ -94,8 +72,8 @@ export function CardSkeleton() {
 export function EmptyState({ icon, title, subtitle }) {
   return (
     <div style={{ textAlign: 'center', padding: '56px 24px' }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>{icon}</div>
-      <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>{title}</div>
+      {icon && <div style={{ display: 'grid', placeItems: 'center', width: 40, height: 40, margin: '0 auto 16px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-secondary)', color: 'var(--text-muted)' }}>{icon}</div>}
+      <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>{title}</div>
       {subtitle && <div style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{subtitle}</div>}
     </div>
   );
@@ -111,40 +89,14 @@ export function ErrorMsg({ message }) {
   );
 }
 
-export function LedgerLogo({ size = 38, className = "" }) {
-  // Ledger mark: a bold "L" monogram beside an ascending 3-bar chart (growth /
-  // ledger entries). The tallest bar is crimson — the lime + crimson identity.
-  const s = size * 0.6;
+export function LedgerLogo({ size = 20, className = "" }) {
+  // Ledger mark: a flat lime page with an "L" and two ruled entry lines in ink.
+  // One solid color, no tile gradient, no glow.
   return (
-    <div
-      className={`logo-icon ${className}`}
-      style={{
-        width: size,
-        height: size,
-        background: 'linear-gradient(135deg, var(--primary), var(--primary-hover))',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: size > 48 ? '16px' : '10px',
-        boxShadow: '0 4px 15px var(--primary-glow)',
-        flexShrink: 0,
-      }}
-    >
-      <svg width={s} height={s} viewBox="0 0 32 32" fill="none" aria-hidden="true">
-        {/* "L" monogram */}
-        <path
-          d="M9 6.5 V22.5 H15.5"
-          stroke="var(--bg)"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {/* Ascending bars — baseline aligns to the foot of the L */}
-        <rect x="17.6" y="18"  width="2.8" height="4.5" rx="1.2" fill="var(--bg)" />
-        <rect x="22.1" y="14"  width="2.8" height="8.5" rx="1.2" fill="var(--bg)" />
-        <rect x="26.6" y="9.5" width="2.8" height="13"  rx="1.2" fill="var(--accent)" />
-      </svg>
-    </div>
+    <svg className={`logo-icon ${className}`} width={size} height={size} viewBox="0 0 20 20" aria-hidden="true" style={{ flexShrink: 0, display: 'block' }}>
+      <rect width="20" height="20" rx="5" fill="var(--primary)" />
+      <path d="M6 5v10h4" stroke="var(--primary-ink)" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M12 11.5h3M12 15h3" stroke="var(--primary-ink)" strokeWidth="1.75" strokeLinecap="round" />
+    </svg>
   );
 }
-

@@ -1,8 +1,8 @@
 import React from "react";
-import { apiFetch, currencySymbol, money, CATEGORY_COLORS } from "../lib";
+import { apiFetch, currencySymbol, money } from "../lib";
 import { useToast, CardSkeleton } from "../components/ui";
 import CurrencyMismatchNotice from "../components/CurrencyMismatchNotice";
-import { Target, AlertCircle, Sparkles, CheckCircle } from "lucide-react";
+import { Wand2 } from "lucide-react";
 
 export default function Budgets({ onNavigate }) {
   const toast = useToast();
@@ -61,7 +61,7 @@ export default function Budgets({ onNavigate }) {
       setBudgets(saved);
       setDraft(Object.fromEntries(saved.map((b) => [b.category, Number(b.monthly_limit)])));
       setCategories((items) => [...new Set([...items, ...saved.map((item) => item.category)])]);
-      toast("Dynamic budgets applied", "success");
+      toast("Suggested budgets applied", "success");
     } catch (e) {
       toast(e.message, "error");
     }
@@ -70,8 +70,8 @@ export default function Budgets({ onNavigate }) {
   if (loading) {
     return (
       <div className="view-budgets">
-        <h1 className="page-title">Goals & Budgets</h1>
-        <p className="page-subtitle">Loading your budgets…</p>
+        <h1 className="page-title">Budgets</h1>
+        <p className="page-subtitle">Loading your budgets</p>
         <div className="budget-grid">
           {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} />)}
         </div>
@@ -94,29 +94,29 @@ export default function Budgets({ onNavigate }) {
     <div className="view-budgets">
       <div className="view-header">
         <div>
-          <h1 className="page-title">Goals & Budgets</h1>
-          <p className="page-subtitle" style={{ marginBottom: 0 }}>Set a target, see your pace, and decide what to adjust.</p>
+          <h1 className="page-title">Budgets</h1>
+          <p className="page-subtitle" style={{ marginBottom: 0 }}>Monthly limits per category, with this month’s pace against each</p>
         </div>
         <div className="view-header-actions">
           <button className="btn-secondary" style={{ fontSize: 14 }} onClick={applyDynamic}>
-            <Sparkles size={15} /> AI Suggestions
+            <Wand2 size={16} strokeWidth={1.5} /> Suggest budgets
           </button>
           <button className="btn-primary" onClick={saveBudgets} disabled={saving}>
-            <CheckCircle size={15} /> {saving ? "Saving…" : "Save Budgets"}
+            {saving ? "Saving" : "Save budgets"}
           </button>
         </div>
       </div>
 
-      <p style={{ color: "var(--text-muted)", fontSize: 12, margin: "-8px 0 18px" }}>
+      <p style={{ color: "var(--text-muted)", fontSize: 12, margin: "-8px 0 16px" }}>
         Pace projections extend spending so far this month across the full month. They are estimates, not a forecast of bills or account balance.
       </p>
 
       {/* Summary strip */}
       <div className="summary-strip">
         {[
-          { label: 'Total Budgeted', val: money(totalBudgeted), color: 'var(--text-primary)' },
-          { label: 'Total Spent',    val: money(totalSpent),    color: totalSpent > totalBudgeted ? 'var(--negative)' : 'var(--primary)' },
-          { label: 'Over Budget',    val: `${overCount} categories`, color: overCount > 0 ? 'var(--negative)' : 'var(--primary)' },
+          { label: 'Budgeted',          val: money(totalBudgeted), color: 'var(--text-primary)' },
+          { label: 'Spent this month',  val: money(totalSpent),    color: totalBudgeted > 0 && totalSpent > totalBudgeted ? 'var(--negative)' : 'var(--text-primary)' },
+          { label: 'Categories over',   val: String(overCount),    color: overCount > 0 ? 'var(--negative)' : 'var(--text-primary)' },
         ].map(({ label, val, color }) => (
           <div className="stat-card" key={label}>
             <div className="stat-card-label">{label}</div>
@@ -137,27 +137,24 @@ export default function Budgets({ onNavigate }) {
           const dailyAllowance = budget > 0 ? Math.max(0, budget - spent) / remainingDays : null;
           const pct    = budget > 0 ? Math.min(120, (spent / budget) * 100) : 0;
           const isOver = budget > 0 && spent > budget;
-          const color  = CATEGORY_COLORS[cat] || "var(--text-secondary)";
 
           return (
             <div className={`card budget-card${isOver ? " over-budget" : ""}`} key={cat}>
               <div className="budget-card-top">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                  <div className="budget-cat-name" style={{ color: isOver ? 'var(--negative)' : 'var(--text-primary)' }}>{cat}</div>
+                  <div className="budget-cat-name">{cat}</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span className="budget-period">Monthly</span>
-                  {isOver && <AlertCircle size={16} style={{ color: 'var(--negative)' }} />}
                 </div>
               </div>
 
               <div className="budget-progress-label">
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  {money(spent)} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>of {budget > 0 ? money(budget) : "—"}</span>
+                <span className="num" style={{ color: 'var(--text-primary)' }}>
+                  {money(spent)}{budget > 0 && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> of {money(budget)}</span>}
                 </span>
-                <span style={{ color: isOver ? 'var(--negative)' : pct > 80 ? 'var(--warning)' : 'var(--text-secondary)' }}>
-                  {budget > 0 ? `${Math.round(pct)}%` : "No limit"}
+                <span className="num" style={{ color: isOver ? 'var(--negative)' : pct > 80 ? 'var(--warning)' : 'var(--text-muted)' }}>
+                  {budget > 0 ? `${Math.round(pct)}%` : ""}
                 </span>
               </div>
 
@@ -166,31 +163,25 @@ export default function Budgets({ onNavigate }) {
                   className="progress-bar-fill"
                   style={{
                     width: `${Math.min(100, pct)}%`,
-                    background: isOver ? 'var(--negative)' : pct > 80 ? 'var(--warning)' : color,
+                    background: isOver ? 'var(--negative)' : pct > 80 ? 'var(--warning)' : 'var(--text-secondary)',
                   }}
                 />
               </div>
 
-              {isOver && (
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--negative)', marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <AlertCircle size={13} /> Over by {money(spent - budget)}
-                </div>
-              )}
-
               <div className="budget-stats">
                 <div>
                   <div className="budget-stat-label">Spent</div>
-                  <div className="budget-stat-value" style={{ color: isOver ? 'var(--negative)' : 'var(--text-primary)' }}>{money(spent)}</div>
+                  <div className="budget-stat-value num">{money(spent)}</div>
                 </div>
                 <div>
-                  <div className="budget-stat-label">Monthly Limit</div>
+                  <div className="budget-stat-label">Monthly limit</div>
                   <div className="input-prefix-wrap">
-                    <span className="input-prefix" style={{ top: 'unset', transform: 'none', position: 'relative', left: 'unset', marginRight: 4, fontSize: 14, fontWeight: 700 }}>{currencySymbol()}</span>
+                    <span className="input-prefix" style={{ top: 'unset', transform: 'none', position: 'relative', left: 'unset', marginRight: 4, fontSize: 14, fontWeight: 500 }}>{currencySymbol()}</span>
                     <input
                       type="number" min="0" placeholder="Set limit"
                       value={draft[cat] ?? ""}
                       onChange={(e) => setDraft({ ...draft, [cat]: e.target.value })}
-                      style={{ padding: '6px 10px', fontSize: 15, fontWeight: 600, display: 'inline-block', width: 'calc(100% - 20px)' }}
+                      style={{ padding: '6px 10px', fontSize: 15, fontWeight: 500, display: 'inline-block', width: 'calc(100% - 20px)' }}
                     />
                   </div>
                 </div>
@@ -198,15 +189,15 @@ export default function Budgets({ onNavigate }) {
 
               <div className={`budget-remaining ${isOver ? "over" : "ok"}`}>
                 {isOver
-                  ? <><AlertCircle size={14} /> {money(spent - budget)} over budget</>
+                  ? <><span className="num">{money(spent - budget)}</span> over budget</>
                   : budget > 0
-                    ? <><CheckCircle size={14} /> {money(Math.max(0, budget - spent))} remaining</>
+                    ? <><span className="num">{money(Math.max(0, budget - spent))}</span> remaining</>
                     : "No limit set"
                 }
               </div>
               {budget > 0 && spent > 0 && (
-                <div style={{ borderTop: "1px solid var(--border)", marginTop: 12, paddingTop: 10, fontSize: 11, lineHeight: 1.5, color: projected > budget ? "var(--warning)" : "var(--text-muted)" }}>
-                  At this month’s pace: about {money(projected)} by month end.
+                <div style={{ borderTop: "1px solid var(--border)", marginTop: 12, paddingTop: 10, fontSize: 12, lineHeight: "18px", color: projected > budget ? "var(--warning)" : "var(--text-muted)" }}>
+                  At this pace, about <span className="num">{money(projected)}</span> by month end.
                   {dailyAllowance != null && <span> To stay near your target, average {money(dailyAllowance)}/day for the remaining {remainingDays} days.</span>}
                 </div>
               )}

@@ -1,12 +1,12 @@
 import React from "react";
-import { apiFetch } from "../lib";
-import { AlertCircle, Lightbulb, CheckCircle, Info, Zap, X, ChevronRight } from "lucide-react";
+import { apiFetch, formatRange } from "../lib";
+import { X, ChevronRight } from "lucide-react";
 
 const TYPE_CONFIG = {
-  warning:  { icon: <AlertCircle  size={14} />, color: "var(--negative)", bg: "var(--negative-soft)", border: "rgba(255,45,45,0.4)", label: "Warning"  },
-  tip:      { icon: <Lightbulb    size={14} />, color: "var(--warning)", bg: "rgba(250,204,21,0.12)", border: "rgba(250,204,21,0.4)", label: "Tip"      },
-  positive: { icon: <CheckCircle  size={14} />, color: "var(--positive)", bg: "var(--positive-soft)", border: "rgba(168,255,47,0.3)", label: "Great"    },
-  info:     { icon: <Info         size={14} />, color: "var(--info)", bg: "rgba(56,189,248,0.12)", border: "rgba(56,189,248,0.3)", label: "Info"     },
+  warning:  { dot: "var(--negative)", label: "Warning" },
+  tip:      { dot: "var(--warning)",  label: "Tip" },
+  positive: { dot: "var(--positive)", label: "Going well" },
+  info:     { dot: "var(--text-muted)", label: "Note" },
 };
 
 const PRIORITY_LABEL = { 5: "Critical", 4: "Important", 3: "Notable", 2: "Informational", 1: "Minor" };
@@ -61,15 +61,11 @@ export default function ProactiveInsights({ onNavigate }) {
 
   if (loading) {
     return (
-      <div className="proactive-card card">
-        <div className="proactive-title" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-          <Zap size={16} style={{ color: "var(--info)" }} />
-          <span>AI Insights</span>
-          <div className="skeleton" style={{ width: 40, height: 20, borderRadius: 10, marginLeft: "auto" }} />
-        </div>
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="chart-card-header" style={{ marginBottom: 12 }}><div className="chart-title">Advisor notes</div></div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="skeleton" style={{ height: 52, borderRadius: 12 }} />
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="skeleton" style={{ height: 44, borderRadius: 8 }} />
           ))}
         </div>
       </div>
@@ -79,124 +75,68 @@ export default function ProactiveInsights({ onNavigate }) {
   if (!visible.length) return null;
 
   return (
-    <div className="proactive-card card">
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-        <Zap size={16} style={{ color: "var(--info)" }} />
-        <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>AI Insights</span>
-        <span style={{
-          marginLeft: "auto", fontSize: 11, padding: "2px 10px", borderRadius: 20,
-          background: "var(--surface-secondary)", color: "var(--text-muted)", fontWeight: 600,
-        }}>
-          {visible.length} insights
-        </span>
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="chart-card-header" style={{ marginBottom: 8 }}>
+        <div>
+          <div className="chart-title">Advisor notes <span className="num" style={{ color: "var(--text-muted)", fontWeight: 400, marginLeft: 4 }}>{visible.length}</span></div>
+          <div className="chart-subtitle">Generated from your transactions, ordered by priority</div>
+        </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="ledger-list">
         {visible.map((ins, i) => {
           const cfg = TYPE_CONFIG[ins.type] || TYPE_CONFIG.info;
           const key = `${ins.text}_${i}`;
           return (
-            <div key={key}
-              style={{
-                display: "flex", alignItems: "flex-start", gap: 10,
-                padding: "12px 14px",
-                background: cfg.bg,
-                border: `1px solid ${cfg.border}`,
-                borderLeft: `4px solid ${cfg.color}`,
-                borderRadius: 12,
-                position: "relative",
-                transition: "transform 0.15s, box-shadow 0.15s",
-              }}
-              onMouseEnter={e => e.currentTarget.style.transform = "translateY(-1px)"}
-              onMouseLeave={e => e.currentTarget.style.transform = ""}
-            >
-              {/* Priority badge */}
-              {ins.priority >= 4 && (
-                <div style={{
-                  position: "absolute", top: -6, right: 36, fontSize: 9, fontWeight: 800,
-                  padding: "1px 6px", borderRadius: 6, textTransform: "uppercase",
-                  background: ins.priority === 5 ? "var(--negative)" : "var(--warning)", color: "#fff",
-                }}>
-                  {PRIORITY_LABEL[ins.priority]}
-                </div>
-              )}
-
-              <div style={{ color: cfg.color, marginTop: 1, flexShrink: 0 }}>
-                {cfg.icon}
-              </div>
-
-              <div style={{ flex: 1 }}>
-                <p style={{ fontSize: 13, lineHeight: 1.55, margin: 0, color: "var(--text-primary)", fontWeight: 500 }}>
+            <div key={key} className="ledger-row" style={{ gridTemplateColumns: "auto 1fr auto", alignItems: "start", padding: "12px 0" }}>
+              <span className="status-dot" style={{ background: cfg.dot, marginTop: 8 }} aria-hidden="true" />
+              <div style={{ minWidth: 0 }}>
+                <p style={{ fontSize: 14, lineHeight: "22px", margin: 0, color: "var(--text-primary)" }}>
                   {ins.text}
                 </p>
-                {ins.action && (
-                  <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.4 }}>
-                    <strong>Next step:</strong> {ins.action}
-                  </div>
-                )}
+                <div className="sub" style={{ marginTop: 4 }}>
+                  {cfg.label}{ins.priority >= 4 ? ` · ${PRIORITY_LABEL[ins.priority]} priority` : ""}
+                  {ins.action && <> · Next step: {ins.action}</>}
+                </div>
                 {(ins.evidence?.length > 0 || ins.data_quality?.coverage) && (
-                  <details style={{ marginTop: 7, fontSize: 11, color: "var(--text-muted)" }}>
-                    <summary style={{ cursor: "pointer", userSelect: "none" }}>Why am I seeing this?</summary>
-                    <div style={{ paddingTop: 5, lineHeight: 1.5 }}>
+                  <details style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                    <summary style={{ cursor: "pointer", userSelect: "none" }}>Why am I seeing this</summary>
+                    <div style={{ paddingTop: 4, lineHeight: "18px" }}>
                       {ins.evidence?.length > 0 && (
                         <div>Based on {ins.evidence.length} transaction{ins.evidence.length === 1 ? "" : "s"}
                           {ins.category ? ` in ${ins.category}` : ""}.</div>
                       )}
                       {ins.data_quality?.period_start && (
-                        <div>Data: {ins.data_quality.period_start} → {ins.data_quality.period_end} · {ins.data_quality.coverage} coverage.</div>
+                        <div>Data: {formatRange(ins.data_quality.period_start, ins.data_quality.period_end) || `${ins.data_quality.period_start} – ${ins.data_quality.period_end}`} · {ins.data_quality.coverage} coverage.</div>
                       )}
                       <div>Confidence: {ins.confidence || "medium"} · {ins.source === "ai" ? "AI explanation" : "Ledger calculation"}.</div>
                     </div>
                   </details>
                 )}
-                {ins.category && (
-                  <button
-                    onClick={() => onNavigate?.("transactions")}
-                    style={{
-                      marginTop: 6, fontSize: 11, color: cfg.color, background: "none",
-                      border: "none", padding: 0, cursor: "pointer", display: "flex",
-                      alignItems: "center", gap: 3, fontWeight: 600,
-                    }}
-                  >
-                    View {ins.category} <ChevronRight size={10} />
-                  </button>
-                )}
-                {ins.id && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 8, fontSize: 10, color: "var(--text-muted)" }}>
-                    {feedback[ins.id] ? (
-                      <span>Thanks — marked {feedback[ins.id].replace("_", " ")}</span>
-                    ) : (
-                      <>
-                        <span>Useful?</span>
-                        {[["helpful", "Yes"], ["inaccurate", "Needs correction"], ["too_generic", "Too generic"]].map(([value, label]) => (
-                          <button key={value} onClick={() => sendFeedback(ins, value)} style={{ border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-secondary)", borderRadius: 5, padding: "2px 5px", fontSize: 10, cursor: "pointer" }}>
-                            {label}
-                          </button>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                )}
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginTop: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                  {ins.category && (
+                    <button className="btn-link" onClick={() => onNavigate?.("transactions")} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, padding: 0, color: "var(--text-primary)" }}>
+                      View {ins.category} <ChevronRight size={12} />
+                    </button>
+                  )}
+                  {ins.id && (feedback[ins.id] ? (
+                    <span>Marked {feedback[ins.id].replace("_", " ")}</span>
+                  ) : (
+                    <>
+                      <span>Useful?</span>
+                      {[["helpful", "Yes"], ["inaccurate", "Needs correction"], ["too_generic", "Too generic"]].map(([value, label]) => (
+                        <button key={value} className="btn-link" onClick={() => sendFeedback(ins, value)} style={{ fontSize: 12, padding: 0 }}>
+                          {label}
+                        </button>
+                      ))}
+                    </>
+                  ))}
+                </div>
               </div>
 
-              {/* Type label */}
-              <span style={{
-                fontSize: 10, padding: "2px 7px", borderRadius: 8, fontWeight: 700,
-                color: cfg.color, background: "transparent",
-                border: `1px solid ${cfg.border}`, textTransform: "uppercase",
-                flexShrink: 0, alignSelf: "flex-start",
-              }}>
-                {cfg.label}
-              </span>
-
               {/* Seven-day snooze: the insight can return after the user has had time to act. */}
-              <button aria-label="Snooze insight for 7 days" title="Snooze for 7 days" onClick={() => { dismiss(key); sendFeedback(ins, "snoozed"); }}
-                style={{
-                  background: "none", border: "none", color: "var(--text-muted)",
-                  cursor: "pointer", padding: "0 2px", flexShrink: 0, fontSize: 14,
-                  lineHeight: 1, marginTop: -2,
-                }}>
-                <X size={13} />
+              <button className="toast-close" aria-label="Snooze insight for 7 days" title="Snooze for 7 days" onClick={() => { dismiss(key); sendFeedback(ins, "snoozed"); }}>
+                <X size={14} strokeWidth={1.5} />
               </button>
             </div>
           );
@@ -204,8 +144,8 @@ export default function ProactiveInsights({ onNavigate }) {
       </div>
 
       {insights.length > visible.length && (
-        <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>
-          {insights.length - visible.length} insight(s) dismissed · Resets in 7 days
+        <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)" }}>
+          {insights.length - visible.length} snoozed for 7 days
         </div>
       )}
     </div>

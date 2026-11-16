@@ -1,32 +1,37 @@
 import React from "react";
-import { apiFetch, compactMoney, money, EXPENSE_CATEGORIES, CATEGORY_COLORS, paletteColor } from "../lib";
+import { apiFetch, compactMoney, money, EXPENSE_CATEGORIES, formatDay, formatMonth, formatRange } from "../lib";
 import { useToast } from "../components/ui";
 import CurrencyMismatchNotice from "../components/CurrencyMismatchNotice";
-import { AlertTriangle, TrendingUp, TrendingDown, BarChart3, Activity, Zap } from "lucide-react";
+
 import {
   BarChart, Bar, Cell, AreaChart, Area, LineChart, Line,
   ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend,
 } from "recharts";
 
 const TIME_FILTERS = [
-  { id: "this_month",   label: "This Month" },
-  { id: "30d",          label: "30 Days" },
-  { id: "3m",          label: "3 Months"  },
-  { id: "current_year",label: "This Year" },
-  { id: "all",         label: "All Time"  },
+  { id: "this_month",   label: "This month" },
+  { id: "30d",          label: "30 days" },
+  { id: "3m",           label: "3 months" },
+  { id: "current_year", label: "This year" },
+  { id: "all",          label: "All time" },
 ];
 
-const SEVERITY_COLOR = { high: "var(--negative)", medium: "var(--warning)", low: "var(--info)" };
+// One accent per chart; everything else in neutral steps of the ramp.
+const INK = { accent: "#b6e35a", neutral: "#5c5c62", neutralLight: "#85858b", grid: "rgba(237,237,237,0.06)" };
+const AXIS = { fontSize: 11, fill: "#85858b", fontFamily: "IBM Plex Mono, monospace" };
+const SEVERITY_LABEL = { high: "High", medium: "Medium", low: "Low" };
+
 
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 16px", boxShadow: "var(--shadow)" }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)", marginBottom: 8 }}>{label}</div>
+    <div style={{ background: "var(--surface-secondary)", border: "1px solid var(--border-hover)", borderRadius: 8, padding: "8px 12px", boxShadow: "var(--shadow-float)" }}>
+      <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>{label}</div>
       {payload.map(p => (
-        <div key={p.dataKey} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: p.color, marginBottom: 4 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: p.color }} />
-          {p.name || p.dataKey}: {money(p.value)}
+        <div key={p.dataKey} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+          <span className="status-dot" style={{ background: p.color || p.stroke }} />
+          <span style={{ flex: 1 }}>{p.name || p.dataKey}</span>
+          <span className="num" style={{ color: "var(--text-primary)" }}>{money(p.value)}</span>
         </div>
       ))}
     </div>
@@ -91,7 +96,7 @@ export default function Analytics({ onNavigate }) {
     return (
       <div style={{ padding: "32px 0" }}>
         <h1 className="page-title" style={{ marginBottom: 6 }}>Analytics</h1>
-        <p className="page-subtitle">Loading analytics data…</p>
+        <p className="page-subtitle">Loading analytics data</p>
         <div className="charts-grid" style={{ marginTop: 24 }}>
           {[1,2,3,4].map(i => (
             <div key={i} className="card skeleton" style={{ height: 240 }} />
@@ -139,11 +144,9 @@ export default function Analytics({ onNavigate }) {
   });
 
   // Spending heatmap: day × category intensity
-  const heatmapData = topCats.map((cat, i) => {
+  const heatmapData = topCats.map((cat) => {
     const catTotal = Number(byCategory[cat] || 0);
-    const norm = cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase();
-    const color = CATEGORY_COLORS[norm] || CATEGORY_COLORS[cat] || paletteColor(cat, i);
-    return { category: cat, value: catTotal, color };
+    return { category: cat, value: catTotal };
   }).sort((a, b) => b.value - a.value);
 
   // Monthly cash flow with net line
@@ -164,7 +167,7 @@ export default function Analytics({ onNavigate }) {
   }, {});
   const anomalyTimeline = Object.entries(anomalyByDate)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, count]) => ({ date: date.slice(5), count }));
+    .map(([date, count]) => ({ date: formatDay(date), count }));
 
   // Forecast bars for top categories
   const forecastBars = forecast?.by_category
@@ -214,21 +217,16 @@ export default function Analytics({ onNavigate }) {
   return (
     <div>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 16, marginBottom: 32 }}>
+      <div className="dashboard-header">
         <div>
-          <h1 className="page-title" style={{ marginBottom: 6 }}>Analytics</h1>
-          <p className="page-subtitle" style={{ marginBottom: 0 }}>
-            Deep dive into spending patterns, forecasts, and anomalies
+          <h1 className="page-title">Analytics</h1>
+          <p className="page-subtitle" style={{ fontFamily: "var(--font-display)", fontSize: 14, color: "var(--text-secondary)" }}>
+            Spending patterns, forecasts and unusual activity
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="segmented" role="group" aria-label="Period">
           {TIME_FILTERS.map(r => (
-            <button key={r.id}
-              onClick={() => setTimeRange(r.id)}
-              className={timeRange === r.id ? "btn-primary" : "btn-secondary"}
-              style={{ padding: "8px 16px", fontSize: 13 }}>
-              {r.label}
-            </button>
+            <button key={r.id} type="button" aria-pressed={timeRange === r.id} onClick={() => setTimeRange(r.id)}>{r.label}</button>
           ))}
         </div>
       </div>
@@ -236,32 +234,27 @@ export default function Analytics({ onNavigate }) {
       {/* KPI Row */}
       <div className="account-grid" style={{ marginBottom: 24 }}>
         {[
-          { label: "Avg Monthly Spend", val: money(avgMonthlyExpense), sub: `over ${months_covered} month(s)`, color: "var(--negative)", Icon: TrendingDown },
-          { label: "Total Income",       val: money(income),           sub: summary?.period_start ? `${summary.period_start} →` : "All time", color: "var(--positive)", Icon: TrendingUp },
-          { label: "Net Savings",        val: money(Math.max(0, net)), sub: income > 0 ? `${Math.round((Math.max(0,net)/income)*100)}% rate` : "—",  color: "var(--info)", Icon: Activity },
-          { label: "Anomalies",          val: anomalies.length,        sub: `${anomalies.filter(a=>a.severity==="high").length} high severity`, color: "var(--warning)", Icon: AlertTriangle, isCount: true },
-        ].map(({ label, val, sub, color, Icon, isCount }) => (
-          <div key={label} className="card account-card" style={{ borderTop: `3px solid ${color}` }}>
-            <div className="account-card-header">
-              <span className="account-label">{label}</span>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: `${color}18`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Icon size={18} style={{ color }} />
-              </div>
-            </div>
-            <div className="account-amount" style={{ fontSize: isCount ? 28 : 22 }}>{val}</div>
-            <div className="account-change muted" style={{ fontSize: 12 }}>{sub}</div>
+          { label: "Average monthly spending", val: money(avgMonthlyExpense), sub: `Over ${months_covered} month${months_covered === 1 ? "" : "s"}` },
+          { label: "Income",                   val: money(income),           sub: summary?.period_start && summary?.period_end ? formatRange(summary.period_start, summary.period_end) : "All time" },
+          { label: "Saved",                    val: money(Math.max(0, net)), sub: income > 0 ? `${Math.round((Math.max(0,net)/income)*100)}% of income` : "No income recorded", accent: net > 0 },
+          { label: "Unusual transactions",     val: String(anomalies.length), sub: `${anomalies.filter(a=>a.severity==="high").length} high severity` },
+        ].map(({ label, val, sub, accent }) => (
+          <div key={label} className="card account-card">
+            <div className="account-card-header"><span className="account-label">{label}</span></div>
+            <div className="account-amount" style={accent ? { color: "var(--primary)" } : undefined}>{val}</div>
+            <div className="account-change muted">{sub}</div>
           </div>
         ))}
       </div>
 
       {/* Evidence-backed same-length comparison */}
-      <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--primary)" }}>
+      <div className="card" style={{ marginBottom: 24 }}>
         <div className="chart-card-header">
           <div>
             <div className="chart-title">{comparisonMode === "yoy" ? "This month vs same month last year" : "This month vs previous month"}</div>
             <div className="chart-subtitle">
               {comparison?.status === "ready"
-                ? `${comparison.current.period.start} → ${comparison.current.period.end} compared with ${comparison.previous.period.start} → ${comparison.previous.period.end}.`
+                ? `${formatRange(comparison.current.period.start, comparison.current.period.end)} compared with ${formatRange(comparison.previous.period.start, comparison.previous.period.end)}`
                 : comparison?.data_quality?.warnings?.join(" · ") || "Not enough history for a trustworthy comparison."}
             </div>
           </div>
@@ -279,7 +272,7 @@ export default function Analytics({ onNavigate }) {
             ].map(([label, change, percent, color]) => (
               <div key={label} style={{ padding: "4px 0" }}>
                 <div className="account-label">{label}</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color }}>{Number(change) >= 0 ? "+" : ""}{money(change)}</div>
+                <div style={{ fontSize: 20, fontWeight: 500, color }}>{Number(change) >= 0 ? "+" : ""}{money(change)}</div>
                 <div className="muted" style={{ fontSize: 12 }}>{percent == null ? "No prior baseline" : `${Number(percent) >= 0 ? "+" : ""}${percent}%`}</div>
               </div>
             ))}
@@ -291,7 +284,7 @@ export default function Analytics({ onNavigate }) {
 
       {/* Fixed versus flexible spending from confirmed obligation evidence. */}
       {summary?.analysis?.fixed_flexible && (
-        <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--warning)" }}>
+        <div className="card" style={{ marginBottom: 24 }}>
           <div className="chart-card-header">
             <div>
               <div className="chart-title">Committed vs flexible spending</div>
@@ -311,7 +304,7 @@ export default function Analytics({ onNavigate }) {
                 ].map(([label, value, color]) => (
                   <div key={label} style={{ padding: "4px 0" }}>
                     <div className="account-label">{label}</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color }}>{money(value)}</div>
+                    <div style={{ fontSize: 20, fontWeight: 500, color }}>{money(value)}</div>
                   </div>
                 ))}
               </div>
@@ -323,7 +316,7 @@ export default function Analytics({ onNavigate }) {
         </div>
       )}
 
-      <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--info)" }}>
+      <div className="card" style={{ marginBottom: 24 }}>
         <div className="chart-card-header">
           <div>
             <div className="chart-title">Cash-flow runway</div>
@@ -344,7 +337,7 @@ export default function Analytics({ onNavigate }) {
               ].map(([label, value, color]) => (
                 <div key={label} style={{ padding: "4px 0" }}>
                   <div className="account-label">{label}</div>
-                  <div style={{ fontSize: 19, fontWeight: 700, color }}>{money(value)}</div>
+                  <div style={{ fontSize: 19, fontWeight: 500, color }}>{money(value)}</div>
                 </div>
               ))}
             </div>
@@ -358,7 +351,7 @@ export default function Analytics({ onNavigate }) {
         )}
       </div>
 
-      <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--warning)" }}>
+      <div className="card" style={{ marginBottom: 24 }}>
         <div className="chart-card-header">
           <div>
             <div className="chart-title">Review possible leakage</div>
@@ -373,7 +366,7 @@ export default function Analytics({ onNavigate }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {leakage.items.slice(0, 5).map((item) => (
               <div key={item.id} style={{ padding: "10px 0", borderTop: "1px solid var(--border)" }}>
-                <div style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 13 }}>{item.claim}</div>
+                <div style={{ color: "var(--text-primary)", fontWeight: 500, fontSize: 13 }}>{item.claim}</div>
                 <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{item.recommended_action} Confidence: {item.confidence}.</div>
               </div>
             ))}
@@ -384,10 +377,10 @@ export default function Analytics({ onNavigate }) {
       </div>
 
       {/* Deterministic scenario planner */}
-      <div className="card" style={{ marginBottom: 24, borderTop: "3px solid var(--info)" }}>
+      <div className="card" style={{ marginBottom: 24 }}>
         <div className="chart-card-header">
           <div>
-            <div className="chart-title" style={{ display: "flex", alignItems: "center", gap: 8 }}><Zap size={17} style={{ color: "var(--info)" }} /> Scenario planner</div>
+            <div className="chart-title">Scenario planner</div>
             <div className="chart-subtitle">See the monthly effect of a change using your last 90 days of transactions. No AI estimates.</div>
           </div>
         </div>
@@ -439,7 +432,7 @@ export default function Analytics({ onNavigate }) {
           </div>
         </form>
         {scenario && (
-          <div style={{ marginTop: 20, paddingTop: 18, borderTop: "1px solid var(--border)" }}>
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
               Based on {scenario.transaction_count} transactions from {scenario.period_start || "no recorded history"} to {scenario.period_end || "today"}.
             </div>
@@ -450,9 +443,9 @@ export default function Analytics({ onNavigate }) {
                 ["Monthly improvement", Number(scenario.monthly_savings) + (Number(scenario.projected_monthly_income) - Number(scenario.baseline_monthly_income)), "var(--info)"],
                 [`${scenario.horizon_months}-month net change`, scenario.horizon_net_change, scenario.horizon_net_change >= 0 ? "var(--positive)" : "var(--negative)"],
               ].map(([label, value, color]) => (
-                <div key={label} style={{ padding: "12px 14px", borderRadius: 12, background: "var(--surface-secondary)" }}>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 5 }}>{label}</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color }}>{money(value)}</div>
+                <div key={label} style={{ padding: "12px 16px", borderRadius: 12, background: "var(--surface-secondary)" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 500, color }}>{money(value)}</div>
                 </div>
               ))}
             </div>
@@ -469,7 +462,7 @@ export default function Analytics({ onNavigate }) {
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="chart-card-header">
             <div>
-              <div className="chart-title">Monthly Cash Flow Trend</div>
+              <div className="chart-title">Monthly cash flow</div>
               <div className="chart-subtitle">Income vs expenses vs net across all months</div>
             </div>
           </div>
@@ -477,23 +470,22 @@ export default function Analytics({ onNavigate }) {
             <AreaChart data={cashFlowData}>
               <defs>
                 <linearGradient id="gAnalyticsInc" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="var(--positive)" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="var(--positive)" stopOpacity={0} />
+                  <stop offset="0%"  stopColor={INK.accent} stopOpacity={0.14} />
+                  <stop offset="100%" stopColor={INK.accent} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gAnalyticsExp" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="var(--negative)" stopOpacity={0.12} />
-                  <stop offset="95%" stopColor="var(--negative)" stopOpacity={0} />
+                  <stop offset="0%"  stopColor={INK.neutralLight} stopOpacity={0} />
+                  <stop offset="100%" stopColor={INK.neutralLight} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--surface-secondary)" vertical={false} />
-              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} width={62}
+              <CartesianGrid stroke={INK.grid} vertical={false} />
+              <XAxis dataKey="month" tick={AXIS} axisLine={false} tickLine={false} tickFormatter={(m) => formatMonth(m, { year: false })} dy={8} />
+              <YAxis tick={AXIS} axisLine={false} tickLine={false} width={62}
                 tickFormatter={compactMoney} />
               <Tooltip content={<ChartTooltip />} />
-              <Legend iconSize={8} iconType="circle" wrapperStyle={{ fontSize: 12 }} />
-              <Area dataKey="Income"   name="Income"   stroke="var(--positive)" fill="url(#gAnalyticsInc)" strokeWidth={2.5} dot={false} />
-              <Area dataKey="Expenses" name="Expenses" stroke="var(--negative)" fill="url(#gAnalyticsExp)" strokeWidth={2.5} dot={false} />
-              <Line dataKey="Net"      name="Net"      stroke="var(--info)" strokeWidth={2} dot={false} strokeDasharray="5 3" />
+              <Area type="monotone" dataKey="Income"   name="Income"   stroke={INK.accent} fill="url(#gAnalyticsInc)" strokeWidth={2} dot={false} />
+              <Area type="monotone" dataKey="Expenses" name="Spending" stroke={INK.neutralLight} fill="url(#gAnalyticsExp)" strokeWidth={1.5} dot={false} />
+              <Line type="monotone" dataKey="Net"      name="Net"      stroke={INK.neutral} strokeWidth={1.5} dot={false} strokeDasharray="4 4" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -504,7 +496,7 @@ export default function Analytics({ onNavigate }) {
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="chart-card-header">
             <div>
-              <div className="chart-title">Month-over-Month Comparison</div>
+              <div className="chart-title">Month over month</div>
               <div className="chart-subtitle">Spending change vs previous month</div>
             </div>
           </div>
@@ -513,31 +505,31 @@ export default function Analytics({ onNavigate }) {
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
                   {["Month", "Income", "ΔIncome", "Expenses", "ΔSpend", "Net"].map(h => (
-                    <th key={h} style={{ padding: "10px 16px", textAlign: h === "Month" ? "left" : "right", color: "var(--text-muted)", fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{h}</th>
+                    <th key={h} style={{ padding: "10px 16px", textAlign: h === "Month" ? "left" : "right", color: "var(--text-muted)", fontWeight: 500, fontSize: 11 }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {momRows.map((row, i) => (
-                  <tr key={row.month} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--surface-secondary)" }}>
-                    <td style={{ padding: "12px 16px", fontWeight: 700, color: "var(--text-primary)" }}>{row.month}</td>
-                    <td style={{ padding: "12px 16px", textAlign: "right", color: "var(--positive)", fontWeight: 600 }}>{money(row.currInc)}</td>
+                  <tr key={row.month} style={{ borderBottom: "1px solid var(--border)", }}>
+                    <td style={{ padding: "12px 16px", fontWeight: 400, color: "var(--text-primary)" }}>{formatMonth(row.month)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 400 }}>{money(row.currInc)}</td>
                     <td style={{ padding: "12px 16px", textAlign: "right" }}>
-                      <span style={{ color: row.incDelta >= 0 ? "var(--positive)" : "var(--negative)", fontWeight: 700, fontSize: 12 }}>
+                      <span style={{ color: row.incDelta >= 0 ? "var(--positive)" : "var(--negative)", fontWeight: 500, fontSize: 12 }}>
                         {row.incDelta >= 0 ? "↑" : "↓"}{Math.abs(row.incDelta).toFixed(0)}%
                       </span>
                     </td>
-                    <td style={{ padding: "12px 16px", textAlign: "right", color: "var(--negative)", fontWeight: 600 }}>{money(row.currExp)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 400 }}>{money(row.currExp)}</td>
                     <td style={{ padding: "12px 16px", textAlign: "right" }}>
                       <span style={{
                         color: row.delta <= 0 ? "var(--positive)" : "var(--negative)",
                         background: row.delta <= 0 ? "var(--positive-soft)" : "var(--negative-soft)",
-                        padding: "2px 8px", borderRadius: 8, fontWeight: 700, fontSize: 12,
+                        padding: "2px 8px", borderRadius: 8, fontWeight: 500, fontSize: 12,
                       }}>
                         {row.delta >= 0 ? "↑" : "↓"}{Math.abs(row.delta).toFixed(0)}%
                       </span>
                     </td>
-                    <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: row.currInc - row.currExp >= 0 ? "var(--positive)" : "var(--negative)" }}>
+                    <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 500, color: row.currInc - row.currExp >= 0 ? "var(--positive)" : "var(--negative)" }}>
                       {money(row.currInc - row.currExp)}
                     </td>
                   </tr>
@@ -553,7 +545,7 @@ export default function Analytics({ onNavigate }) {
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="chart-card-header">
             <div>
-              <div className="chart-title">Category Intensity Map</div>
+              <div className="chart-title">Spending intensity by category</div>
               <div className="chart-subtitle">Relative spending intensity per category</div>
             </div>
           </div>
@@ -563,23 +555,21 @@ export default function Analytics({ onNavigate }) {
               const opacity = 0.15 + (item.value / maxVal) * 0.85;
               return (
                 <div key={item.category} style={{
-                  padding: "16px 14px", borderRadius: 14,
-                  background: `${item.color}${Math.round(opacity * 255).toString(16).padStart(2, "0")}`,
-                  border: `1px solid ${item.color}40`,
-                  textAlign: "center",
+                  padding: 12, borderRadius: 10,
+                  background: `rgba(237,237,237,${(0.02 + opacity * 0.06).toFixed(3)})`,
+                  border: "1px solid var(--border)",
                 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: item.color, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
                     {item.category}
                   </div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)" }}>
+                  <div className="num" style={{ fontSize: 15, fontWeight: 500, color: "var(--text-primary)" }}>
                     {money(item.value)}
                   </div>
-                  <div style={{ marginTop: 8, height: 4, borderRadius: 4, background: "rgba(0,0,0,0.08)", overflow: "hidden" }}>
+                  <div style={{ marginTop: 8, height: 2, borderRadius: 1, background: "var(--surface-secondary)", overflow: "hidden" }}>
                     <div style={{
-                      height: "100%", borderRadius: 4,
+                      height: "100%", borderRadius: 1,
                       width: `${(item.value / maxVal) * 100}%`,
-                      background: item.color,
-                      transition: "width 0.6s ease",
+                      background: item.value === maxVal ? "var(--primary)" : "var(--text-muted)",
                     }} />
                   </div>
                 </div>
@@ -594,34 +584,29 @@ export default function Analytics({ onNavigate }) {
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="chart-card-header">
             <div>
-              <div className="chart-title">Forecast vs Actual</div>
-              <div className="chart-subtitle">EWMA projection — 30 and 90-day outlook per category</div>
+              <div className="chart-title">Forecast against actual</div>
+              <div className="chart-subtitle">EWMA projection, 30 and 90 days ahead per category</div>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={forecastBars} barGap={3} barCategoryGap="25%">
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--surface-secondary)" vertical={false} />
-              <XAxis dataKey="cat" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} width={64}
+              <CartesianGrid stroke={INK.grid} vertical={false} />
+              <XAxis dataKey="cat" tick={AXIS} axisLine={false} tickLine={false} />
+              <YAxis tick={AXIS} axisLine={false} tickLine={false} width={64}
                 tickFormatter={compactMoney} />
               <Tooltip content={<ChartTooltip />} />
-              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Current"     fill="var(--text-muted)" radius={[4,4,0,0]} />
-              <Bar dataKey="30-Day Proj" fill="var(--info)" radius={[4,4,0,0]} />
-              <Bar dataKey="90-Day Proj" fill="#C084FC" radius={[4,4,0,0]} />
+              <Bar dataKey="Current"     fill={INK.neutral} radius={[2,2,0,0]} maxBarSize={16} />
+              <Bar dataKey="30-Day Proj" name="Next 30 days" fill={INK.accent} radius={[2,2,0,0]} maxBarSize={16} />
+              <Bar dataKey="90-Day Proj" name="Next 90 days" fill={INK.neutralLight} radius={[2,2,0,0]} maxBarSize={16} />
             </BarChart>
           </ResponsiveContainer>
           {/* Trend indicators */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
             {forecastBars.map(r => (
-              <div key={r.cat} style={{
-                fontSize: 11, padding: "4px 10px", borderRadius: 20, fontWeight: 600,
-                background: r.trend === "up" ? "var(--negative-soft)" : r.trend === "down" ? "var(--positive-soft)" : "var(--surface-secondary)",
-                color: r.trend === "up" ? "var(--negative)" : r.trend === "down" ? "var(--positive)" : "var(--text-secondary)",
-                border: `1px solid ${r.trend === "up" ? "rgba(255,45,45,0.4)" : r.trend === "down" ? "rgba(168,255,47,0.3)" : "var(--border)"}`,
-              }}>
-                {r.cat}: {r.trend === "up" ? "📈 Rising" : r.trend === "down" ? "📉 Falling" : "→ Stable"}
-                {" "}({Math.round(r.confidence * 100)}% confidence)
+              <div key={r.cat} style={{ fontSize: 12, color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: 6, marginRight: 8 }}>
+                <span className="status-dot" style={{ background: r.trend === "up" ? "var(--negative)" : r.trend === "down" ? "var(--positive)" : "var(--text-muted)" }} aria-hidden="true" />
+                <span style={{ color: "var(--text-secondary)" }}>{r.cat}</span> {r.trend === "up" ? "rising" : r.trend === "down" ? "falling" : "stable"}
+                <span className="num">{Math.round(r.confidence * 100)}%</span>
               </div>
             ))}
           </div>
@@ -633,22 +618,25 @@ export default function Analytics({ onNavigate }) {
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="chart-card-header">
             <div>
-              <div className="chart-title">Anomaly Timeline</div>
+              <div className="chart-title">Unusual activity over time</div>
               <div className="chart-subtitle">{anomalies.length} unusual transactions detected</div>
             </div>
-            <AlertTriangle size={18} style={{ color: "var(--warning)" }} />
           </div>
 
           {anomalyTimeline.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <ResponsiveContainer width="100%" height={80}>
                 <BarChart data={anomalyTimeline}>
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="date" tick={AXIS} axisLine={false} tickLine={false} />
                   <Tooltip
-                    formatter={(v) => [`${v} anomal${v !== 1 ? "ies" : "y"}`, "Count"]}
-                    contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}
+                    formatter={(v) => [`${v} unusual transaction${v !== 1 ? "s" : ""}`, ""]}
+                    separator=""
+                    cursor={{ fill: "rgba(237,237,237,0.04)" }}
+                    contentStyle={{ background: "var(--surface-secondary)", border: "1px solid var(--border-hover)", borderRadius: 8, fontSize: 13 }}
+                    labelStyle={{ color: "var(--text-muted)", fontSize: 12 }}
+                    itemStyle={{ color: "var(--text-primary)" }}
                   />
-                  <Bar dataKey="count" fill="var(--warning)" radius={[4,4,0,0]} />
+                  <Bar dataKey="count" name="Unusual" fill={INK.neutralLight} radius={[2,2,0,0]} maxBarSize={12} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -657,47 +645,36 @@ export default function Analytics({ onNavigate }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {anomalies.slice(0, 10).map((a) => (
               <div key={a.transaction_id} style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "12px 14px",
+                display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
                 borderRadius: 12, border: "1px solid var(--border)",
-                borderLeft: `4px solid ${SEVERITY_COLOR[a.severity] || "var(--text-secondary)"}`,
                 background: "var(--surface)",
               }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-                  background: a.severity === "high" ? "var(--negative-soft)" : a.severity === "medium" ? "rgba(250,204,21,0.12)" : "rgba(56,189,248,0.12)",
-                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14,
-                }}>
-                  {a.severity === "high" ? "🔴" : a.severity === "medium" ? "🟡" : "🔵"}
-                </div>
+                <span className={`status-dot ${a.severity}`} aria-hidden="true" />
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{a.message}</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{a.message}</div>
                   <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                    {a.category} · {money(a.amount)} · {a.date}
+                    {a.category} · <span className="num">{money(a.amount)}</span> · {formatDay(a.date, { year: true })}
                     {a.expected_range && ` · Normal: ${money(a.expected_range.min)}–${money(a.expected_range.max)}`}
                   </div>
                   {a.analysis?.method && (
-                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
                       Method: {a.analysis.method} · {a.recommended_action}
                     </div>
                   )}
                 </div>
-                <span style={{
-                  fontSize: 10, padding: "2px 8px", borderRadius: 8, fontWeight: 800,
-                  textTransform: "uppercase",
-                  color: SEVERITY_COLOR[a.severity], background: `${SEVERITY_COLOR[a.severity]}18`,
-                }}>
-                  {a.severity}
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  {SEVERITY_LABEL[a.severity] || a.severity}
                 </span>
-                <button className="btn-link" type="button" onClick={() => onNavigate?.("transactions")} style={{ fontSize: 10, padding: 0 }}>
+                <button className="btn-link" type="button" onClick={() => onNavigate?.("transactions")} style={{ fontSize: 11, padding: 0 }}>
                   Review transaction
                 </button>
                 <div style={{ display: "flex", gap: 4, flexDirection: "column" }}>
                   {anomalyFeedback[a.id] ? (
-                    <span className="muted" style={{ fontSize: 10 }}>Recorded</span>
+                    <span className="muted" style={{ fontSize: 11 }}>Recorded</span>
                   ) : (
                     <>
-                      <button className="btn-secondary" style={{ padding: "3px 6px", fontSize: 10 }} onClick={() => sendAnomalyFeedback(a, "helpful")}>Useful</button>
-                      <button className="btn-secondary" style={{ padding: "3px 6px", fontSize: 10 }} onClick={() => sendAnomalyFeedback(a, "inaccurate")}>Not accurate</button>
+                      <button className="btn-secondary btn-sm" onClick={() => sendAnomalyFeedback(a, "helpful")}>Useful</button>
+                      <button className="btn-secondary btn-sm" onClick={() => sendAnomalyFeedback(a, "inaccurate")}>Not accurate</button>
                     </>
                   )}
                 </div>
@@ -717,7 +694,7 @@ export default function Analytics({ onNavigate }) {
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="chart-card-header">
             <div>
-              <div className="chart-title">Category Breakdown</div>
+              <div className="chart-title">Spending by category</div>
               <div className="chart-subtitle">Total spend per category this period</div>
             </div>
           </div>
@@ -730,23 +707,19 @@ export default function Analytics({ onNavigate }) {
                 .slice(0, 10)}
               margin={{ left: 20, right: 30 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--surface-secondary)" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-secondary)" }} axisLine={false} tickLine={false}
+              <CartesianGrid stroke={INK.grid} horizontal={false} />
+              <XAxis type="number" tick={AXIS} axisLine={false} tickLine={false}
                 tickFormatter={compactMoney} />
               <YAxis type="category" dataKey="cat" tick={{ fontSize: 12, fill: "var(--text-secondary)", fontWeight: 500 }} axisLine={false} tickLine={false} width={90} />
               <Tooltip
                 formatter={v => [money(v), "Spend"]}
-                contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}
+                content={<ChartTooltip />}
               />
-              <Bar dataKey="value" radius={[0,6,6,0]}>
+              <Bar dataKey="value" name="Spending" radius={[0,2,2,0]} maxBarSize={14}>
                 {Object.entries(byCategory)
                   .sort((a,b) => Number(b[1]) - Number(a[1]))
                   .slice(0,10)
-                  .map(([cat], i) => {
-                    const norm = cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase();
-                    const color = CATEGORY_COLORS[norm] || CATEGORY_COLORS[cat] || paletteColor(cat, i);
-                    return <Cell key={cat} fill={color} />;
-                  })}
+                  .map(([cat], i) => <Cell key={cat} fill={i === 0 ? INK.accent : INK.neutral} />)}
               </Bar>
             </BarChart>
           </ResponsiveContainer>

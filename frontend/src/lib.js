@@ -127,47 +127,46 @@ export const EXPENSE_CATEGORIES = [
 
 export const INCOME_CATEGORIES = ["Salary", "Freelance", "Other"];
 
-// Distinct per-category hues so charts don't collapse different categories into
-// the same color. Tuned for the near-black (#0A0A0B) dark surface: bright enough
-// to read, evenly spaced around the hue wheel. Semantics are preserved where it
-// matters — income (Salary/Freelance) stays green/positive, Taxes/Fees stay red.
+// Per-category hues for charts that must tell categories apart. Toned down to
+// sit inside the graphite ramp: similar lightness, low chroma, so no single
+// category shouts. Income keeps a green, taxes and fees keep a red.
 export const CATEGORY_COLORS = {
-  Housing:       "#60A5FA", // blue
-  Groceries:     "#A8FF2F", // lime
-  Transport:     "#FBBF24", // amber
-  Dining:        "#FB7185", // rose
-  Subscriptions: "#C084FC", // violet
-  Shopping:      "#F472B6", // pink
-  Health:        "#2DD4BF", // teal
-  Utilities:     "#94A3B8", // slate
-  Entertainment: "#FB923C", // orange
-  Education:     "#818CF8", // indigo
-  Insurance:     "#4ADE80", // green
-  Investments:   "#22D3EE", // cyan
-  Transfers:     "#A1A1AA", // zinc
-  Taxes:         "#F87171", // red
-  Fees:          "#E879F9", // fuchsia
-  Other:         "#64748B", // gray
-  Salary:        "#34D399", // emerald (income)
-  Freelance:     "#FCD34D", // gold (income)
+  Housing:       "#7d9cc4", // slate blue
+  Rent:          "#7d9cc4",
+  Groceries:     "#9cbf6a", // moss
+  Transport:     "#c9a462", // ochre
+  Dining:        "#c98a7d", // clay
+  Subscriptions: "#a28fc4", // heather
+  Shopping:      "#c48aa6", // dusty rose
+  Health:        "#6fb3a6", // sage teal
+  Utilities:     "#8e9aa8", // pewter
+  Entertainment: "#c99a6e", // tan
+  Education:     "#8f96c9", // periwinkle
+  Insurance:     "#7fb38a", // fern
+  Investments:   "#6fa9b8", // steel teal
+  Transfers:     "#9a9aa0", // zinc
+  Taxes:         "#c97a7a", // brick
+  Fees:          "#b58ab8", // mauve
+  Other:         "#74747a", // graphite
+  Salary:        "#7fbf8f", // income green
+  Freelance:     "#b9b46a", // olive gold
 };
 
-// General-purpose categorical palette for charts whose series aren't fixed
-// expense categories (e.g. forecast horizons, ad-hoc groupings). Ordered for
-// maximum separation between adjacent entries.
+// Categorical palette for charts whose series aren't fixed categories.
+// Same toned family; the brand lime leads.
 export const CHART_PALETTE = [
-  "#A8FF2F", // lime
-  "#38BDF8", // sky
-  "#FB7185", // rose
-  "#C084FC", // violet
-  "#FBBF24", // amber
-  "#2DD4BF", // teal
-  "#F472B6", // pink
-  "#818CF8", // indigo
-  "#FB923C", // orange
-  "#4ADE80", // green
-  "#22D3EE", // cyan
-  "#E879F9", // fuchsia
+  "#b6e35a", // brand lime (lead series)
+  "#7d9cc4",
+  "#c98a7d",
+  "#a28fc4",
+  "#c9a462",
+  "#6fb3a6",
+  "#c48aa6",
+  "#8f96c9",
+  "#c99a6e",
+  "#7fb38a",
+  "#6fa9b8",
+  "#b58ab8",
 ];
 
 // Stable color for an arbitrary label by hashing it into CHART_PALETTE.
@@ -217,3 +216,27 @@ export const today = () => {
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
 };
+
+// ── Dates, set one way across the app: "5 Nov", "Nov 2026", "1–17 Nov 2026" ──
+const _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function _parts(iso) {
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(String(iso || ""));
+  return m ? { y: +m[1], m: +m[2] - 1, d: m[3] ? +m[3] : null } : null;
+}
+export function formatDay(iso, { year = false } = {}) {
+  const p = _parts(iso);
+  if (!p || p.d == null) return String(iso || "");
+  return `${p.d} ${_MONTHS[p.m]}${year ? ` ${p.y}` : ""}`;
+}
+export function formatMonth(iso, { year = true } = {}) {
+  const p = _parts(iso);
+  if (!p) return String(iso || "");
+  return year ? `${_MONTHS[p.m]} ${p.y}` : _MONTHS[p.m];
+}
+export function formatRange(start, end) {
+  const a = _parts(start), b = _parts(end);
+  if (!a || !b || a.d == null || b.d == null) return "";
+  if (a.y === b.y && a.m === b.m) return a.d === b.d ? formatDay(start, { year: true }) : `${a.d}–${b.d} ${_MONTHS[b.m]} ${b.y}`;
+  if (a.y === b.y) return `${a.d} ${_MONTHS[a.m]} – ${b.d} ${_MONTHS[b.m]} ${b.y}`;
+  return `${formatDay(start, { year: true })} – ${formatDay(end, { year: true })}`;
+}

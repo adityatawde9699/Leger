@@ -4,8 +4,7 @@ import { fetchWithReauth } from "../googleAuth";
 import { useToast } from "../components/ui";
 import {
   Download, FileText, FileJson, FileSpreadsheet,
-  Receipt, TrendingUp, IndianRupee, Percent,
-} from "lucide-react";
+  Receipt, TrendingUp, IndianRupee, Percent, ClipboardList } from "lucide-react";
 
 export default function ExportGST() {
   const toast = useToast();
@@ -51,15 +50,15 @@ export default function ExportGST() {
   return (
     <div className="view-export">
       <div className="page-title-block">
-        <h1 className="page-title">Export & GST</h1>
+        <h1 className="page-title">Export and GST</h1>
         <p className="page-subtitle">Download your data or view GST breakdown</p>
       </div>
 
       {/* Export buttons */}
       <div className="card" style={{ marginBottom: 20 }}>
-        <div className="form-section-title">Export Transactions</div>
+        <div className="form-section-title">Export transactions</div>
         <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 20 }}>
-          Download all your transactions in your preferred format.
+          Download every transaction as a file.
         </p>
         <div className="export-grid">
           <button
@@ -67,30 +66,30 @@ export default function ExportGST() {
             onClick={() => handleExport("csv")}
             disabled={exporting === "csv"}
           >
-            <FileSpreadsheet size={24} className="export-icon csv" />
+            <FileSpreadsheet size={18} strokeWidth={1.5} className="export-icon csv" />
             <div className="export-card-name">CSV</div>
             <div className="export-card-desc">Spreadsheet format</div>
-            {exporting === "csv" ? "Exporting…" : <Download size={14} />}
+            {exporting === "csv" ? <span className="export-card-dl" style={{ fontSize: 12 }}>Exporting</span> : <Download size={16} strokeWidth={1.5} className="export-card-dl" />}
           </button>
           <button
             className="export-card card"
             onClick={() => handleExport("json")}
             disabled={exporting === "json"}
           >
-            <FileJson size={24} className="export-icon json" />
+            <FileJson size={18} strokeWidth={1.5} className="export-icon json" />
             <div className="export-card-name">JSON</div>
             <div className="export-card-desc">Developer format</div>
-            {exporting === "json" ? "Exporting…" : <Download size={14} />}
+            {exporting === "json" ? <span className="export-card-dl" style={{ fontSize: 12 }}>Exporting</span> : <Download size={16} strokeWidth={1.5} className="export-card-dl" />}
           </button>
           <button
             className="export-card card"
             onClick={() => handleExport("tally")}
             disabled={exporting === "tally"}
           >
-            <FileText size={24} className="export-icon tally" />
+            <FileText size={18} strokeWidth={1.5} className="export-icon tally" />
             <div className="export-card-name">Tally XML</div>
-            <div className="export-card-desc">Tally Prime / ERP 9</div>
-            {exporting === "tally" ? "Exporting…" : <Download size={14} />}
+            <div className="export-card-desc">Tally Prime and ERP 9</div>
+            {exporting === "tally" ? <span className="export-card-dl" style={{ fontSize: 12 }}>Exporting</span> : <Download size={16} strokeWidth={1.5} className="export-card-dl" />}
           </button>
         </div>
       </div>
@@ -98,7 +97,7 @@ export default function ExportGST() {
       {/* GST Report */}
       <div className="card">
         <div className="form-section-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Receipt size={18} /> GST Report
+          <Receipt size={16} strokeWidth={1.5} style={{ color: "var(--text-muted)" }} /> GST report
         </div>
         {loading ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -106,7 +105,7 @@ export default function ExportGST() {
           </div>
         ) : !hasData ? (
           <div className="empty-state">
-            <div className="empty-state-icon">📋</div>
+            <div className="empty-state-icon"><ClipboardList size={18} strokeWidth={1.5} /></div>
             <div className="empty-state-title">No GST data</div>
             <div className="empty-state-sub">Add transactions to see your GST breakdown</div>
           </div>

@@ -1,7 +1,7 @@
 import React from "react";
 import { apiFetch, getCurrencyPreference, money } from "../lib";
 import { useToast } from "../components/ui";
-import { Plus, CreditCard, Wallet, Building2, PiggyBank, Trash2, ChevronRight } from "lucide-react";
+import { Plus, CreditCard, Wallet, Building2, PiggyBank, Trash2, ChevronRight, Landmark } from "lucide-react";
 
 const ICONS = {
   savings: PiggyBank,
@@ -11,21 +11,9 @@ const ICONS = {
   cash:    Wallet,
 };
 
-const COLORS = {
-  savings: "var(--positive)",
-  current: "var(--info)",
-  credit:  "var(--warning)",
-  wallet:  "var(--info)",
-  cash:    "var(--text-secondary)",
-};
+const COLORS = {};
 
-const BG_COLORS = {
-  savings: "var(--positive-soft)",
-  current: "rgba(56,189,248,0.12)",
-  credit:  "rgba(250,204,21,0.12)",
-  wallet:  "rgba(56,189,248,0.12)",
-  cash:    "var(--surface-secondary)",
-};
+const BG_COLORS = {};
 
 export default function Accounts() {
   const toast = useToast();
@@ -155,7 +143,7 @@ export default function Accounts() {
         </div>
       ) : accounts.length === 0 ? (
         <div className="card empty-state">
-          <div className="empty-state-emoji">🏦</div>
+          <div className="empty-state-icon"><Landmark size={18} strokeWidth={1.5} /></div>
           <div className="empty-state-title">No accounts yet</div>
           <div className="empty-state-text">Add your first account to start tracking</div>
         </div>
@@ -163,18 +151,18 @@ export default function Accounts() {
         <div className="account-grid" style={{ marginBottom: 24 }}>
           {accounts.map((acct) => {
             const IconComp = ICONS[acct.account_type] || Wallet;
-            const color    = COLORS[acct.account_type] || 'var(--text-secondary)';
+            const color    = COLORS[acct.account_type] || 'var(--text-muted)';
             const bg       = BG_COLORS[acct.account_type] || 'var(--surface-secondary)';
             return (
               <div className="card account-card" key={acct.id}
-                style={{ borderTop: `3px solid ${color}` }}>
+                >
                 <div className="account-card-header">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div className="icon-chip" style={{ background: bg, color }}>
                       <IconComp size={22} />
                     </div>
                     <div>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>{acct.name}</div>
+                      <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--text-primary)' }}>{acct.name}</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, textTransform: 'capitalize' }}>
                         {acct.institution || acct.account_type}
                       </div>
@@ -184,17 +172,17 @@ export default function Accounts() {
                     <Trash2 size={14} />
                   </button>
                 </div>
-                <div className="num" style={{ fontSize: 30, fontWeight: 600, color, marginTop: 4 }}>
+                <div className="num" style={{ fontSize: 26, fontWeight: 500, color: 'var(--text-primary)', marginTop: 4 }}>
                   {money(acct.balance, acct.currency)}
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, letterSpacing: 0 }}>
                   {acct.currency} · {acct.account_type.toUpperCase()}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 16 }}>
                   <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
                     {acct.last_reconciled_at ? `Checked ${new Date(acct.last_reconciled_at).toLocaleDateString("en-IN")}` : "Not reconciled"}
                   </span>
-                  <button className="btn-secondary" style={{ padding: "5px 9px", fontSize: 11 }} onClick={() => {
+                  <button className="btn-secondary" style={{ padding: "4px 8px", fontSize: 11 }} onClick={() => {
                     setReconcileId(acct.id);
                     setReconcileForm({ observed_balance: String(acct.balance ?? ""), note: acct.reconciliation_note || "" });
                   }}>Reconcile</button>

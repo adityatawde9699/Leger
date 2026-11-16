@@ -17,20 +17,9 @@ function getInitials(displayName, email) {
   return name.slice(0, 2).toUpperCase();
 }
 
-const AVATAR_GRADIENTS = [
-  "linear-gradient(135deg, var(--primary), var(--info))",
-  "linear-gradient(135deg, var(--info), var(--negative))",
-  "linear-gradient(135deg, var(--primary), var(--warning))",
-  "linear-gradient(135deg, var(--warning), var(--negative))",
-  "linear-gradient(135deg, var(--negative), var(--info))",
-];
+
 const REGION_OPTIONS = [["IN", "India"], ["US", "United States"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"], ["SG", "Singapore"], ["AE", "United Arab Emirates"], ["JP", "Japan"], ["CH", "Switzerland"], ["CN", "China"], ["HK", "Hong Kong"], ["OTHER", "Other"]];
 
-function pickGradient(str = "") {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
-}
 
 function formatDate(isoStr) {
   if (!isoStr) return "—";
@@ -279,34 +268,33 @@ export default function Profile({ onSignOut }) {
 
   const displayName = profile?.display_name || profile?.email?.split("@")[0] || "User";
   const initials = getInitials(profile?.display_name, profile?.email);
-  const gradient = pickGradient(profile?.id || "");
   const avatarUrl = profile?.avatar_url;
 
   const statCards = [
     {
       icon: BarChart3, label: "Transactions", value: stats?.total_transactions ?? "—",
-      isCount: true, color: "var(--info)", bg: "rgba(56,189,248,0.16)",
+      isCount: true, color: "var(--info)", bg: "rgba(122,162,200,0.16)",
     },
     {
-      icon: TrendingUp, label: "Total Income", value: money(stats?.total_income || 0),
+      icon: TrendingUp, label: "Total income", value: money(stats?.total_income || 0),
       color: "var(--positive)", bg: "var(--positive-soft)",
     },
     {
-      icon: TrendingDown, label: "Total Expenses", value: money(stats?.total_expenses || 0),
+      icon: TrendingDown, label: "Total expenses", value: money(stats?.total_expenses || 0),
       color: "var(--negative)", bg: "var(--negative-soft)",
     },
     {
-      icon: DollarSign, label: "Net Balance", value: money(stats?.net_balance || 0),
+      icon: DollarSign, label: "Net balance", value: money(stats?.net_balance || 0),
       color: Number(stats?.net_balance || 0) >= 0 ? "var(--positive)" : "var(--negative)",
       bg: Number(stats?.net_balance || 0) >= 0 ? "var(--positive-soft)" : "var(--negative-soft)",
     },
     {
       icon: Wallet, label: "Accounts", value: stats?.accounts_count ?? "—",
-      isCount: true, color: "var(--info)", bg: "rgba(56,189,248,0.12)",
+      isCount: true, color: "var(--info)", bg: "rgba(122,162,200,0.12)",
     },
     {
       icon: Target, label: "Budgets", value: stats?.budgets_count ?? "—",
-      isCount: true, color: "var(--warning)", bg: "rgba(250,204,21,0.16)",
+      isCount: true, color: "var(--warning)", bg: "rgba(212,166,74,0.16)",
     },
   ];
 
@@ -327,7 +315,6 @@ export default function Profile({ onSignOut }) {
           ) : (
             <div
               className="profile-avatar-lg"
-              style={{ background: gradient }}
               aria-label={`Avatar for ${displayName}`}
             >
               {initials}
@@ -420,15 +407,13 @@ export default function Profile({ onSignOut }) {
           <div
             key={label}
             className="card profile-stat-card"
-            style={{ "--stat-accent": color }}
           >
-            <div className="profile-stat-icon" style={{ background: bg, color }}>
-              <Icon size={18} />
+            <div className="profile-stat-label" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              {label}<Icon size={16} strokeWidth={1.5} style={{ color: "var(--text-muted)" }} />
             </div>
-            <div className="profile-stat-value" style={{ color }}>
+            <div className="profile-stat-value">
               {isCount ? (value === "—" ? "—" : Number(value).toLocaleString("en-IN")) : value}
             </div>
-            <div className="profile-stat-label">{label}</div>
           </div>
         ))}
       </div>
@@ -541,7 +526,7 @@ export default function Profile({ onSignOut }) {
             onClick={handleSave}
             disabled={saving || (form.currency_preference === profile?.currency_preference && form.region === profile?.region && form.income_pattern === (profile?.income_pattern || "not_sure") && form.pay_cycle === (profile?.pay_cycle || "monthly") && form.risk_comfort === (profile?.risk_comfort || "not_sure") && form.household_mode === (profile?.household_mode || "individual") && form.recurring_tolerance === (profile?.recurring_tolerance || "standard") && form.cloud_ai_enabled === (profile?.cloud_ai_enabled !== false) && form.insight_frequency === (profile?.insight_frequency || "daily") && Number(form.quiet_hours_start) === (profile?.quiet_hours_start ?? 22) && Number(form.quiet_hours_end) === (profile?.quiet_hours_end ?? 7) && Number(form.proactive_daily_cap) === (profile?.proactive_daily_cap ?? 3))}
           >
-            {saving ? <><Loader2 size={16} className="spin" /> Saving…</> : <><Check size={16} /> Save Preferences</>}
+            {saving ? <><Loader2 size={16} className="spin" /> Saving</> : <><Check size={16} /> Save Preferences</>}
           </button>
         </div>
 
@@ -639,11 +624,11 @@ export default function Profile({ onSignOut }) {
               <p className="danger-desc">This permanently removes your financial history, accounts, goals, investments, AI conversations, and profile. Download an export first if you may need it later.</p>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 14 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
             <input aria-label="Type DELETE to confirm" placeholder="Type DELETE to confirm" value={deleteConfirmation}
               onChange={e => setDeleteConfirmation(e.target.value)} style={{ maxWidth: 220 }} />
             <button className="btn-danger-premium" onClick={handleDeleteData} disabled={deleteConfirmation !== "DELETE" || deletingData}>
-              {deletingData ? "Deleting…" : "Permanently delete data"}
+              {deletingData ? "Deleting" : "Permanently delete data"}
             </button>
           </div>
         </div>

@@ -94,17 +94,17 @@ export default function Goals() {
             const pct = progress(goal);
             const needed = monthlyNeed(goal);
             return (
-              <div className="card" key={goal.id} style={{ borderTop: "3px solid var(--primary)" }}>
+              <div className="card" key={goal.id} >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                   <div className="icon-chip" style={{ background: "var(--positive-soft)", color: "var(--primary)" }}><Target size={21} /></div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>{goal.name}</div>
+                    <div style={{ fontWeight: 500, color: "var(--text-primary)" }}>{goal.name}</div>
                     <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>{GOAL_TYPES.find(([value]) => value === goal.goal_type)?.[1] || "Goal"}</div>
                   </div>
                   <button className="tx-delete-btn" onClick={() => remove(goal)} aria-label={`Delete ${goal.name}`}><Trash2 size={14} /></button>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 20 }}>
-                  <span style={{ fontSize: 24, fontWeight: 700, color: "var(--text-primary)" }}>{money(goal.current_amount)}</span>
+                  <span style={{ fontSize: 24, fontWeight: 500, color: "var(--text-primary)" }}>{money(goal.current_amount)}</span>
                   <span style={{ fontSize: 12, color: "var(--text-muted)" }}>of {money(goal.target_amount)}</span>
                 </div>
                 <div style={{ height: 9, background: "var(--surface-secondary)", borderRadius: 99, overflow: "hidden", marginTop: 10 }}>
@@ -126,14 +126,14 @@ export default function Goals() {
       )}
 
       {!loading && !goals.length && (
-        <div className="card empty-state"><div className="empty-state-emoji">🎯</div><div className="empty-state-title">No goals yet</div><div className="empty-state-text">Start with one target—an emergency fund, debt payoff, or savings milestone.</div><button className="btn-primary" onClick={openCreate}><Plus size={15} /> Create your first goal</button></div>
+        <div className="card empty-state"><div className="empty-state-icon"><Target size={18} strokeWidth={1.5} /></div><div className="empty-state-title">No goals yet</div><div className="empty-state-text">Start with one target: an emergency fund, debt payoff, or savings milestone.</div><button className="btn-primary" onClick={openCreate}><Plus size={15} /> Create your first goal</button></div>
       )}
 
       {completedGoals.length > 0 && <div className="card" style={{ marginBottom: 24 }}><div className="chart-title" style={{ display: "flex", gap: 8, alignItems: "center" }}><CheckCircle2 size={17} style={{ color: "var(--positive)" }} /> Completed goals</div>{completedGoals.map((goal) => <div key={goal.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 0", borderBottom: "1px solid var(--border)" }}><CheckCircle2 size={15} style={{ color: "var(--positive)" }} /><span style={{ flex: 1, color: "var(--text-primary)" }}>{goal.name}</span><span style={{ fontSize: 12, color: "var(--text-muted)" }}>{money(goal.current_amount)} / {money(goal.target_amount)}</span><button className="tx-delete-btn" onClick={() => remove(goal)} aria-label={`Delete ${goal.name}`}><Trash2 size={13} /></button></div>)}</div>}
 
       {goals.filter((goal) => goal.status === "paused").map((goal) => <div className="card" key={goal.id} style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}><Pause size={16} style={{ color: "var(--warning)" }} /><span style={{ flex: 1 }}>{goal.name} · {money(goal.current_amount)} / {money(goal.target_amount)}</span><button className="btn-secondary" style={{ padding: "6px 10px", fontSize: 12 }} onClick={() => toggleStatus(goal)}><Play size={13} /> Resume</button></div>)}
 
-      {showForm && <div className="card" style={{ marginTop: 20 }}><div className="form-section-title">{editing ? "Update goal" : "New goal"}</div><form onSubmit={save}><div className="form-grid-2"><div className="form-field"><label className="form-label">Goal name</label><input required placeholder="e.g. Emergency fund" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div><div className="form-field"><label className="form-label">Type</label><select value={form.goal_type} onChange={(e) => setForm({ ...form, goal_type: e.target.value })}>{GOAL_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div></div><div className="form-grid-2"><div className="form-field"><label className="form-label">Target amount</label><input required type="number" min="0.01" step="0.01" value={form.target_amount} onChange={(e) => setForm({ ...form, target_amount: e.target.value })} /></div><div className="form-field"><label className="form-label">Current amount</label><input required type="number" min="0" step="0.01" value={form.current_amount} onChange={(e) => setForm({ ...form, current_amount: e.target.value })} /></div></div><div className="form-grid-2"><div className="form-field"><label className="form-label">Deadline (optional)</label><input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} /></div></div><div style={{ display: "flex", gap: 12, marginTop: 8 }}><button className="btn-primary" type="submit" disabled={saving}>{saving ? "Saving…" : editing ? "Save changes" : "Create goal"}</button><button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button></div></form></div>}
+      {showForm && <div className="card" style={{ marginTop: 20 }}><div className="form-section-title">{editing ? "Update goal" : "New goal"}</div><form onSubmit={save}><div className="form-grid-2"><div className="form-field"><label className="form-label">Goal name</label><input required placeholder="e.g. Emergency fund" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div><div className="form-field"><label className="form-label">Type</label><select value={form.goal_type} onChange={(e) => setForm({ ...form, goal_type: e.target.value })}>{GOAL_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div></div><div className="form-grid-2"><div className="form-field"><label className="form-label">Target amount</label><input required type="number" min="0.01" step="0.01" value={form.target_amount} onChange={(e) => setForm({ ...form, target_amount: e.target.value })} /></div><div className="form-field"><label className="form-label">Current amount</label><input required type="number" min="0" step="0.01" value={form.current_amount} onChange={(e) => setForm({ ...form, current_amount: e.target.value })} /></div></div><div className="form-grid-2"><div className="form-field"><label className="form-label">Deadline (optional)</label><input type="date" value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} /></div></div><div style={{ display: "flex", gap: 12, marginTop: 8 }}><button className="btn-primary" type="submit" disabled={saving}>{saving ? "Saving" : editing ? "Save changes" : "Create goal"}</button><button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button></div></form></div>}
     </div>
   );
 }

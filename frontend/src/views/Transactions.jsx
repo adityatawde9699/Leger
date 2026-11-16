@@ -1,5 +1,5 @@
 import React from "react";
-import { apiFetch, money, CATEGORY_COLORS, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../lib";
+import { apiFetch, money, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../lib";
 import { Search, CheckSquare, Tag, X, Loader2, Undo2 } from "lucide-react";
 import { useToast } from "../components/ui";
 
@@ -228,7 +228,7 @@ export default function Transactions({ initialFilter = "All" }) {
                       <input type="checkbox" className="tx-checkbox" checked={isSelected} readOnly />
                     </div>
                     
-                    <div className="tx-icon-wrap" style={{ background: CATEGORY_COLORS[tx.category] || "var(--surface)" }}>
+                    <div className="tx-icon-wrap">
                       <div className="tx-icon-fallback">{tx.category.substring(0, 2).toUpperCase()}</div>
                     </div>
                     
@@ -238,7 +238,7 @@ export default function Transactions({ initialFilter = "All" }) {
                         {tx.category === "Subscriptions" && <span className="tx-repeats-badge">REPEATS</span>}
                       </div>
                       {tx.merchant_normalized && tx.merchant_normalized !== tx.description && (
-                        <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>Original: {tx.description}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Original: {tx.description}</div>
                       )}
                       <div className="tx-meta">
                         {tx.category} · {tx.source === "bank" ? "Everyday" : "Cash Wallet"} · {tx.status || "posted"}
@@ -277,16 +277,16 @@ export default function Transactions({ initialFilter = "All" }) {
       {selectedIds.size > 0 && (
         <div className="floating-action-bar" style={{ flexDirection: "column", alignItems: "stretch", padding: showCategoryMenu ? "16px" : "14px 22px" }}>
           {!showCategoryMenu ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <CheckSquare size={18} style={{ color: "var(--primary)", flexShrink: 0 }} />
               <span style={{ flex: 1 }}>{selectedIds.size} selected</span>
-              <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); setShowCategoryMenu(true); }} style={{ padding: "6px 14px", display: "flex", alignItems: "center", gap: 6 }}>
+              <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); setShowCategoryMenu(true); }} style={{ padding: "6px 16px", display: "flex", alignItems: "center", gap: 6 }}>
                 <Tag size={14} /> Fix Category
               </button>
-              <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); handleBulkStatus("posted"); }} disabled={bulkUpdating} style={{ padding: "6px 14px" }}>
+              <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); handleBulkStatus("posted"); }} disabled={bulkUpdating} style={{ padding: "6px 16px" }}>
                 Confirm
               </button>
-              <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); handleBulkStatus("excluded"); }} disabled={bulkUpdating} style={{ padding: "6px 14px" }}>
+              <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); handleBulkStatus("excluded"); }} disabled={bulkUpdating} style={{ padding: "6px 16px" }}>
                 Exclude
               </button>
               <button className="btn-clear-selection" onClick={(e) => { e.stopPropagation(); setSelectedIds(new Set()); }}>
@@ -295,7 +295,7 @@ export default function Transactions({ initialFilter = "All" }) {
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 600 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 500 }}>
                 <span>Select new category</span>
                 <button onClick={(e) => { e.stopPropagation(); setShowCategoryMenu(false); }} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={16} /></button>
               </div>

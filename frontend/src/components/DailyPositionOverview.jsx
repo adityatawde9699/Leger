@@ -1,15 +1,15 @@
 import React from "react";
-import { apiFetch, money } from "../lib";
+import { apiFetch, money, formatDay } from "../lib";
 import { useToast } from "./ui";
 
-function Fact({ label, value, currency, hint }) {
+function Fact({ label, value, currency, hint, lead }) {
   return (
-    <div style={{ minWidth: 150, flex: "1 1 160px" }}>
-      <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{label}</div>
-      <div style={{ color: "var(--text-primary)", fontWeight: 750, fontSize: 19, marginTop: 4 }}>
+    <div style={{ minWidth: 0, padding: "16px 20px", borderLeft: "1px solid var(--border)" }} className="position-fact">
+      <div style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: "20px" }}>{label}</div>
+      <div className="num" style={{ color: value == null ? "var(--text-muted)" : lead ? "var(--primary)" : "var(--text-primary)", fontWeight: 500, fontSize: value == null ? 14 : 20, lineHeight: "28px", marginTop: 4 }}>
         {value == null ? "Not verified" : money(value, currency)}
       </div>
-      {hint && <div style={{ color: "var(--text-muted)", fontSize: 11, marginTop: 3 }}>{hint}</div>}
+      {hint && <div style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: "16px", marginTop: 4 }}>{hint}</div>}
     </div>
   );
 }
@@ -20,8 +20,8 @@ export default function DailyPositionOverview({ position, onReviewed, nextAction
   const [confirmed, setConfirmed] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   if (!position) return null;
-  if (position.error) return <div className="card" role="alert" style={{ marginBottom: 24, padding: 20 }}>
-    Today’s position could not load: {position.error}. Try refreshing before relying on these numbers.
+  if (position.error) return <div className="notice negative" role="alert" style={{ marginBottom: 16 }}>
+    <span><strong>Today’s position could not load.</strong> {position.error}. Refresh before relying on these numbers.</span>
   </div>;
 
   const missingReview = position.reasons.some((reason) =>
@@ -51,66 +51,66 @@ export default function DailyPositionOverview({ position, onReviewed, nextAction
   }
 
   return (
-    <section className="card" aria-label="Today, this month, and next action" style={{ marginBottom: 24, padding: 22 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 19 }}>Today</h2>
-          <div style={{ color: "var(--text-secondary)", fontSize: 12, marginTop: 4 }}>As of {position.as_of} · {position.currency}</div>
+    <section className="card position-card" aria-label="Today, this month, and next action" style={{ marginBottom: 16, padding: 0, overflow: "hidden" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 500 }}>Today</h2>
+          <span className="num" style={{ color: "var(--text-muted)", fontSize: 12 }}>{formatDay(position.as_of, { year: true })} · {position.currency}</span>
         </div>
-        <span style={{ color: position.status === "ready" ? "var(--positive)" : "var(--warning)", fontSize: 12, fontWeight: 700 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "var(--text-secondary)", fontSize: 12 }}>
+          <span className="status-dot" style={{ background: position.status === "ready" ? "var(--positive)" : "var(--warning)" }} aria-hidden="true" />
           {position.status === "ready" ? "Estimate available" : "Estimate withheld until data is reviewed"}
         </span>
       </div>
-      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 20 }}>
-        <Fact label="Observed cash across accounts" value={position.cash_available} currency={position.currency} hint="Only fresh, reconciled cash accounts" />
-        <Fact label="Reserved through month-end" value={position.reserve_remaining} currency={position.currency} hint="Remaining budgets or confirmed bills" />
-        <Fact label="Safe to spend · estimate" value={position.safe_to_spend_estimate} currency={position.currency} hint="Not your bank balance; future income excluded" />
+      <div className="position-grid">
+        <Fact label="Safe to spend, estimate" value={position.safe_to_spend_estimate} currency={position.currency} hint="Future income excluded" lead />
+        <Fact label="Cash across accounts" value={position.cash_available} currency={position.currency} hint="Fresh, reconciled cash accounts only" />
+        <Fact label="Reserved to month end" value={position.reserve_remaining} currency={position.currency} hint="Remaining budgets and confirmed bills" />
+        <Fact label="Income this month" value={position.income} currency={position.currency} />
+        <Fact label="Committed spending" value={position.committed_spend} currency={position.currency} hint="Categories with confirmed recurring rules" />
+        <Fact label="Flexible spending" value={position.flexible_spend} currency={position.currency} hint="All other categories" />
       </div>
-      {upcoming.length > 0 && (
-        <div style={{ marginTop: 18, color: "var(--text-secondary)", fontSize: 13 }}>
-          <strong style={{ color: "var(--text-primary)" }}>Upcoming confirmed obligations:</strong>{" "}
-          {upcoming.slice(0, 3).map((bill) => `${bill.description} ${money(bill.amount, position.currency)} on ${bill.due_date}`).join(" · ")}
-          {upcoming.length > 3 ? ` · ${upcoming.length - 3} more` : ""}
-        </div>
-      )}
-      <div style={{ borderTop: "1px solid var(--border)", marginTop: 20, paddingTop: 18 }}>
-        <h2 style={{ margin: "0 0 12px", fontSize: 17 }}>This month</h2>
-        <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-          <Fact label="Recorded income" value={position.income} currency={position.currency} />
-          <Fact label="Committed-category spending" value={position.committed_spend} currency={position.currency} hint="Categories with confirmed recurring rules" />
-          <Fact label="Flexible-category spending" value={position.flexible_spend} currency={position.currency} hint="All other expense categories" />
-        </div>
+      <div style={{ padding: "12px 20px 16px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8, color: "var(--text-secondary)", fontSize: 13, lineHeight: "20px" }}>
+        {upcoming.length > 0 && (
+          <div>
+            <span style={{ color: "var(--text-primary)" }}>Upcoming bills</span>{" · "}
+            {upcoming.slice(0, 3).map((bill, i) => (
+              <span key={`${bill.description}-${bill.due_date}`}>{i > 0 && " · "}{bill.description} <span className="num">{money(bill.amount, position.currency)}</span> on {formatDay(bill.due_date)}</span>
+            ))}
+            {upcoming.length > 3 ? ` · ${upcoming.length - 3} more` : ""}
+          </div>
+        )}
+        {position.reasons.length > 0 && (
+          <div><span style={{ color: "var(--text-primary)" }}>What affects this</span> · {position.reasons.join(" ")}</div>
+        )}
+        <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{position.method}</div>
       </div>
-      {position.reasons.length > 0 && (
-        <div style={{ marginTop: 18, color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.6 }}>
-          <strong>What affects this picture:</strong> {position.reasons.join(" ")}
-        </div>
-      )}
-      <p style={{ color: "var(--text-muted)", fontSize: 11, lineHeight: 1.5, margin: "14px 0 0" }}>{position.method}</p>
 
       {suggested && (
-        <div style={{ borderTop: "1px solid var(--border)", marginTop: 20, paddingTop: 18 }}>
-          <h2 style={{ margin: "0 0 6px", fontSize: 17 }}>Next action: {suggested.title}</h2>
-          <p style={{ margin: "0 0 12px", color: "var(--text-secondary)", fontSize: 13 }}>{suggested.reason}</p>
+        <div style={{ borderTop: "1px solid var(--border)", padding: "16px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 320px" }}>
+            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 500 }}>Next action: {suggested.title}</h2>
+            <p style={{ margin: "4px 0 0", color: "var(--text-secondary)", fontSize: 13, lineHeight: "20px" }}>{suggested.reason}</p>
+          </div>
           <button type="button" className="btn-primary" onClick={suggested.run}>{suggested.label}</button>
         </div>
       )}
       {missingReview && (
-        <div style={{ marginTop: 16 }}>
+        <div style={{ padding: "0 20px 16px" }}>
           <button type="button" className="btn-secondary" onClick={() => setShowReview((value) => !value)}>
             {showReview ? "Close obligations review" : "Review this month's obligations"}
           </button>
           {showReview && (
-            <form onSubmit={completeReview} style={{ marginTop: 14, padding: 14, border: "1px solid var(--border)", borderRadius: 10 }}>
-              <p style={{ margin: "0 0 10px", color: "var(--text-secondary)", fontSize: 13 }}>
+            <form onSubmit={completeReview} style={{ marginTop: 12, padding: 16, border: "1px solid var(--border)", borderRadius: 10 }}>
+              <p style={{ margin: "0 0 12px", color: "var(--text-secondary)", fontSize: 13 }}>
                 Review your budgets and confirmed recurring payments first. This confirmation expires after seven days or when those plans change.
               </p>
-              <label style={{ display: "flex", gap: 9, alignItems: "flex-start", color: "var(--text-primary)", fontSize: 13 }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "var(--text-primary)", fontSize: 13 }}>
                 <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
                 I have included all expected bills and planned spending for the rest of this month.
               </label>
               <button type="submit" className="btn-primary" style={{ marginTop: 12 }} disabled={!confirmed || saving}>
-                {saving ? "Recording…" : "Confirm my review"}
+                {saving ? "Recording" : "Confirm my review"}
               </button>
             </form>
           )}

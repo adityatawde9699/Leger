@@ -1,7 +1,7 @@
 import React from "react";
 import { API_BASE, apiFetch, authHeaders } from "../lib";
 import { useToast } from "../components/ui";
-import { Sparkles, Send, Trash2, Plus, MessageSquare } from "lucide-react";
+import { Send, Trash2, Plus, MessageSquare } from "lucide-react";
 
 const SUGGESTIONS = [
   "Where am I overspending most?",
@@ -257,22 +257,17 @@ export default function Advisor({ onNavigate }) {
         <div className="advisor-main">
           <div style={{ marginBottom: 24 }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
-              <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg, var(--primary), var(--info))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Sparkles size={20} style={{ color: 'white' }} />
-                </div>
-                Amadeus AI
-              </h1>
+              <h1 className="page-title">Amadeus</h1>
               <button
                 className="mobile-only-inline btn-link"
                 onClick={() => setShowConvs(!showConvs)}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 12 }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', height: 32, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}
               >
                 <MessageSquare size={15} />
                 <span>History</span>
               </button>
             </div>
-            <p className="page-subtitle" style={{ marginBottom: 0 }}>Your personal financial advisor, powered by AI</p>
+            <p className="page-subtitle" style={{ marginBottom: 0 }}>Ask about your spending, savings and budgets. Answers draw on your own transactions</p>
           </div>
 
           {/* Suggestion chips */}
@@ -291,10 +286,10 @@ export default function Advisor({ onNavigate }) {
           <div className="chat-window" ref={chatRef}>
             {messages.length === 0 && (
               <div className="chat-empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, margin: 'auto', textAlign: 'center' }}>
-                <div style={{ width: 56, height: 56, borderRadius: 16, background: 'linear-gradient(135deg, rgba(56,189,248,0.12), rgba(56,189,248,0.16))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Sparkles size={24} style={{ color: 'var(--primary)' }} />
+                <div className="empty-state-icon" style={{ margin: 0 }}>
+                  <MessageSquare size={18} strokeWidth={1.5} />
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>How can I help you today?</div>
+                <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--text-primary)' }}>Ask a question about your money</div>
                 <div style={{ fontSize: 13, color: 'var(--text-muted)', maxWidth: 300, lineHeight: 1.6 }}>
                   Your financial data is loaded. Ask me anything about your spending, savings, or budgets.
                 </div>
@@ -305,16 +300,16 @@ export default function Advisor({ onNavigate }) {
               <div key={i} className={`chat-bubble ${m.role}`}>
                 {m.role === "assistant" && (
                   <div className="chat-label">
-                    <Sparkles size={11} /> Amadeus AI
+                    Amadeus
                   </div>
                 )}
                 <div className="chat-text">
                   {m.text || (streaming && i === messages.length - 1 ? <TypingDots /> : "")}
                 </div>
                 {m.role === "assistant" && m.meta && (
-                  <div style={{ marginTop: 8, fontSize: 10, color: "var(--text-muted)", lineHeight: 1.45 }}>
+                  <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.45 }}>
                     {m.meta.answer_type === "deterministic" && (
-                      <div style={{ color: "var(--positive)", fontWeight: 700, marginBottom: 3 }}>
+                      <div style={{ color: "var(--positive)", fontWeight: 500, marginBottom: 3 }}>
                         Calculated by Ledger · no AI call · {m.meta.evidence?.length || 0} evidence row{m.meta.evidence?.length === 1 ? "" : "s"}
                       </div>
                     )}
@@ -342,7 +337,7 @@ export default function Advisor({ onNavigate }) {
                             className="btn-link"
                             onClick={() => followAdvisorAction(action, activeId)}
                             disabled={completed}
-                            style={{ fontSize: 10, padding: 0 }}
+                            style={{ fontSize: 11, padding: 0 }}
                           >
                             {completed ? "Completed" : action.label || "Review next step"}
                           </button>
@@ -360,7 +355,7 @@ export default function Advisor({ onNavigate }) {
                               type="button"
                               className="btn-link"
                               onClick={() => followAdvisorAction(link, null, false)}
-                              style={{ fontSize: 10, padding: 0 }}
+                              style={{ fontSize: 11, padding: 0 }}
                             >
                               {link.label || "Open evidence"}
                             </button>

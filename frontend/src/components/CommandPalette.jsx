@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, ArrowRight, Plus, Target, BarChart3, Sparkles, LayoutDashboard, Download, Shield, Globe, Receipt, Wallet, Briefcase, Gauge, Banknote } from "lucide-react";
+import { Search, ArrowRight, Plus, Target, BarChart3, MessageSquare, Tags, LayoutDashboard, Download, Shield, Globe, Receipt, Wallet, Briefcase, Gauge, Banknote } from "lucide-react";
 
 const ACTIONS = [
   { id: "add-expense", label: "Add expense", desc: "Log a new expense transaction", view: "transactions", Icon: Plus },
@@ -9,9 +9,9 @@ const ACTIONS = [
   { id: "view-dashboard", label: "Go to Dashboard", desc: "Financial overview", view: "dashboard", Icon: LayoutDashboard },
   { id: "view-budgets", label: "Goals & Budgets", desc: "Manage spending limits", view: "budgets", Icon: Target },
   { id: "view-analytics", label: "Analytics", desc: "Spending trends & patterns", view: "analytics", Icon: BarChart3 },
-  { id: "ask-ai", label: "Ask Amadeus AI", desc: "Get financial advice", view: "advisor", Icon: Sparkles },
+  { id: "ask-ai", label: "Ask Amadeus", desc: "Questions about your spending and savings", view: "advisor", Icon: MessageSquare },
   { id: "scan-receipt", label: "Scan receipt", desc: "Extract data from receipt image", view: "transactions", Icon: Receipt },
-  { id: "recategorize", label: "Re-categorize transactions", desc: "Use AI to fix 'Other' categories", view: "transactions", Icon: Sparkles },
+  { id: "recategorize", label: "Re-categorize transactions", desc: "Suggest categories for entries marked Other", view: "transactions", Icon: Tags },
   { id: "manage-accounts", label: "Manage accounts", desc: "Add or edit bank accounts", view: "accounts", Icon: Wallet },
   { id: "export-csv", label: "Export as CSV", desc: "Download transactions spreadsheet", view: "export", Icon: Download },
   { id: "export-tally", label: "Export for Tally", desc: "Tally Prime / ERP 9 XML", view: "export", Icon: Download },

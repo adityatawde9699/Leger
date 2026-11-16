@@ -21,18 +21,18 @@ const Analytics     = lazy(() => import("./views/Analytics"));
 const Profile       = lazy(() => import("./views/Profile"));
 
 import {
-  LayoutDashboard, Plus, Target, BarChart3, Sparkles,
+  LayoutDashboard, Plus, Target, BarChart3, PieChart,
   Wallet, Download, Shield, Briefcase, Gauge, LogOut,
   Loader2, X, Grid, User, Scan, Mic, Delete,
-  FileText, MessageSquare, List
+  FileText, MessageSquare, List, Search
 } from "lucide-react";
 
 // Bottom-nav order: Home | Budgets | [ADD] | AI | More
 const PRIMARY_VIEWS = [
   { id: "dashboard",    label: "Home",    Icon: LayoutDashboard },
-  { id: "budgets",      label: "Budgets", Icon: Target },
+  { id: "budgets",      label: "Budgets", Icon: PieChart },
   { id: "goals",        label: "Goals",   Icon: Target },
-  { id: "advisor",      label: "AI",      Icon: Sparkles },
+  { id: "advisor",      label: "Advisor", Icon: MessageSquare },
 ];
 
 const SECONDARY_VIEWS = [
@@ -40,9 +40,9 @@ const SECONDARY_VIEWS = [
   { id: "investments",  label: "Investments",Icon: Briefcase },
   { id: "accounts",  label: "Accounts",     Icon: Wallet },
   { id: "analytics", label: "Analytics",    Icon: BarChart3 },
-  { id: "credit",    label: "Credit Health", Icon: Gauge },
-  { id: "export",    label: "Export & GST",  Icon: Download },
-  { id: "audit",     label: "Audit Logs",    Icon: Shield },
+  { id: "credit",    label: "Credit health", Icon: Gauge },
+  { id: "export",    label: "Export and GST", Icon: Download },
+  { id: "audit",     label: "Audit log",     Icon: Shield },
 ];
 
 const PAGE_TITLES = {
@@ -54,9 +54,9 @@ const PAGE_TITLES = {
   investments:  "Investments",
   accounts:     "Accounts",
   analytics:    "Analytics",
-  credit:       "Credit Health",
-  export:       "Export & GST",
-  audit:        "Audit Logs",
+  credit:       "Credit health",
+  export:       "Export and GST",
+  audit:        "Audit log",
   profile:      "Profile",
 };
 
@@ -80,16 +80,14 @@ function getInitials(displayName, email) {
   return name.slice(0, 2).toUpperCase();
 }
 
-const AVATAR_GRADIENTS = [
-  "linear-gradient(135deg, var(--primary), var(--info))",
-  "linear-gradient(135deg, var(--info), var(--accent))",
-  "linear-gradient(135deg, var(--primary), var(--warning))",
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+// Sidebar groups: the everyday ledger first, then planning, then records.
+const NAV_GROUPS = [
+  { label: null,       ids: ["dashboard", "transactions", "accounts"] },
+  { label: "Plan",     ids: ["budgets", "goals", "investments", "advisor"] },
+  { label: "Review",   ids: ["analytics", "credit", "export", "audit"] },
 ];
-function pickGradient(str = "") {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
-}
 
 function ViewFallback() {
   return (
@@ -289,7 +287,6 @@ export default function App() {
   if (!session) return <Auth />;
 
   const initials = getInitials(profileData?.display_name, session?.user?.email || profileData?.email);
-  const gradient = pickGradient(profileData?.id || session?.user?.id || "");
   const displayName = profileData?.display_name || session?.user?.email?.split("@")[0] || "User";
   const avatarUrl = profileData?.avatar_url;
 
@@ -298,22 +295,44 @@ export default function App() {
       {/* ── Sidebar (Desktop only) ── */}
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <LedgerLogo size={32} />
+          <LedgerLogo size={20} />
           <span className="sidebar-logo-name">Ledger</span>
         </div>
 
-        <nav className="sidebar-nav">
-          {ALL_VIEWS.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              id={`sidebar-${id}`}
-              className={`sidebar-item${view === id ? " active" : ""}`}
-              onClick={() => navigateTo(id)}
-              aria-current={view === id ? "page" : undefined}
-            >
-              <Icon size={18} aria-hidden="true" />
-              {label}
-            </button>
+        <button
+          className="btn-primary sidebar-add"
+          onClick={() => setSheetOpen(true)}
+          aria-label="Add transaction"
+        >
+          <Plus size={16} aria-hidden="true" />
+          <span style={{ flex: 1, textAlign: "left" }}>Add transaction</span>
+        </button>
+        <button className="sidebar-search" onClick={() => setCmdOpen(true)} aria-label="Search">
+          <Search size={16} aria-hidden="true" />
+          <span>Search</span>
+          <span className="kbd" aria-hidden="true">{IS_MAC ? "⌘K" : "Ctrl K"}</span>
+        </button>
+
+        <nav className="sidebar-nav" aria-label="Primary">
+          {NAV_GROUPS.map((group) => (
+            <React.Fragment key={group.label || "main"}>
+              {group.label && <div className="sidebar-section-label">{group.label}</div>}
+              {group.ids.map((id) => {
+                const { label, Icon } = ALL_VIEWS.find((v) => v.id === id);
+                return (
+                  <button
+                    key={id}
+                    id={`sidebar-${id}`}
+                    className={`sidebar-item${view === id ? " active" : ""}`}
+                    onClick={() => navigateTo(id)}
+                    aria-current={view === id ? "page" : undefined}
+                  >
+                    <Icon size={16} strokeWidth={1.5} aria-hidden="true" />
+                    {label}
+                  </button>
+                );
+              })}
+            </React.Fragment>
           ))}
         </nav>
 
@@ -321,25 +340,16 @@ export default function App() {
           <button
             className={`sidebar-item${view === "profile" ? " active" : ""}`}
             onClick={() => navigateTo("profile")}
+            aria-current={view === "profile" ? "page" : undefined}
           >
-            <div style={{
-              width: 24, height: 24, borderRadius: 6,
-              background: gradient, display: "flex",
-              alignItems: "center", justifyContent: "center",
-              fontSize: 10, color: "white", fontWeight: 700, flexShrink: 0,
-              overflow: "hidden",
-            }}>
-              {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
-            </div>
-            Profile
+            <span className="sidebar-avatar">
+              {avatarUrl ? <img src={avatarUrl} alt="" /> : initials}
+            </span>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{displayName}</span>
           </button>
-          <button
-            className="sidebar-item"
-            onClick={handleSignOut}
-            style={{ color: "var(--negative)" }}
-          >
-            <LogOut size={18} />
-            Sign Out
+          <button className="sidebar-item danger" onClick={handleSignOut}>
+            <LogOut size={16} strokeWidth={1.5} aria-hidden="true" />
+            Sign out
           </button>
         </div>
       </aside>
@@ -355,7 +365,7 @@ export default function App() {
         <header className="app-header glass">
           <div className="app-header-inner">
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <LedgerLogo size={28} />
+              <LedgerLogo size={20} />
               <span className="app-header-title">
                 Ledger
               </span>
@@ -374,9 +384,7 @@ export default function App() {
                 style={{ border: "none", cursor: "pointer", background: "none", padding: 0 }}
                 aria-label="Profile"
               >
-                <div className={`header-avatar${view === "profile" ? " active" : ""}`}
-                  style={{ background: gradient }}
-                >
+                <div className={`header-avatar${view === "profile" ? " active" : ""}`}>
                   {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} /> : initials}
                 </div>
               </button>
@@ -390,16 +398,6 @@ export default function App() {
           </Suspense>
         </main>
       </div>
-
-      {/* ── Desktop FAB ── */}
-      <button
-        className="quick-add-fab"
-        onClick={() => setSheetOpen(true)}
-        aria-label="Add transaction"
-        title="Add transaction (A)"
-      >
-        <Plus size={24} />
-      </button>
 
       {/* ── Mobile Bottom Nav ── */}
       <nav className="mobile-bottom-nav glass" aria-label="Primary mobile navigation">
@@ -488,9 +486,10 @@ export default function App() {
         {/* User info strip */}
         <div className="drawer-user-info">
           <div style={{
-            width: 44, height: 44, borderRadius: 14, background: gradient,
+            width: 40, height: 40, borderRadius: "50%", background: "var(--surface-secondary)",
+            border: "1px solid var(--border)",
             display: "flex", alignItems: "center", justifyContent: "center",
-            color: "white", fontWeight: 700, fontSize: 16, flexShrink: 0,
+            color: "var(--text-secondary)", fontWeight: 500, fontSize: 14, flexShrink: 0,
             overflow: "hidden",
           }}>
             {avatarUrl ? <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials}
@@ -505,28 +504,28 @@ export default function App() {
         </div>
 
         {/* Quick actions */}
-        <div className="drawer-section-label">Quick Actions</div>
+        <div className="drawer-section-label">Quick actions</div>
         <div className="drawer-quick-actions">
           <button className="drawer-quick-btn" onClick={() => setSheetOpen(true) || setMoreDrawerOpen(false)}>
-            <div className="drawer-quick-icon" style={{ background: "rgba(168,255,47,0.15)" }}><Plus size={18} style={{ color: "var(--primary)" }} /></div>
+            <div className="drawer-quick-icon"><Plus size={18} strokeWidth={1.5} /></div>
             <span>Add</span>
           </button>
           <button className="drawer-quick-btn" onClick={() => navigateTo("advisor")}>
-            <div className="drawer-quick-icon" style={{ background: "rgba(111,96,255,0.15)" }}><Sparkles size={18} style={{ color: "var(--info)" }} /></div>
-            <span>AI Chat</span>
+            <div className="drawer-quick-icon"><MessageSquare size={18} strokeWidth={1.5} /></div>
+            <span>Advisor</span>
           </button>
           <button className="drawer-quick-btn" onClick={() => navigateTo("analytics")}>
-            <div className="drawer-quick-icon" style={{ background: "rgba(255,171,64,0.15)" }}><BarChart3 size={18} style={{ color: "var(--warning)" }} /></div>
+            <div className="drawer-quick-icon"><BarChart3 size={18} strokeWidth={1.5} /></div>
             <span>Analytics</span>
           </button>
           <button className="drawer-quick-btn" onClick={() => navigateTo("credit")}>
-            <div className="drawer-quick-icon" style={{ background: "rgba(255,59,48,0.15)" }}><Gauge size={18} style={{ color: "var(--negative)" }} /></div>
-            <span>Health</span>
+            <div className="drawer-quick-icon"><Gauge size={18} strokeWidth={1.5} /></div>
+            <span>Credit</span>
           </button>
         </div>
 
         {/* All pages */}
-        <div className="drawer-section-label">All Pages</div>
+        <div className="drawer-section-label">All pages</div>
         <div className="drawer-grid">
           {SECONDARY_VIEWS.map(({ id, label, Icon }) => (
             <button
@@ -552,7 +551,7 @@ export default function App() {
           onClick={handleSignOut}
           style={{ color: "var(--negative)", marginTop: 8 }}
         >
-          <LogOut size={16} /> Sign Out
+          <LogOut size={16} /> Sign out
         </button>
       </div>
 
@@ -562,7 +561,7 @@ export default function App() {
         ownerId={profileData?.id || localStorage.getItem("ledger-last-profile-id")}
         onClose={() => setSheetOpen(false)}
         onSaved={() => {
-          toast("Transaction added ✓", "success");
+          toast("Transaction added", "success");
           if (view !== "transactions") navigateTo("transactions");
         }}
       />
@@ -711,7 +710,7 @@ function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
         category: res.category || prev.category,
         date: res.date || prev.date
       }));
-      toast("Receipt scanned successfully!", "success");
+      toast("Receipt scanned", "success");
     } catch (err) {
       toast(`${err.message || "Could not scan receipt"}. The file is still attached for saving.`, "info");
     } finally {
@@ -973,16 +972,16 @@ function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
           </section>}
 
           {statementPreview ? (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
               <div className="add-section-label">REVIEW STATEMENT</div>
-              <div style={{ padding: "14px 16px", borderRadius: 14, background: "var(--surface-secondary)", border: "1px solid var(--border)" }}>
-                <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>{statementPreview.file_name}</div>
+              <div style={{ padding: "16px 16px", borderRadius: 14, background: "var(--surface-secondary)", border: "1px solid var(--border)" }}>
+                <div style={{ fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>{statementPreview.file_name}</div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                   {statementPreview.row_count} rows found · {statementPreview.duplicate_count} will be skipped · {form.account ? "Account selected" : "No account selected"}
                 </div>
               </div>
               {statementPreview.warnings?.map((warning) => (
-                <div key={warning} style={{ fontSize: 12, lineHeight: 1.45, color: "var(--text-secondary)", padding: "9px 11px", borderRadius: 10, background: "rgba(250,204,21,0.10)", border: "1px solid rgba(250,204,21,0.28)" }}>
+                <div key={warning} style={{ fontSize: 12, lineHeight: 1.45, color: "var(--text-secondary)", padding: "8px 12px", borderRadius: 10, background: "rgba(212,166,74,0.10)", border: "1px solid rgba(212,166,74,0.28)" }}>
                   {warning}
                 </div>
               ))}
@@ -1004,7 +1003,7 @@ function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
                     [row.fingerprint]: { ...previous[row.fingerprint], [key]: value },
                   }));
                   return (
-                  <div key={`${row.fingerprint || row.date}-${index}`} style={{ display: "grid", gridTemplateColumns: "auto 76px minmax(100px, 1fr) 95px 120px 92px auto", gap: 8, alignItems: "center", padding: "9px 11px", borderBottom: "1px solid var(--border)", opacity: row.duplicate || excluded ? 0.5 : 1, fontSize: 12 }}>
+                  <div key={`${row.fingerprint || row.date}-${index}`} style={{ display: "grid", gridTemplateColumns: "auto 76px minmax(100px, 1fr) 95px 120px 92px auto", gap: 8, alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--border)", opacity: row.duplicate || excluded ? 0.5 : 1, fontSize: 12 }}>
                     <input type="checkbox" checked={!excluded && !row.duplicate} disabled={row.duplicate} onChange={() => setExcludedStatementRows((previous) => {
                       const next = new Set(previous);
                       if (next.has(row.fingerprint)) next.delete(row.fingerprint); else next.add(row.fingerprint);
@@ -1012,16 +1011,16 @@ function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
                     })} aria-label={`${excluded ? "Include" : "Exclude"} ${row.description}`} />
                     <span style={{ width: 76, color: "var(--text-muted)" }}>{row.date}</span>
                     <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-primary)" }}>{row.description}</span>
-                    <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{moneyInCurrency(row.amount, activeCurrency)}</span>
-                    <input value={merchant} disabled={row.duplicate} onChange={(event) => updateEdit("merchant_normalized", event.target.value)} placeholder="Merchant" aria-label={`Merchant for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "5px 6px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }} />
-                    <select value={category} disabled={row.duplicate} onChange={(event) => updateEdit("category", event.target.value)} aria-label={`Category for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "5px 4px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }}>
+                    <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>{moneyInCurrency(row.amount, activeCurrency)}</span>
+                    <input value={merchant} disabled={row.duplicate} onChange={(event) => updateEdit("merchant_normalized", event.target.value)} placeholder="Merchant" aria-label={`Merchant for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }} />
+                    <select value={category} disabled={row.duplicate} onChange={(event) => updateEdit("category", event.target.value)} aria-label={`Category for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "4px 4px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }}>
                       {importCategories.map((option) => <option key={option} value={option}>{option}</option>)}
                     </select>
-                    <select value={type} disabled={row.duplicate} onChange={(event) => updateEdit("type", event.target.value)} aria-label={`Type for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "5px 4px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }}>
+                    <select value={type} disabled={row.duplicate} onChange={(event) => updateEdit("type", event.target.value)} aria-label={`Type for ${row.description}`} style={{ minWidth: 0, width: "100%", padding: "4px 4px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" }}>
                       {['expense', 'income', 'refund', 'reimbursement', 'transfer'].map((option) => <option key={option} value={option}>{option}</option>)}
                     </select>
-                    {row.duplicate && <span style={{ color: "var(--text-muted)", fontSize: 10 }}>SKIP</span>}
-                    {!row.duplicate && row.category && <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{uncertain ? "REVIEW" : "Edited"}</span>}
+                    {row.duplicate && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>SKIP</span>}
+                    {!row.duplicate && row.category && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{uncertain ? "REVIEW" : "Edited"}</span>}
                   </div>
                   );
                 })}
@@ -1134,7 +1133,7 @@ function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
 
               {/* Submit */}
               <button className="add-submit-btn" onClick={save} disabled={submitting || !Number(amountStr) || (recurringEnabled && !splitEnabled && form.type === "expense" && form.status === "posted" && (!nextDue || !form.description.trim()))}>
-                {submitting ? <><Loader2 size={16} className="spin" /> Saving…</> : "Enter an amount"}
+                {submitting ? <><Loader2 size={16} className="spin" /> Saving</> : "Enter an amount"}
               </button>
             </>
           )}
