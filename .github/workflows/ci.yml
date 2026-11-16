@@ -72,6 +72,10 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
+        env:
+          # Authenticates the action's account lookup; without it the shared runner IP hits
+          # GitHub's anonymous rate limit and the action falls back to requiring a license.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   licenses:
     if: github.event_name == 'pull_request'

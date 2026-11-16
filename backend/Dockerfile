@@ -16,6 +16,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ── Stage 2: final runtime image ──────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
+# Apply Debian security updates so fixable OS CVEs (e.g. zlib) don't wait for a new base image.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy installed packages from deps stage
