@@ -58,13 +58,19 @@ Return ONLY a JSON array:
 JSON only. No commentary."""
 
 
-async def analyze_bills(recurring_payments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def analyze_bills(
+    recurring_payments: list[dict[str, Any]],
+    allow_cloud_ai: bool = False,
+) -> list[dict[str, Any]]:
     """
     Analyze recurring payments and generate negotiation strategies.
-    Uses ai_router.generate() (non-streaming). Falls back to rule-based analysis.
+    Uses ai_router.generate() (non-streaming) only when the user allows cloud AI;
+    otherwise, or on failure, falls back to rule-based analysis.
     """
     if not recurring_payments:
         return []
+    if not allow_cloud_ai:
+        return _rule_based_analysis(recurring_payments)
 
     try:
         prompt = f"""Analyze these recurring payments from an Indian user and suggest negotiations:

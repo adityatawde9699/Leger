@@ -98,7 +98,7 @@ def test_statement_review_can_exclude_preview_rows(client):
 
 
 def test_statement_preview_review_commit_persists_only_included_rows(client, monkeypatch):
-    async def categorize(rows, user_overrides=None):
+    async def categorize(rows, user_overrides=None, allow_cloud_ai=False):
         return [
             {"id": row["id"], "category": "Food", "confidence": 0.9}
             for row in rows
@@ -146,5 +146,38 @@ def test_statement_preview_review_commit_persists_only_included_rows(client, mon
         assert [(tx.description, tx.amount, tx.category) for tx in saved_transactions] == [
             ("Groceries", Decimal("250.00"), "Food")
         ]
+    finally:
+        db.close()
+
+
+def test_retry_failed_import_requeues_and_processes(client, monkeypatch):
+    """Retry used to raise RuntimeError (no event loop in a sync route) and return 500."""
+    monkeypatch.setattr(main, "SessionLocal", TestSession)
+    db = TestSession()
+    try:
+        job = ImportJob(
+            user_id=TEST_USER_ID, status="failed", file_name="retry.csv", file_extension="csv",
+            file_content=b"Date,Description,Amount\n02/01/2026,Retry coffee,-100.00\n",
+            error_message="Temporary failure",
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+    finally:
+        db.close()
+
+    response = client.post(f"/imports/jobs/{job_id}/retry", headers=AUTH_HEADER)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+    db = TestSession()
+    try:
+        job = db.get(ImportJob, job_id)
+        if job.status == "pending":
+            # The scheduled task may not have run before the test client returned.
+            asyncio.run(main._process_import_job(job_id))
+            db.refresh(job)
+        assert job.status == "done"
+        assert db.query(Transaction).filter(Transaction.description == "Retry coffee").count() == 1
     finally:
         db.close()

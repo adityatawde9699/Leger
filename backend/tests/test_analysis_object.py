@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -100,10 +100,14 @@ def test_forecast_exposes_period_and_sufficiency_metadata():
 
 
 def test_budget_warning_includes_personal_historical_pace():
+    # Dates are relative to today: the warning compares the current month with prior months.
+    current = date.today().replace(day=1)
+    previous = (current - timedelta(days=1)).replace(day=5)
+    earlier = (previous.replace(day=1) - timedelta(days=1)).replace(day=5)
     transactions = [
-        SimpleNamespace(date=date(2026, 9, 5), type="expense", status="posted", amount=Decimal("500"), category="Food"),
-        SimpleNamespace(date=date(2026, 8, 5), type="expense", status="posted", amount=Decimal("100"), category="Food"),
-        SimpleNamespace(date=date(2026, 7, 5), type="expense", status="posted", amount=Decimal("120"), category="Food"),
+        SimpleNamespace(date=current, type="expense", status="posted", amount=Decimal("500"), category="Food"),
+        SimpleNamespace(date=previous, type="expense", status="posted", amount=Decimal("100"), category="Food"),
+        SimpleNamespace(date=earlier, type="expense", status="posted", amount=Decimal("120"), category="Food"),
     ]
     warning = budget_breach_warnings(
         transactions,

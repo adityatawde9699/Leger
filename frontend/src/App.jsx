@@ -5,6 +5,7 @@ import { useToast, LedgerLogo, CardSkeleton } from "./components/ui";
 import Auth from "./views/Auth";
 import CommandPalette from "./components/CommandPalette";
 import { listQueued, queueCapture, removeQueued, updateQueued } from "./offlineQueue";
+import { clearCachedApiData } from "./privateCache";
 
 const Dashboard     = lazy(() => import("./views/Dashboard"));
 const Transactions  = lazy(() => import("./views/Transactions"));
@@ -167,7 +168,8 @@ export default function App() {
   }, [session]);
 
   useEffect(() => {
-    const expired = () => { setSession(null); setProfileData(null); setAuthToken(null); };
+    clearCachedApiData();
+    const expired = () => { clearCachedApiData(); setSession(null); setProfileData(null); setAuthToken(null); };
     window.addEventListener("ledger-session-expired", expired);
     return () => window.removeEventListener("ledger-session-expired", expired);
   }, []);
@@ -197,6 +199,7 @@ export default function App() {
   const handleSignOut = async () => {
     if (import.meta.env.VITE_AUTH_PROVIDER === "dev") {
       stopKeepAlive();
+      clearCachedApiData();
       localStorage.removeItem("ledger-last-profile-id");
       setProfileData(null);
       localStorage.removeItem("dev-session"); setSession(null); setAuthToken(null); return;
@@ -208,6 +211,7 @@ export default function App() {
       return;
     }
     stopKeepAlive();
+    await clearCachedApiData();
     localStorage.removeItem("ledger-last-profile-id");
     setProfileData(null);
     setSession(null);

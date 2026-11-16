@@ -341,3 +341,19 @@ def test_cookie_session_origin_logout_and_headers(monkeypatch):
             assert client.get("/profile").status_code == 401
     finally:
         fastapi_app.dependency_overrides[auth.get_current_user] = original
+
+
+def test_rate_limit_identity_keys_signed_in_users_by_session_not_ip():
+    """Behind the proxy every request shares one IP; signed-in users must not share a bucket,
+    and a spoofed X-Forwarded-For must not mint a new bucket for the same session."""
+    from starlette.requests import Request as StarletteRequest
+
+    from app.main import SESSION_COOKIE, _rate_limit_identity
+
+    def request(ip: str, cookie: str | None = None) -> StarletteRequest:
+        headers = [(b"cookie", f"{SESSION_COOKIE}={cookie}".encode())] if cookie else []
+        return StarletteRequest({"type": "http", "method": "GET", "path": "/", "headers": headers, "client": (ip, 1234)})
+
+    assert _rate_limit_identity(request("10.0.0.1", "token-a")) == _rate_limit_identity(request("203.0.113.9", "token-a"))
+    assert _rate_limit_identity(request("10.0.0.1", "token-a")) != _rate_limit_identity(request("10.0.0.1", "token-b"))
+    assert _rate_limit_identity(request("198.51.100.1")) != _rate_limit_identity(request("198.51.100.2"))

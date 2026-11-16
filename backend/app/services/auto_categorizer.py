@@ -125,6 +125,7 @@ async def categorize_single(
     description: str,
     tx_type: str = "expense",
     user_overrides: dict[str, str] | None = None,
+    allow_cloud_ai: bool = False,
 ) -> dict[str, Any]:
     """
     Categorize a single transaction using the 4-tier pipeline.
@@ -173,14 +174,14 @@ async def categorize_single(
                 "reason": f"Similar to cached transaction (sim={sim_result['similarity']:.2f})",
             }
 
-    # ── Tier 4: LLM (only if provider available and description is ambiguous) ──
-    if not _has_ai_provider():
+    # ── Tier 4: LLM (only if the user allows cloud AI and a provider exists) ──
+    if not allow_cloud_ai or not _has_ai_provider():
         return {
             "category": "Other",
             "confidence": 0.1,
             "merchant": extract_upi_merchant(description),
             "source": "fallback",
-            "reason": "No AI provider configured",
+            "reason": "Cloud AI is turned off" if not allow_cloud_ai else "No AI provider configured",
         }
 
     # Send to LLM if: it's a generic UPI OR we just have no good match
@@ -227,6 +228,7 @@ async def categorize_single(
 async def categorize_batch(
     transactions: list[dict],
     user_overrides: dict[str, str] | None = None,
+    allow_cloud_ai: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Categorize multiple transactions using the 4-tier pipeline.
@@ -288,7 +290,7 @@ async def categorize_batch(
         needs_llm.append(tx)
 
     # Process LLM batch in parallel chunks
-    if needs_llm and _has_ai_provider():
+    if needs_llm and allow_cloud_ai and _has_ai_provider():
         chunks = [needs_llm[i : i + LLM_BATCH_SIZE] for i in range(0, len(needs_llm), LLM_BATCH_SIZE)]
         tasks = [_llm_batch_chunk(chunk) for chunk in chunks]
         chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
