@@ -357,6 +357,26 @@ def _rule_based_insights(
     return insights[:5]
 
 
+_EMPTY_STATE = {
+    "type": "info", "priority": 1, "text": "Add transactions to get personalized insights.",
+    "category": None, "confidence": "low", "source": "rules", "evidence": [],
+    "action": "Add your first transaction", "action_type": "add_transaction",
+}
+
+
+def deterministic_proactive_insights(
+    transactions: list[Transaction],
+    budgets: list[Budget],
+    anomalies: list[dict] | None = None,
+    currency: str = "INR",
+    recurring_tolerance: str = "standard",
+) -> list[dict[str, Any]]:
+    """Rule-based insights only: synchronous and never contacts an AI provider."""
+    if not transactions:
+        return [_decorate(dict(_EMPTY_STATE), [])]
+    return _rule_based_insights(transactions, budgets, anomalies, currency, recurring_tolerance)
+
+
 async def generate_proactive_insights(
     transactions: list[Transaction],
     budgets: list[Budget],
@@ -371,11 +391,7 @@ async def generate_proactive_insights(
     Always tries LLM first (via ai_router), falls back to rule-based.
     """
     if not transactions:
-        return [_decorate({
-            "type": "info", "priority": 1, "text": "Add transactions to get personalized insights.",
-            "category": None, "confidence": "low", "source": "rules", "evidence": [],
-            "action": "Add your first transaction", "action_type": "add_transaction",
-        }, [])]
+        return [_decorate(dict(_EMPTY_STATE), [])]
 
     context = _build_proactive_context(transactions, budgets, anomalies, forecast, currency, recurring_tolerance)
 

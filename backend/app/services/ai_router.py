@@ -360,10 +360,28 @@ class AIRouter:
             )
         self._record_shared_health(name, "failure", latency_ms)
 
+    async def _budget_allows(self, name: str) -> bool:
+        # The shared budget is an Upstash HTTP call; keep it off the event loop.
+        if self._budget.uses_network(name):
+            return await asyncio.to_thread(self._budget.allow, name)
+        return self._budget.allow(name)
+
     def _record_shared_health(self, name: str, outcome: str, latency_ms: float | None) -> None:
         """Best-effort deployment-wide counters; local health remains authoritative on failure."""
         if settings.environment != "production":
             return
+        if self._health_redis is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._write_shared_health(name, outcome, latency_ms)
+            return
+        # Four sequential Upstash HTTP calls: run them in the background in a thread
+        # rather than blocking the event loop after every provider response.
+        loop.run_in_executor(None, self._write_shared_health, name, outcome, latency_ms)
+
+    def _write_shared_health(self, name: str, outcome: str, latency_ms: float | None) -> None:
         if self._health_redis is None:
             return
         try:
@@ -495,7 +513,7 @@ class AIRouter:
         for name, adapter in self._adapters_for(task_type):
             if not await adapter.is_available():
                 continue
-            if not self._budget.allow(name):
+            if not await self._budget_allows(name):
                 logger.warning("AI request budget exhausted for provider=%s task=%s", name, task_type)
                 continue
             if attempts >= max_attempts:
@@ -586,7 +604,7 @@ class AIRouter:
         for name, adapter in self._adapters_for(task_type):
             if not await adapter.is_available():
                 continue
-            if not self._budget.allow(name):
+            if not await self._budget_allows(name):
                 logger.warning("AI request budget exhausted for provider=%s task=%s", name, task_type)
                 continue
             if attempts >= max_attempts:

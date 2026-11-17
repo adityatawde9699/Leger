@@ -15,6 +15,7 @@ from zipfile import BadZipFile, ZipFile
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from PIL import Image, UnidentifiedImageError
@@ -148,7 +149,11 @@ from .services.leakage import detect_leakage
 from .services.notification_policy import apply_notification_policy
 from .services.portfolio_analytics import compute_portfolio_analytics
 from .services.privacy import purge_expired_conversations, redact_sensitive_text, safe_conversation_memory
-from .services.proactive_insights import apply_insight_frequency, generate_proactive_insights
+from .services.proactive_insights import (
+    apply_insight_frequency,
+    deterministic_proactive_insights,
+    generate_proactive_insights,
+)
 from .services.prompt_guard import build_safe_messages, sanitize_user_input
 from .services.receipt_ocr import parse_receipt_image
 from .services.runway import calculate_runway
@@ -326,6 +331,26 @@ async def bound_request_body(request: Request, call_next):
     return await call_next(request)
 
 
+def _security_rate_count(category: str, window: int, session_token: str | None, remote_addr: str) -> int:
+    """Increment and return this request's fixed-window counter (blocking I/O)."""
+    # Authenticated requests: one bucket per user, independent of IP (see
+    # _rate_limit_identity). Anonymous requests: one bucket per client IP, which
+    # uvicorn resolves from the proxy's X-Forwarded-For (entrypoint.sh).
+    raw = f"ip:{remote_addr}"
+    if session_token:
+        with SessionLocal() as db:
+            session = db.get(AppSession, hashlib.sha256(session_token.encode()).hexdigest())
+            if session:
+                raw = f"user:{session.user_id}"
+    subject = hashlib.sha256(raw.encode()).hexdigest()
+    key = f"security-rate:{category}:{subject}:{int(time.time()) // window}"
+    pipeline = security_rate_store.pipeline()
+    pipeline.incr(key)
+    pipeline.expire(key, window * 2)
+    count, _ = pipeline.exec()
+    return count
+
+
 @app.middleware("http")
 async def categorized_rate_limits(request: Request, call_next):
     if security_rate_store is not None and request.method != "OPTIONS":
@@ -345,23 +370,13 @@ async def categorized_rate_limits(request: Request, call_next):
         else:
             category = None
         if category:
-            token = request.cookies.get(SESSION_COOKIE)
-            # Authenticated requests: one bucket per user, independent of IP (see
-            # _rate_limit_identity). Anonymous requests: one bucket per client IP, which
-            # uvicorn resolves from the proxy's X-Forwarded-For (entrypoint.sh).
-            raw = f"ip:{get_remote_address(request)}"
-            if token:
-                with SessionLocal() as db:
-                    session = db.get(AppSession, hashlib.sha256(token.encode()).hexdigest())
-                    if session:
-                        raw = f"user:{session.user_id}"
-            subject = hashlib.sha256(raw.encode()).hexdigest()
-            key = f"security-rate:{category}:{subject}:{int(time.time()) // window}"
             try:
-                pipeline = security_rate_store.pipeline()
-                pipeline.incr(key)
-                pipeline.expire(key, window * 2)
-                count, _ = pipeline.exec()
+                # Session lookup and the Upstash call are blocking network I/O; run them
+                # in the threadpool so one slow call cannot stall every other request.
+                count = await run_in_threadpool(
+                    _security_rate_count, category, window,
+                    request.cookies.get(SESSION_COOKIE), get_remote_address(request),
+                )
             except Exception:
                 return Response(status_code=503, content="Rate limiter unavailable", headers={
                     "X-Request-ID": str(uuid.uuid4()), "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
@@ -554,6 +569,24 @@ def _resolve_merchant_alias(db: Session, user_id: str, description: str, propose
         .first()
     )
     return alias.canonical if alias else proposed
+
+
+def _merchant_alias_map(db: Session, user_id: str) -> dict[str, tuple[datetime, str]]:
+    """All of a user's aliases in one query, for resolving many rows in memory."""
+    return {
+        alias.alias_key: (alias.created_at, alias.canonical)
+        for alias in db.query(MerchantAlias).filter(MerchantAlias.user_id == user_id)
+    }
+
+
+def _alias_from_map(aliases: dict[str, tuple[datetime, str]], description: str, proposed: str | None) -> str | None:
+    """In-memory equivalent of _resolve_merchant_alias: the newest matching alias wins."""
+    keys = {_merchant_key(description)} | ({_merchant_key(proposed)} if proposed else set())
+    matches = [aliases[key] for key in keys if key in aliases]
+    if not matches:
+        return proposed
+    # SQLite returns naive datetimes and PostgreSQL aware ones; compare as timestamps.
+    return max(matches, key=lambda match: match[0].timestamp() if match[0] else 0.0)[1]
 
 
 def _recurring_payload(rule: RecurringRule) -> dict:
@@ -1816,9 +1849,9 @@ async def preview_statement_import(
     _validate_statement_content(content, ext)
 
     if ext == "csv":
-        rows = parse_csv(content)
+        rows = await asyncio.to_thread(parse_csv, content)
     elif ext in ("xls", "xlsx", "ods"):
-        rows = parse_excel(content, ext)
+        rows = await asyncio.to_thread(parse_excel, content, ext)
     else:
         owner = db.get(User, user.id)
         rows = await parse_pdf(content, allow_cloud_ai=bool(owner and owner.cloud_ai_enabled))
@@ -1925,6 +1958,121 @@ def _insert_import_batch(db: Session, batch: list[Transaction]) -> int:
     return saved
 
 
+_CANCEL_POLL_ROWS = 25
+
+
+def _save_imported_rows(
+    worker_db: Session,
+    worker_job: ImportJob,
+    rows: list[dict],
+    review_overrides: dict,
+    excluded_fingerprints: set[str],
+) -> int | None:
+    """Validate, de-duplicate and store parsed rows; return the saved count, or None if cancelled.
+
+    Pure database and CPU work with many round trips, so the worker runs it in a
+    thread instead of on the event loop.
+    """
+    user_id = worker_job.user_id
+    account_id = worker_job.account_id
+    # User review is authoritative over model/rule inference.
+    _apply_import_review_overrides(rows, review_overrides, account_id)
+
+    prepared = []
+    for seq, row in enumerate(rows):
+        row["stmt_seq"] = seq
+        merchant_norm = row.pop("merchant_normalized", None)
+        ai_confidence = row.pop("ai_confidence", None)
+        validated = TransactionIn(**row).model_dump()
+        if account_id:
+            validated["account_id"] = account_id
+        fingerprint = _statement_row_fingerprint(validated, account_id)
+        validated["source_ref"] = fingerprint
+        prepared.append((validated, merchant_norm, ai_confidence, fingerprint))
+
+    existing_refs: set[str] = set()
+    if prepared:
+        fingerprints = [fp for _, _, _, fp in prepared]
+        existing_refs = {
+            ref for (ref,) in worker_db.query(Transaction.source_ref).filter(
+                Transaction.user_id == user_id,
+                Transaction.source == "statement",
+                Transaction.source_ref.in_(fingerprints),
+            ).all()
+        }
+
+    # Work out which rows will actually be inserted, then their running balances.
+    to_insert: list[str] = []
+    planned: set[str] = set()
+    for _, _, _, fingerprint in prepared:
+        if fingerprint in existing_refs or fingerprint in planned or fingerprint in excluded_fingerprints:
+            continue
+        planned.add(fingerprint)
+        to_insert.append(fingerprint)
+    validated_by_fp = {fp: validated for validated, _, _, fp in prepared}
+    balance_by_fp = dict(zip(
+        to_insert,
+        _imported_running_balances(
+            [validated_by_fp[fp] for fp in to_insert],
+            _get_balance_at(worker_db, user_id, as_of_date=None),
+        ),
+        strict=True,
+    ))
+    saved_count = 0
+    seen: set[str] = set()
+    batch: list[Transaction] = []
+    aliases = _merchant_alias_map(worker_db, user_id)
+    position = 0
+    for validated, merchant_norm, ai_confidence, fingerprint in prepared:
+        # Poll for cancellation every few rows rather than with a query per row.
+        position += 1
+        cancel_requested = position % _CANCEL_POLL_ROWS == 1 and worker_db.query(
+            ImportJob.cancel_requested).filter(ImportJob.id == worker_job.id).scalar()
+        if cancel_requested:
+            saved_count += _insert_import_batch(worker_db, batch)
+            worker_job.status = "cancelled"
+            worker_job.cancel_requested = True
+            worker_job.row_count = saved_count
+            worker_job.processed_rows = min(worker_job.total_rows or 0, saved_count)
+            worker_job.error_message = "Import cancelled; already processed rows remain safe and can be retried."
+            worker_db.commit()
+            return None
+        if fingerprint in existing_refs or fingerprint in seen:
+            worker_job.processed_rows += 1
+            continue
+        if fingerprint in excluded_fingerprints:
+            worker_job.processed_rows += 1
+            continue
+        seen.add(fingerprint)
+        new_tx = Transaction(user_id=user_id, **validated)
+        new_tx.merchant_normalized = _alias_from_map(aliases, new_tx.description, merchant_norm)
+        if ai_confidence is not None:
+            new_tx.confidence = ai_confidence
+        if new_tx.running_balance is None:
+            new_tx.running_balance = balance_by_fp.get(fingerprint)
+        batch.append(new_tx)
+        worker_job.processed_rows += 1
+        if len(batch) >= 100:
+            saved_count += _insert_import_batch(worker_db, batch)
+            batch = []
+            worker_db.commit()
+    saved_count += _insert_import_batch(worker_db, batch)
+
+    worker_job.status = "failed" if not rows else "done"
+    worker_job.processed_rows = len(rows)
+    worker_job.row_count = saved_count if rows else None
+    if not rows:
+        worker_job.error_message = (
+            "No transactions could be extracted from this file. If this is a scanned/image PDF, "
+            "export a digital PDF or CSV from your bank and re-upload."
+        )
+    else:
+        worker_job.error_message = None
+        worker_job.file_content = None
+    worker_db.commit()
+    return saved_count
+
+
 async def _process_import_job(job_id: str) -> None:
     """Process one stored import job using a fresh session.
 
@@ -1959,7 +2107,6 @@ async def _process_import_job(job_id: str) -> None:
         content = worker_job.file_content
         ext = worker_job.file_extension
         user_id = worker_job.user_id
-        account_id = worker_job.account_id
         try:
             excluded_fingerprints = set(json.loads(worker_job.excluded_row_fingerprints or "[]"))
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -1971,9 +2118,9 @@ async def _process_import_job(job_id: str) -> None:
         except (TypeError, ValueError, json.JSONDecodeError):
             review_overrides = {}
         if ext == "csv":
-            rows = parse_csv(content)
+            rows = await asyncio.to_thread(parse_csv, content)
         elif ext in ("xls", "xlsx", "ods"):
-            rows = parse_excel(content, ext)
+            rows = await asyncio.to_thread(parse_excel, content, ext)
         else:
             owner = worker_db.get(User, worker_job.user_id)
             rows = await parse_pdf(content, allow_cloud_ai=bool(owner and owner.cloud_ai_enabled))
@@ -2017,96 +2164,11 @@ async def _process_import_job(job_id: str) -> None:
             except Exception as ai_err:
                 logger.warning("Statement AI categorization pass failed: %s", type(ai_err).__name__)
 
-        # User review is authoritative over model/rule inference.
-        _apply_import_review_overrides(rows, review_overrides, account_id)
-
-        prepared = []
-        for seq, row in enumerate(rows):
-            row["stmt_seq"] = seq
-            merchant_norm = row.pop("merchant_normalized", None)
-            ai_confidence = row.pop("ai_confidence", None)
-            validated = TransactionIn(**row).model_dump()
-            if account_id:
-                validated["account_id"] = account_id
-            fingerprint = _statement_row_fingerprint(validated, account_id)
-            validated["source_ref"] = fingerprint
-            prepared.append((validated, merchant_norm, ai_confidence, fingerprint))
-
-        existing_refs: set[str] = set()
-        if prepared:
-            fingerprints = [fp for _, _, _, fp in prepared]
-            existing_refs = {
-                ref for (ref,) in worker_db.query(Transaction.source_ref).filter(
-                    Transaction.user_id == user_id,
-                    Transaction.source == "statement",
-                    Transaction.source_ref.in_(fingerprints),
-                ).all()
-            }
-
-        # Work out which rows will actually be inserted, then their running balances.
-        to_insert: list[str] = []
-        planned: set[str] = set()
-        for _, _, _, fingerprint in prepared:
-            if fingerprint in existing_refs or fingerprint in planned or fingerprint in excluded_fingerprints:
-                continue
-            planned.add(fingerprint)
-            to_insert.append(fingerprint)
-        validated_by_fp = {fp: validated for validated, _, _, fp in prepared}
-        balance_by_fp = dict(zip(
-            to_insert,
-            _imported_running_balances(
-                [validated_by_fp[fp] for fp in to_insert],
-                _get_balance_at(worker_db, user_id, as_of_date=None),
-            ),
-            strict=True,
-        ))
-        saved_count = 0
-        seen: set[str] = set()
-        batch: list[Transaction] = []
-        for validated, merchant_norm, ai_confidence, fingerprint in prepared:
-            cancel_requested = worker_db.query(ImportJob.cancel_requested).filter(ImportJob.id == job_id).scalar()
-            if cancel_requested:
-                saved_count += _insert_import_batch(worker_db, batch)
-                worker_job.status = "cancelled"
-                worker_job.cancel_requested = True
-                worker_job.row_count = saved_count
-                worker_job.processed_rows = min(worker_job.total_rows or 0, saved_count)
-                worker_job.error_message = "Import cancelled; already processed rows remain safe and can be retried."
-                worker_db.commit()
-                return
-            if fingerprint in existing_refs or fingerprint in seen:
-                worker_job.processed_rows += 1
-                continue
-            if fingerprint in excluded_fingerprints:
-                worker_job.processed_rows += 1
-                continue
-            seen.add(fingerprint)
-            new_tx = Transaction(user_id=user_id, **validated)
-            new_tx.merchant_normalized = _resolve_merchant_alias(worker_db, user_id, new_tx.description, merchant_norm)
-            if ai_confidence is not None:
-                new_tx.confidence = ai_confidence
-            if new_tx.running_balance is None:
-                new_tx.running_balance = balance_by_fp.get(fingerprint)
-            batch.append(new_tx)
-            worker_job.processed_rows += 1
-            if len(batch) >= 100:
-                saved_count += _insert_import_batch(worker_db, batch)
-                batch = []
-                worker_db.commit()
-        saved_count += _insert_import_batch(worker_db, batch)
-
-        worker_job.status = "failed" if not rows else "done"
-        worker_job.processed_rows = len(rows)
-        worker_job.row_count = saved_count if rows else None
-        if not rows:
-            worker_job.error_message = (
-                "No transactions could be extracted from this file. If this is a scanned/image PDF, "
-                "export a digital PDF or CSV from your bank and re-upload."
-            )
-        else:
-            worker_job.error_message = None
-            worker_job.file_content = None
-        worker_db.commit()
+        saved_count = await asyncio.to_thread(
+            _save_imported_rows, worker_db, worker_job, rows, review_overrides, excluded_fingerprints,
+        )
+        if saved_count is None:
+            return
         record_telemetry(
             "import.completed",
             user_id=user_id,
@@ -2140,36 +2202,38 @@ async def _process_import_job(job_id: str) -> None:
         worker_db.close()
 
 
+def _next_recoverable_import() -> str | None:
+    """The next pending job, re-queueing one stuck in processing for 5+ minutes (blocking I/O)."""
+    recovery_db = SessionLocal()
+    try:
+        job = recovery_db.query(ImportJob).filter(
+            ImportJob.status == "pending",
+            ImportJob.file_content.isnot(None),
+        ).order_by(ImportJob.created_at).first()
+        if not job:
+            stale_before = datetime.now(UTC) - timedelta(minutes=5)
+            job = recovery_db.query(ImportJob).filter(
+                ImportJob.status == "processing",
+                ImportJob.updated_at < stale_before,
+                ImportJob.file_content.isnot(None),
+            ).order_by(ImportJob.updated_at).first()
+            if job:
+                job.status = "pending"
+                recovery_db.commit()
+        return job.id if job else None
+    except Exception:
+        recovery_db.rollback()
+        logger.exception("import.recovery.poll_failed")
+        return None
+    finally:
+        recovery_db.close()
+
+
 async def _import_recovery_loop() -> None:
     """Recover pending jobs after a process restart."""
     await asyncio.sleep(1)
     while True:
-        recovery_db = SessionLocal()
-        try:
-            job = recovery_db.query(ImportJob).filter(
-                ImportJob.status == "pending",
-                ImportJob.file_content.isnot(None),
-            ).order_by(ImportJob.created_at).first()
-            if not job:
-                stale_before = datetime.now(UTC) - timedelta(minutes=5)
-                job = recovery_db.query(ImportJob).filter(
-                    ImportJob.status == "processing",
-                    ImportJob.updated_at < stale_before,
-                    ImportJob.file_content.isnot(None),
-                ).order_by(ImportJob.updated_at).first()
-                if job:
-                    job.status = "pending"
-                    recovery_db.commit()
-            if job:
-                job_id = job.id
-            else:
-                job_id = None
-        except Exception:
-            recovery_db.rollback()
-            logger.exception("import.recovery.poll_failed")
-            job_id = None
-        finally:
-            recovery_db.close()
+        job_id = await asyncio.to_thread(_next_recoverable_import)
         if job_id:
             await _process_import_job(job_id)
         else:
@@ -2192,6 +2256,60 @@ def _purge_stale_import_payloads(db: Session, now: datetime | None = None) -> in
     return purged
 
 
+def _run_maintenance_cycle() -> None:
+    """One pass of maintenance. Database work for every user, so it runs in a thread."""
+    db = SessionLocal()
+    try:
+        db.query(AppSession).filter(AppSession.expires_at < datetime.now(UTC)).delete()
+        db.commit()
+        if purged := _purge_stale_import_payloads(db):
+            logger.info("maintenance.import_payloads_purged count=%d", purged)
+        for db_user in db.query(User).all():
+            purge_expired_conversations(db, db_user.id, settings.ai_conversation_retention_days)
+            if db_user.insight_frequency == "off" or _account_currency_mismatch_count(db, db_user.id):
+                continue
+            transactions = _tx_query(db, db_user.id).limit(300).all()
+            budgets = db.query(Budget).filter(Budget.user_id == db_user.id).all()
+            currency = db_user.currency_preference
+            deterministic = deterministic_proactive_insights(
+                transactions,
+                budgets,
+                detect_anomalies(transactions, currency),
+                currency,
+                recurring_tolerance=db_user.recurring_tolerance,
+            )
+            deterministic = apply_insight_frequency(deterministic, db_user.insight_frequency)
+            deterministic = apply_notification_policy(
+                deterministic,
+                now=datetime.now(UTC),
+                start=db_user.quiet_hours_start,
+                end=db_user.quiet_hours_end,
+                daily_cap=db_user.proactive_daily_cap,
+            )
+            day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+            already_notified = db.query(Notification.id).filter(
+                Notification.user_id == db_user.id,
+                Notification.created_at >= day_start,
+            ).first()
+            if deterministic and not already_notified:
+                item = deterministic[0]
+                db.add(Notification(
+                    user_id=db_user.id,
+                    kind="insight",
+                    insight_id=item.get("id", "unknown"),
+                    text=item.get("text", "Review your latest financial insight."),
+                    payload=json.dumps({"priority": item.get("priority", 0), "action": item.get("action")}),
+                ))
+                db.commit()
+            cache_key = f"{db_user.id}:proactive:{_user_cache_version(db, db_user.id)}:{currency}:cloud-0:frequency-{db_user.insight_frequency}"
+            llm_cache.put(cache_key, deterministic, ttl=settings.insight_cache_ttl_hours * 3600)
+    except Exception:
+        db.rollback()
+        logger.exception("maintenance.cycle_failed")
+    finally:
+        db.close()
+
+
 async def _maintenance_loop() -> None:
     """Run bounded, deterministic maintenance work in a recoverable loop.
 
@@ -2202,60 +2320,10 @@ async def _maintenance_loop() -> None:
     """
     await asyncio.sleep(2)
     while True:
-        db = SessionLocal()
         try:
-            db.query(AppSession).filter(AppSession.expires_at < datetime.now(UTC)).delete()
-            db.commit()
-            if purged := _purge_stale_import_payloads(db):
-                logger.info("maintenance.import_payloads_purged count=%d", purged)
-            for db_user in db.query(User).all():
-                purge_expired_conversations(db, db_user.id, settings.ai_conversation_retention_days)
-                if db_user.insight_frequency == "off" or _account_currency_mismatch_count(db, db_user.id):
-                    continue
-                transactions = _tx_query(db, db_user.id).limit(300).all()
-                budgets = db.query(Budget).filter(Budget.user_id == db_user.id).all()
-                currency = db_user.currency_preference
-                deterministic = await generate_proactive_insights(
-                    transactions,
-                    budgets,
-                    detect_anomalies(transactions, currency),
-                    generate_forecast(transactions),
-                    currency,
-                    allow_ai=False,
-                    recurring_tolerance=db_user.recurring_tolerance,
-                )
-                deterministic = apply_insight_frequency(deterministic, db_user.insight_frequency)
-                deterministic = apply_notification_policy(
-                    deterministic,
-                    now=datetime.now(UTC),
-                    start=db_user.quiet_hours_start,
-                    end=db_user.quiet_hours_end,
-                    daily_cap=db_user.proactive_daily_cap,
-                )
-                day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-                already_notified = db.query(Notification.id).filter(
-                    Notification.user_id == db_user.id,
-                    Notification.created_at >= day_start,
-                ).first()
-                if deterministic and not already_notified:
-                    item = deterministic[0]
-                    db.add(Notification(
-                        user_id=db_user.id,
-                        kind="insight",
-                        insight_id=item.get("id", "unknown"),
-                        text=item.get("text", "Review your latest financial insight."),
-                        payload=json.dumps({"priority": item.get("priority", 0), "action": item.get("action")}),
-                    ))
-                    db.commit()
-                cache_key = f"{db_user.id}:proactive:{_user_cache_version(db, db_user.id)}:{currency}:cloud-0:frequency-{db_user.insight_frequency}"
-                llm_cache.put(cache_key, deterministic, ttl=settings.insight_cache_ttl_hours * 3600)
-        except asyncio.CancelledError:
-            raise
+            await asyncio.to_thread(_run_maintenance_cycle)
         except Exception:
-            db.rollback()
-            logger.exception("maintenance.cycle_failed")
-        finally:
-            db.close()
+            logger.exception("maintenance.cycle_crashed")
         await asyncio.sleep(300)
 
 
@@ -3178,7 +3246,7 @@ def _receipt_mime(content: bytes) -> str | None:
 
 
 @app.post("/transactions/{transaction_id}/receipt", status_code=201)
-async def attach_receipt(
+def attach_receipt(
     transaction_id: str,
     request: Request,
     file: UploadFile = File(...),
@@ -3186,10 +3254,12 @@ async def attach_receipt(
     db: Session = Depends(get_db),
 ):
     """Keep a small receipt private and linked to its user-owned transaction."""
+    # A sync route: FastAPI runs it in the threadpool, so the database work and image
+    # validation below do not block the event loop.
     tx = db.get(Transaction, transaction_id)
     if not tx or tx.user_id != user.id:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    content = await file.read(5 * 1024 * 1024 + 1)
+    content = file.file.read(5 * 1024 * 1024 + 1)
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Receipt too large (max 5MB)")
     mime = _receipt_mime(content)

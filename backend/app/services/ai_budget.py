@@ -18,6 +18,10 @@ class AIRequestBudget:
     def _key(self, provider: str) -> str:
         return f"ledger:ai-budget:{datetime.now(UTC).date().isoformat()}:{provider}"
 
+    def uses_network(self, provider: str) -> bool:
+        """True when allow() would make a (blocking) Redis call for this provider."""
+        return self.redis is not None and bool(self.provider_limits.get(provider, self.global_limit))
+
     def allow(self, provider: str) -> bool:
         limit = self.provider_limits.get(provider, self.global_limit)
         if not limit:

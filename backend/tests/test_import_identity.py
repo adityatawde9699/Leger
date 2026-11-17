@@ -3,11 +3,30 @@ import json
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 import app.main as main
 from app.main import _statement_row_fingerprint
 from app.models import ImportJob, Transaction
 
 from .conftest import AUTH_HEADER, TEST_USER_ID, TestSession
+
+
+@pytest.fixture()
+def scheduled_imports(monkeypatch):
+    """Capture jobs the endpoints schedule, so each test runs them deterministically.
+
+    The test client runs every request on a short-lived event loop that is closed
+    afterwards, which would abandon a background job part-way through.
+    """
+    scheduled = []
+
+    def schedule(job_id):
+        asyncio.get_running_loop()  # endpoints must schedule from inside the event loop
+        scheduled.append(job_id)
+
+    monkeypatch.setattr(main, "_schedule_import", schedule)
+    return scheduled
 
 
 def test_statement_fingerprint_is_stable_and_account_scoped():
@@ -97,7 +116,7 @@ def test_statement_review_can_exclude_preview_rows(client):
     assert rows[0]["fingerprint"] in json.loads(job["excluded_row_fingerprints"])
 
 
-def test_statement_preview_review_commit_persists_only_included_rows(client, monkeypatch):
+def test_statement_preview_review_commit_persists_only_included_rows(client, monkeypatch, scheduled_imports):
     async def categorize(rows, user_overrides=None, allow_cloud_ai=False):
         return [
             {"id": row["id"], "category": "Food", "confidence": 0.9}
@@ -127,13 +146,8 @@ def test_statement_preview_review_commit_persists_only_included_rows(client, mon
     assert response.status_code == 202
     job_id = response.json()["id"]
 
-    db = TestSession()
-    try:
-        job_status = db.get(ImportJob, job_id).status
-    finally:
-        db.close()
-    if job_status == "pending":
-        asyncio.run(main._process_import_job(job_id))
+    assert scheduled_imports == [job_id]
+    asyncio.run(main._process_import_job(job_id))
 
     db = TestSession()
     try:
@@ -150,7 +164,7 @@ def test_statement_preview_review_commit_persists_only_included_rows(client, mon
         db.close()
 
 
-def test_retry_failed_import_requeues_and_processes(client, monkeypatch):
+def test_retry_failed_import_requeues_and_processes(client, monkeypatch, scheduled_imports):
     """Retry used to raise RuntimeError (no event loop in a sync route) and return 500."""
     monkeypatch.setattr(main, "SessionLocal", TestSession)
     db = TestSession()
@@ -172,11 +186,9 @@ def test_retry_failed_import_requeues_and_processes(client, monkeypatch):
     assert response.json()["status"] == "pending"
     db = TestSession()
     try:
+        assert scheduled_imports == [job_id]
+        asyncio.run(main._process_import_job(job_id))
         job = db.get(ImportJob, job_id)
-        if job.status == "pending":
-            # The scheduled task may not have run before the test client returned.
-            asyncio.run(main._process_import_job(job_id))
-            db.refresh(job)
         assert job.status == "done"
         assert db.query(Transaction).filter(Transaction.description == "Retry coffee").count() == 1
     finally:

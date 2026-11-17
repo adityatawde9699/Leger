@@ -8,6 +8,7 @@ PDF parsing strategy (in order of preference):
      pip install easyocr
 """
 
+import asyncio
 import base64
 import csv
 import json
@@ -457,6 +458,29 @@ def parse_excel(content: bytes, file_format: str | None = None) -> list[dict]:
 
 
 async def parse_pdf(content: bytes, allow_cloud_ai: bool = False) -> list[dict]:
+    # pdfplumber/pandas extraction is CPU-bound and can take seconds on a long
+    # statement; run it in a worker thread so the event loop keeps serving requests.
+    rows = await asyncio.to_thread(_parse_pdf_locally, content)
+
+    # ── 3. AI Parsing fallback (image-based / scanned PDF) ──
+    if not rows and allow_cloud_ai:
+        logger.info("PDF local extraction found no rows; attempting Mistral OCR")
+        ocr_text = await _mistral_ocr_pdf(content)
+        rows = _parse_ai_rows(ocr_text)
+
+        if not rows:
+            logger.info("Mistral OCR empty/unparseable; attempting Gemini extraction")
+            ocr_text = await _gemini_parse_pdf(content)
+            rows = _parse_ai_rows(ocr_text)
+
+        if not rows:
+            logger.warning("PDF OCR providers returned no parseable transactions.")
+
+    return rows
+
+
+def _parse_pdf_locally(content: bytes) -> list[dict]:
+    """Tables first, then a text-regex fallback. Blocking; call via a thread."""
     import pandas as pd
     import pdfplumber
 
@@ -490,19 +514,4 @@ async def parse_pdf(content: bytes, allow_cloud_ai: bool = False) -> list[dict]:
     if not rows and has_any_text:
         logger.info("PDF: no structured tables found, trying text-regex parser")
         rows = _parse_text_rows("\n".join(full_text_lines))
-
-    # ── 3. AI Parsing fallback (image-based / scanned PDF) ──
-    if not rows and allow_cloud_ai:
-        logger.info("PDF local extraction found no rows; attempting Mistral OCR")
-        ocr_text = await _mistral_ocr_pdf(content)
-        rows = _parse_ai_rows(ocr_text)
-
-        if not rows:
-            logger.info("Mistral OCR empty/unparseable; attempting Gemini extraction")
-            ocr_text = await _gemini_parse_pdf(content)
-            rows = _parse_ai_rows(ocr_text)
-
-        if not rows:
-            logger.warning("PDF OCR providers returned no parseable transactions.")
-
     return rows
