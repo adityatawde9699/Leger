@@ -20,7 +20,7 @@ and get evidence-backed financial insights — with deterministic features worki
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        FRONTEND (Vite + React)                      │
 │  Dashboard │ Transactions │ Budgets │ Investments │ Amadeus AI      │
-│  Accounts  │ Credit Health│ Export  │ Audit/Webhooks│ Command (⌘K)  │
+│  Accounts  │ Credit Health│ Export  │ Audit log     │ Command (⌘K)  │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │ REST + SSE
 ┌───────────────────────────────▼─────────────────────────────────────┐
@@ -38,10 +38,10 @@ and get evidence-backed financial insights — with deterministic features worki
 │  │  Bill Negotiator  │ Credit Health      │ Community Benchmarks│ │
 │  └──────────────────────────────────────────────────────────────┘ │
 │                                                                     │
-│  ┌──────────────────┐  ┌────────────┐  ┌────────────────────────┐ │
-│  │ Audit Logger     │  │ Webhook    │  │ GST Engine + Export    │ │
-│  │ (append-only)    │  │ Dispatcher │  │ (CSV/JSON/Tally XML)   │ │
-│  └──────────────────┘  └────────────┘  └────────────────────────┘ │
+│  ┌──────────────────┐  ┌────────────────────────┐                 │
+│  │ Audit Logger     │  │ GST Engine + Export    │                 │
+│  │ (append-only)    │  │ (CSV/JSON/Tally XML)   │                 │
+│  └──────────────────┘  └────────────────────────┘                 │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
         ┌───────────────────────┼──────────────────────┐
@@ -60,7 +60,7 @@ and get evidence-backed financial insights — with deterministic features worki
 | **AI** | Auto-categorization (rules + LLM), proactive insights, Amadeus AI chat (SSE), receipt OCR, bill negotiation |
 | **Analytics** | Dashboard KPIs (w/ time filters), category breakdowns, credit health score (300-900), community benchmarks |
 | **Investments** | Portfolio tracking (stocks/MF/crypto/FD/gold), holdings with live P&L |
-| **Compliance** | GST computation (Indian tax), audit logging, webhook integrations, Tally XML export |
+| **Compliance** | GST computation (Indian tax), audit logging, Tally XML export |
 | **Platform** | Installable PWA (offline support, app shortcuts, maskable icon), command palette (⌘K), data export (CSV/JSON/Tally) |
 
 ## Quick Start
@@ -137,7 +137,6 @@ CEREBRAS_API_KEY="your_cerebras_key"
 | `GOOGLE_CLIENT_ID` | If Google auth | — | Google Cloud Web OAuth client ID used to verify ID tokens |
 | `UPSTASH_REDIS_REST_URL` | Production | — | HTTPS REST endpoint from the Upstash Console |
 | `UPSTASH_REDIS_REST_TOKEN` | Production | — | Upstash REST token; store as a deployment secret |
-| `WEBHOOK_ENCRYPTION_KEYS` | Production | — | Comma-separated Fernet key ring; first key encrypts |
 | `BACKUP_ENCRYPTION_KEY` | Production | — | Fernet key for new portable backups |
 | `BACKUP_PREVIOUS_ENCRYPTION_KEYS` | No | — | Previous backup keys accepted for restore |
 | `ADVISOR_RATE_LIMIT` | No | `10/minute` | Rate limit for Amadeus AI endpoint |
@@ -191,7 +190,6 @@ CEREBRAS_API_KEY="your_cerebras_key"
 | **Platform** | | |
 | `GET` | `/export/{csv\|json\|tally}` | Data export |
 | `GET` | `/audit` | Audit trail |
-| `GET/POST/DELETE` | `/webhooks` | Webhook management |
 
 </details>
 
@@ -223,7 +221,6 @@ ledger/
 │   │       ├── gst.py
 │   │       ├── export.py
 │   │       ├── audit.py
-│   │       ├── webhook_dispatcher.py
 │   │       ├── insights.py
 │   │       ├── prompt_guard.py
 │   │       ├── sms_parser.py
@@ -248,7 +245,7 @@ ledger/
 │   │       ├── Investments.jsx
 │   │       ├── CreditBenchmarks.jsx
 │   │       ├── ExportGST.jsx
-│   │       └── AuditWebhooks.jsx
+│   │       └── AuditLog.jsx
 │   └── package.json
 ├── docs/
 │   └── architecture/

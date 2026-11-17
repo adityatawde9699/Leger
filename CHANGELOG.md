@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+- **Webhooks.** Endpoints could be registered, but no event ever triggered a delivery. The `/webhooks` API, the Webhooks tab, the SSRF guard and signing code that only served it, and the `WEBHOOK_ENCRYPTION_KEYS` setting are gone. Migration `0003` drops the `webhooks` table (endpoint URLs and encrypted signing secrets only; no financial data).
+
 ## [1.4.0] - 2026-06-16
 
 ### Added

@@ -31,14 +31,9 @@ def upgrade_schema(connection: Connection | None = None) -> None:
 
 
 def run_migrations() -> None:
-    """Schema migrations, then data migrations that need application code."""
-    from .db import SessionLocal
-    from .services.webhook_secrets import migrate_plaintext_secrets
-
+    """Apply schema migrations; the entry point for entrypoint.sh and dev startup."""
     upgrade_schema()
-    with SessionLocal() as db:
-        migrated = migrate_plaintext_secrets(db)
-    logger.info("migrations.complete legacy_webhook_secrets_encrypted=%d", migrated)
+    logger.info("migrations.complete")
 
 
 if __name__ == "__main__":

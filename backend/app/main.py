@@ -9,7 +9,6 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
-from types import SimpleNamespace
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
@@ -50,7 +49,6 @@ from .models import (
     Transaction,
     User,
     UserCategory,
-    Webhook,
 )
 from .schemas import (
     AccountIn,
@@ -104,8 +102,6 @@ from .schemas import (
     UserContext,
     UserProfileIn,
     UserProfileOut,
-    WebhookIn,
-    WebhookOut,
 )
 from .services.advisor_contract import ADVISOR_RESPONSE_INSTRUCTION, validate_advisor_response
 from .services.advisor_facts import deterministic_answer
@@ -163,9 +159,6 @@ from .services.sms_parser import parse_sms
 from .services.statements import parse_csv, parse_excel, parse_pdf
 from .services.telemetry import record_telemetry
 from .services.upstash_redis import get_redis_client
-from .services.url_guard import UnsafeURLError, validate_webhook_url
-from .services.webhook_dispatcher import _deliver
-from .services.webhook_secrets import encrypt_secret
 
 
 # ── Tiered TTL Cache (L1: in-memory with TTL) ─────────────────────────────────
@@ -361,8 +354,6 @@ async def categorized_rate_limits(request: Request, call_next):
             category, limit, window = "export", 10, 3600
         elif path.startswith(("/imports/", "/receipts/")) or path.endswith("/receipt"):
             category, limit, window = "upload", 20, 3600
-        elif path.startswith("/webhooks"):
-            category, limit, window = "webhook", 30, 3600
         elif path.startswith(("/advisor", "/insights", "/categorize")):
             category, limit, window = "ai", 30, 3600
         elif request.method not in {"GET", "HEAD"}:
@@ -3419,88 +3410,6 @@ def list_audit_logs(
     return get_audit_trail(db, user.id, resource_type=resource_type, limit=limit, offset=offset)
 
 
-# ── Webhooks ──────────────────────────────────────────────────────────────────
-@app.get("/webhooks", response_model=list[WebhookOut])
-def list_webhooks(
-    user: UserContext = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return db.query(Webhook).filter(Webhook.user_id == user.id).order_by(Webhook.created_at.desc()).all()
-
-
-@app.post("/webhooks", response_model=WebhookOut, status_code=201)
-def create_webhook(
-    payload: WebhookIn,
-    request: Request,
-    user: UserContext = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    # SSRF guard: reject URLs that resolve to loopback/private/metadata addresses.
-    try:
-        validate_webhook_url(payload.url)
-    except UnsafeURLError as e:
-        raise HTTPException(status_code=400, detail=f"Unsafe webhook URL: {e}") from e
-
-    hook = Webhook(user_id=user.id, url=payload.url, events=payload.events,
-                   secret=encrypt_secret(payload.secret))
-    db.add(hook)
-    log_event(
-        db,
-        user_id=user.id,
-        action="create",
-        resource_type="webhook",
-        resource_id=hook.id,
-        ip_address=request.client.host if request.client else None,
-    )
-    db.commit()
-    db.refresh(hook)
-    logger.info("webhook.created user=%s id=%s", user.id, hook.id)
-    return hook
-
-
-@app.post("/webhooks/{webhook_id}/rotate", response_model=WebhookOut)
-async def rotate_webhook_secret(webhook_id: str, payload: WebhookIn,
-                                user: UserContext = Depends(get_current_user), db: Session = Depends(get_db)):
-    hook = db.query(Webhook).filter(Webhook.id == webhook_id, Webhook.user_id == user.id).first()
-    if not hook:
-        raise HTTPException(status_code=404, detail="Webhook not found")
-    if payload.url != hook.url or payload.events != hook.events:
-        raise HTTPException(status_code=400, detail="URL and events must match the existing webhook")
-    candidate = encrypt_secret(payload.secret)
-    try:
-        await _deliver(SimpleNamespace(url=hook.url, secret=candidate), "webhook.test", {"rotation": True})
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Webhook test delivery failed; secret was not rotated") from exc
-    hook.secret = candidate
-    hook.failure_count = 0
-    db.commit()
-    db.refresh(hook)
-    return hook
-
-
-@app.delete("/webhooks/{webhook_id}")
-def delete_webhook(
-    webhook_id: str,
-    request: Request,
-    user: UserContext = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    hook = db.get(Webhook, webhook_id)
-    if not hook or hook.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Webhook not found")
-    db.delete(hook)
-    log_event(
-        db,
-        user_id=user.id,
-        action="delete",
-        resource_type="webhook",
-        resource_id=webhook_id,
-        ip_address=request.client.host if request.client else None,
-    )
-    db.commit()
-    return {"deleted": True}
-
-
 # ── GST Report ────────────────────────────────────────────────────────────────
 @app.get("/gst/report", response_model=GSTReportOut)
 def gst_report(
@@ -3652,12 +3561,6 @@ def export_full_data(
              "updated_at": j.updated_at.isoformat() if j.updated_at else None}
             for j in db.query(ImportJob).filter(ImportJob.user_id == user.id).all()
         ],
-        "webhooks": [
-            {"id": w.id, "url": w.url, "events": w.events, "is_active": w.is_active,
-             "last_triggered": w.last_triggered.isoformat() if w.last_triggered else None,
-             "failure_count": w.failure_count, "created_at": w.created_at.isoformat() if w.created_at else None}
-            for w in db.query(Webhook).filter(Webhook.user_id == user.id).all()
-        ],
         "category_corrections": [
             {"description_hash": c.description_hash, "category": c.category, "correction_count": c.correction_count}
             for c in db.query(CategoryCorrection).filter(CategoryCorrection.user_id == user.id).all()
@@ -3802,7 +3705,6 @@ def delete_all_user_data(
         "recurring_rules": db.query(RecurringRule).filter(RecurringRule.user_id == user.id).delete(synchronize_session=False),
         "goals": db.query(Goal).filter(Goal.user_id == user.id).delete(synchronize_session=False),
         "imports": db.query(ImportJob).filter(ImportJob.user_id == user.id).delete(synchronize_session=False),
-        "webhooks": db.query(Webhook).filter(Webhook.user_id == user.id).delete(synchronize_session=False),
         "portfolios": db.query(Portfolio).filter(Portfolio.user_id == user.id).delete(synchronize_session=False),
         "conversations": db.query(AIConversation).filter(AIConversation.user_id == user.id).delete(synchronize_session=False),
         "category_corrections": db.query(CategoryCorrection).filter(CategoryCorrection.user_id == user.id).delete(synchronize_session=False),

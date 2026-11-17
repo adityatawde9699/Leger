@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, ArrowRight, Plus, Target, BarChart3, MessageSquare, Tags, LayoutDashboard, Download, Shield, Globe, Receipt, Wallet, Briefcase, Gauge, Banknote } from "lucide-react";
+import { Search, ArrowRight, Plus, Target, BarChart3, MessageSquare, Tags, LayoutDashboard, Download, Shield, Receipt, Wallet, Briefcase, Gauge, Banknote } from "lucide-react";
 
 const ACTIONS = [
   { id: "add-expense", label: "Add expense", desc: "Log a new expense transaction", view: "transactions", Icon: Plus },
@@ -17,7 +17,6 @@ const ACTIONS = [
   { id: "export-tally", label: "Export for Tally", desc: "Tally Prime / ERP 9 XML", view: "export", Icon: Download },
   { id: "gst-report", label: "GST Report", desc: "View GST slab breakdown", view: "export", Icon: Receipt },
   { id: "audit-log", label: "View audit log", desc: "Activity history & compliance", view: "audit", Icon: Shield },
-  { id: "webhooks", label: "Manage webhooks", desc: "Register event integrations", view: "audit", Icon: Globe },
   { id: "investments", label: "Investments", desc: "Track portfolios & holdings", view: "investments", Icon: Briefcase },
   { id: "financial-picture", label: "Financial picture", desc: "Review your recorded cash flow and data gaps", view: "credit", Icon: Gauge },
   { id: "benchmarks", label: "Peer comparison status", desc: "See why peer rankings are unavailable", view: "credit", Icon: BarChart3 },

@@ -1,9 +1,8 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
-from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -500,37 +499,6 @@ class AuditLogOut(BaseModel):
     resource_id: str | None
     details: str | None
     ip_address: str | None
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-# ── Webhooks ──────────────────────────────────────────────────────────────────
-
-
-class WebhookIn(BaseModel):
-    url: str = Field(min_length=10, max_length=2048)
-    events: str = Field(min_length=1, max_length=512)  # comma-separated event names
-    secret: str = Field(min_length=16, max_length=64)
-
-    @field_validator("url")
-    @classmethod
-    def _url_is_absolute_http(cls, v: str) -> str:
-        # Cheap, no-DNS shape check; the SSRF (IP-resolution) check runs in the
-        # endpoint via url_guard.validate_webhook_url.
-        parsed = urlparse(v)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            raise ValueError("url must be an absolute http(s) URL")
-        return v
-
-
-class WebhookOut(BaseModel):
-    id: str
-    url: str
-    events: str
-    is_active: bool
-    last_triggered: datetime | None
-    failure_count: int
     created_at: datetime
 
     model_config = {"from_attributes": True}

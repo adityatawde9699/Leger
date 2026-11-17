@@ -1,12 +1,10 @@
 import asyncio
 import base64
 import hashlib
-import hmac
 import io
 import json
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
-from types import SimpleNamespace
 
 import pytest
 from cryptography.fernet import Fernet
@@ -18,11 +16,9 @@ from app import auth
 from app import main as app_main
 from app.config import Settings, settings
 from app.main import _validate_statement_content
-from app.models import AppSession, Webhook
-from app.services import url_guard, webhook_dispatcher
+from app.models import AppSession
 from app.services.ai_router import AIRouter
 from app.services.backups import decrypt_backup, encrypt_backup
-from app.services.webhook_secrets import decrypt_secret, encrypt_secret, migrate_plaintext_secrets
 from tests.conftest import TestSession, fastapi_app
 
 
@@ -55,24 +51,6 @@ def test_session_is_hashed_and_expires(monkeypatch):
         assert row.expires_at.replace(tzinfo=UTC) > datetime.now(UTC) + timedelta(hours=11)
 
 
-def test_webhook_secret_is_encrypted_and_legacy_rows_migrate(monkeypatch):
-    old_key = Fernet.generate_key().decode()
-    new_key = Fernet.generate_key().decode()
-    monkeypatch.setattr(settings, "webhook_encryption_keys", old_key)
-    encrypted = encrypt_secret("some-long-signing-secret")
-    assert "some-long-signing-secret" not in encrypted
-    assert decrypt_secret(encrypted) == "some-long-signing-secret"
-    with TestSession() as db:
-        db.add(Webhook(user_id="test-user-1", url="https://example.com", events="created", secret="legacy-secret"))
-        db.commit()
-        assert migrate_plaintext_secrets(db) == 1
-        assert decrypt_secret(db.query(Webhook).one().secret) == "legacy-secret"
-        monkeypatch.setattr(settings, "webhook_encryption_keys", f"{new_key},{old_key}")
-        assert migrate_plaintext_secrets(db) == 1
-        monkeypatch.setattr(settings, "webhook_encryption_keys", new_key)
-        assert decrypt_secret(db.query(Webhook).one().secret) == "legacy-secret"
-
-
 def test_backup_reads_previous_key_after_rotation():
     old_key = Fernet.generate_key().decode()
     new_key = Fernet.generate_key().decode()
@@ -90,7 +68,6 @@ def test_production_rejects_localhost_cors():
 def test_production_accepts_root_slash_cors_origin_but_rejects_paths():
     config = Settings(_env_file=None, environment="production", auth_provider="google",
                       google_client_id="client", cors_origins="https://ledger-beta-two.vercel.app/",
-                      webhook_encryption_keys=Fernet.generate_key().decode(),
                       backup_encryption_key=Fernet.generate_key().decode(),
                       upstash_redis_rest_url="https://redis.example",
                       upstash_redis_rest_token="rest-token")
@@ -101,16 +78,13 @@ def test_production_accepts_root_slash_cors_origin_but_rejects_paths():
         config.validate_for_production()
 
 
-def test_production_requires_distinct_keys_and_shared_redis():
-    key = Fernet.generate_key().decode()
+def test_production_requires_shared_redis():
     config = Settings(_env_file=None, environment="production", auth_provider="google",
                       google_client_id="client", cors_origins="https://ledger.example",
-                      webhook_encryption_keys=key, backup_encryption_key=key,
+                      backup_encryption_key=Fernet.generate_key().decode(),
                       upstash_redis_rest_url="https://redis.example",
                       upstash_redis_rest_token="rest-token")
-    with pytest.raises(SystemExit):
-        config.validate_for_production()
-    config.backup_encryption_key = Fernet.generate_key().decode()
+    config.validate_for_production()
     config.upstash_redis_rest_url = "http://localhost:6379"
     with pytest.raises(SystemExit):
         config.validate_for_production()
@@ -124,7 +98,6 @@ def test_production_requires_distinct_keys_and_shared_redis():
 def test_production_rejects_invalid_redis_url_without_leaking_credentials(redis_url, capsys):
     config = Settings(_env_file=None, environment="production", auth_provider="google",
                       google_client_id="client", cors_origins="https://ledger.example",
-                      webhook_encryption_keys=Fernet.generate_key().decode(),
                       backup_encryption_key=Fernet.generate_key().decode(),
                       upstash_redis_rest_url=redis_url,
                       upstash_redis_rest_token="rest-token")
@@ -136,14 +109,12 @@ def test_production_rejects_invalid_redis_url_without_leaking_credentials(redis_
 
 
 @pytest.mark.parametrize("field,env_name", [
-    ("webhook_encryption_keys", "WEBHOOK_ENCRYPTION_KEYS"),
     ("backup_encryption_key", "BACKUP_ENCRYPTION_KEY"),
     ("backup_previous_encryption_keys", "BACKUP_PREVIOUS_ENCRYPTION_KEYS"),
 ])
 def test_production_identifies_invalid_encryption_key_without_leaking_it(field, env_name, capsys):
     config = Settings(_env_file=None, environment="production", auth_provider="google",
                       google_client_id="client", cors_origins="https://ledger.example",
-                      webhook_encryption_keys=Fernet.generate_key().decode(),
                       backup_encryption_key=Fernet.generate_key().decode(),
                       upstash_redis_rest_url="https://redis.example",
                       upstash_redis_rest_token="rest-token")
@@ -217,69 +188,6 @@ def test_pdf_without_opt_in_skips_cloud_provider(monkeypatch):
     assert asyncio.run(statements.parse_pdf(b"%PDF-test", allow_cloud_ai=False)) == []
 
 
-def test_webhook_delivery_uses_validated_ip_without_second_dns_lookup(monkeypatch):
-    monkeypatch.setattr(settings, "webhook_encryption_keys", Fernet.generate_key().decode())
-    monkeypatch.setattr(webhook_dispatcher, "validate_webhook_url", lambda _: ["93.184.215.14"])
-    connected = []
-    sent = []
-
-    class Reader:
-        async def readline(self):
-            return b"HTTP/1.1 200 OK\r\n"
-
-    class Writer:
-        def write(self, data):
-            assert b"Host: example.com\r\n" in data
-            sent.append(data)
-
-        async def drain(self):
-            return None
-
-        def close(self):
-            return None
-
-        async def wait_closed(self):
-            return None
-
-    async def fake_connect(host, port, **kwargs):
-        connected.append((host, port, kwargs["server_hostname"]))
-        return Reader(), Writer()
-
-    monkeypatch.setattr(webhook_dispatcher.asyncio, "open_connection", fake_connect)
-    hook = SimpleNamespace(url="https://example.com/hook", secret=encrypt_secret("signing-secret"))
-    asyncio.run(webhook_dispatcher._deliver(hook, "webhook.test", {}))
-    assert connected == [("93.184.215.14", 443, "example.com")]
-    headers, body = sent[0].split(b"\r\n\r\n", 1)
-    signature = hmac.new(b"signing-secret", body, hashlib.sha256).hexdigest().encode()
-    assert b"X-Ledger-Signature: sha256=" + signature in headers
-    assert json.loads(body)["timestamp"].encode() in headers
-
-
-@pytest.mark.parametrize("address", [
-    "127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fc00::1",
-    "100.64.0.1",       # carrier-grade NAT, missed by is_private
-    "198.18.0.1",       # benchmarking range
-    "::ffff:10.0.0.1",  # IPv4-mapped private address
-])
-def test_webhook_rejects_private_dns_answers(monkeypatch, address):
-    monkeypatch.setattr(url_guard.socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, (address, 443))])
-    with pytest.raises(url_guard.UnsafeURLError) as excinfo:
-        url_guard.validate_webhook_url("https://example.com/hook")
-    # The resolved internal address must not be echoed back (internal DNS enumeration).
-    assert address not in str(excinfo.value)
-
-
-@pytest.mark.parametrize("address", ["93.184.215.14", "2606:4700::1111", "::ffff:8.8.8.8"])
-def test_webhook_allows_public_dns_answers(monkeypatch, address):
-    monkeypatch.setattr(url_guard.socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, (address, 443))])
-    assert url_guard.validate_webhook_url("https://example.com/hook") == [address]
-
-
-def test_webhook_rejects_unusual_port():
-    with pytest.raises(url_guard.UnsafeURLError):
-        url_guard.validate_webhook_url("https://example.com:8443/hook")
-
-
 def test_ai_router_redacts_before_provider(monkeypatch):
     class CaptureAdapter:
         async def is_available(self):
@@ -295,31 +203,6 @@ def test_ai_router_redacts_before_provider(monkeypatch):
     monkeypatch.setattr(settings, "ai_provider_allowlist", "Capture")
     monkeypatch.setattr(settings, "ai_task_provider_policy", "")
     assert asyncio.run(router.generate("Contact person@example.com", user_message="Email person@example.com")) == "safe"
-
-
-def test_webhook_rotation_only_activates_after_test_delivery(client, monkeypatch):
-    monkeypatch.setattr(settings, "webhook_encryption_keys", Fernet.generate_key().decode())
-    with TestSession() as db:
-        db.add(Webhook(id="rotation-hook", user_id="test-user-1", url="https://example.com/hook",
-                       events="transaction.created", secret=encrypt_secret("old-signing-secret")))
-        db.commit()
-
-    async def failed_delivery(*args):
-        raise RuntimeError("receiver unavailable")
-
-    monkeypatch.setattr(app_main, "_deliver", failed_delivery)
-    payload = {"url": "https://example.com/hook", "events": "transaction.created", "secret": "new-signing-secret"}
-    assert client.post("/webhooks/rotation-hook/rotate", json=payload).status_code == 502
-    with TestSession() as db:
-        assert decrypt_secret(db.get(Webhook, "rotation-hook").secret) == "old-signing-secret"
-
-    async def successful_delivery(*args):
-        return None
-
-    monkeypatch.setattr(app_main, "_deliver", successful_delivery)
-    assert client.post("/webhooks/rotation-hook/rotate", json=payload).status_code == 200
-    with TestSession() as db:
-        assert decrypt_secret(db.get(Webhook, "rotation-hook").secret) == "new-signing-secret"
 
 
 def test_cookie_session_origin_logout_and_headers(monkeypatch):

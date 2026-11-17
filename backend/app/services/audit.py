@@ -29,7 +29,7 @@ def log_event(
 
     Args:
         action: "create", "update", "delete"
-        resource_type: "transaction", "budget", "account", "import", "webhook"
+        resource_type: "transaction", "budget", "account", "import"
         details: Any JSON-serializable diff/context
     """
     entry = AuditLog(

@@ -53,18 +53,6 @@
      │                            │ current_price│
      │                            │ asset_type   │
      │                            └──────────────┘
-     │
-     └──1:N──┌──────────────┐
-             │   webhooks   │
-             │──────────────│
-             │ id      (PK) │
-             │ user_id (FK) │
-             │ url          │
-             │ events       │
-             │ secret       │
-             │ is_active    │
-             │ failure_count│
-             └──────────────┘
 ```
 
 ## Models Reference
@@ -132,22 +120,11 @@
 | `id` | `String(36)` | UUID |
 | `user_id` | `String(64)` | Indexed (no FK for immutability) |
 | `action` | `String(64)` | create, update, delete |
-| `resource_type` | `String(64)` | transaction, budget, account, webhook |
+| `resource_type` | `String(64)` | transaction, budget, account, import |
 | `resource_id` | `String(36)` | Nullable |
 | `details` | `Text` | JSON-serialized diff |
 | `ip_address` | `String(45)` | Client IP |
 | Indexes | | `(user_id, created_at)` composite |
-
-### Webhook
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `String(36)` | UUID |
-| `user_id` | FK → `users.id` | |
-| `url` | `String(2048)` | Endpoint URL |
-| `events` | `String(512)` | Comma-separated event names |
-| `secret` | `String(64)` | HMAC-SHA256 key |
-| `is_active` | `Boolean` | Auto-disabled after 5 failures |
-| `failure_count` | `Integer` | Consecutive failures |
 
 ## Migrations
 

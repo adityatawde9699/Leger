@@ -1575,15 +1575,10 @@ input:focus, select:focus, textarea:focus {
 
 .audit-meta { font-size: 12px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; font-weight: 500; }
 
-.webhook-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
-.webhook-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
 
-.webhook-url { font-size: 14px; font-weight: 500; word-break: break-all; color: var(--text-primary); margin-bottom: 8px; }
 
-.webhook-events { display: flex; flex-wrap: wrap; gap: 6px; }
 
-.webhook-event-badge { padding: 3px 10px; border-radius: 6px; font-size: 12px; background: var(--positive-soft); color: var(--primary); font-weight: 500; }
 
 .page-title-block { margin-bottom: 32px; }
 
@@ -1649,7 +1644,6 @@ input:focus, select:focus, textarea:focus {
 
 @media (max-width: 900px) {
   .export-grid    { grid-template-columns: 1fr 1fr; }
-  .webhook-grid   { grid-template-columns: 1fr; }
   .portfolio-grid { grid-template-columns: 1fr; }
   .mobile-only-inline { display: inline-flex !important; align-items: center; }
 }
@@ -2807,7 +2801,6 @@ input:focus, select:focus, textarea:focus {
   .summary-strip      { grid-template-columns: repeat(2, 1fr); }
   .profile-stats-grid { grid-template-columns: repeat(2, 1fr); }
   .portfolio-grid     { grid-template-columns: repeat(2, 1fr); }
-  .webhook-grid       { grid-template-columns: 1fr; }
   .advisor-layout     { display: flex; flex-direction: column; }
   .chat-window        { min-height: 56vh; max-height: 64vh; }
   .chat-bubble        { max-width: 92%; }
@@ -2887,7 +2880,7 @@ input:focus, select:focus, textarea:focus {
   .card { padding: 20px; }
 
   .account-grid, .summary-strip, .portfolio-grid,
-  .export-grid, .form-grid-2, .webhook-grid,
+  .export-grid, .form-grid-2,
   .profile-stats-grid {
     grid-template-columns: 1fr;
     gap: 12px;

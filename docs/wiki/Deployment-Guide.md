@@ -11,17 +11,13 @@ DATABASE_URL=postgresql+psycopg://user:pass@host:5432/ledger?sslmode=require
 CORS_ORIGINS=https://your-domain.com
 UPSTASH_REDIS_REST_URL=https://your-database.upstash.io
 UPSTASH_REDIS_REST_TOKEN=<rest-token>
-WEBHOOK_ENCRYPTION_KEYS=<fernet-key>
-BACKUP_ENCRYPTION_KEY=<different-fernet-key>
+BACKUP_ENCRYPTION_KEY=<fernet-key>
 BACKUP_PREVIOUS_ENCRYPTION_KEYS=
 ```
 
 > ⚠️ App refuses to start with `AUTH_PROVIDER=dev` in production.
 Generate each Fernet key with `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`.
-Keep the backup and webhook keys separate and store them in your deployment secret manager.
-For webhook key rotation, prepend a new key to `WEBHOOK_ENCRYPTION_KEYS` separated by a comma;
-existing records can still be decrypted with the old key. Re-encrypt existing records with the
-new key before removing the old key. When rotating backups, move the former
+Store the backup key in your deployment secret manager. When rotating backups, move the former
 `BACKUP_ENCRYPTION_KEY` into `BACKUP_PREVIOUS_ENCRYPTION_KEYS` and set a new primary key.
 Keep old keys until those encrypted backups expire or have been re-encrypted.
 For Upstash, copy the HTTPS endpoint and REST token from the database's REST tab into
@@ -43,7 +39,7 @@ secrets and verify the same origin is configured in Google Identity Services.
 - [ ] API keys via secrets manager
 - [ ] `DEBUG=false`
 - [ ] Shared Redis is available to every API worker
-- [ ] Webhook and backup keys are present and different
+- [ ] The backup encryption key is present
 - [ ] Unauthorized `/profile` returns 401; production `/docs` returns 404
 
 ### Backend Deploy (Gunicorn)

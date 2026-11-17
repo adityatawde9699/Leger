@@ -133,9 +133,6 @@ Advisor conversations are automatically purged after the configured retention pe
 |---|---|---|---|
 | `GET` | `/export/{csv\|json\|tally}` | month | File download |
 | `GET` | `/audit?resource_type=&limit=&offset=` | — | `AuditLogOut[]` |
-| `GET` | `/webhooks` | — | `WebhookOut[]` |
-| `POST` | `/webhooks` | `WebhookIn` | `WebhookOut` |
-| `DELETE` | `/webhooks/{id}` | — | `{"deleted": true}` |
 
 ## Interactive Docs
 Visit `http://127.0.0.1:8000/docs` for Swagger UI with try-it-out.

@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     # Auth
     auth_provider: str = "dev"
     google_client_id: str | None = None
-    webhook_encryption_keys: str = ""
 
     # AI Providers (free tiers)
     groq_api_key: str | None = None
@@ -173,17 +172,10 @@ class Settings(BaseSettings):
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            if not self.webhook_encryption_keys:
-                print("FATAL: WEBHOOK_ENCRYPTION_KEYS is required in production.", file=sys.stderr)
-                sys.exit(1)
             if not self.backup_encryption_key:
                 print("FATAL: BACKUP_ENCRYPTION_KEY is required in production.", file=sys.stderr)
                 sys.exit(1)
-            if self.backup_encryption_key in {key.strip() for key in self.webhook_encryption_keys.split(",")}:
-                print("FATAL: Backup and webhook encryption keys must be separate.", file=sys.stderr)
-                sys.exit(1)
             key_groups = (
-                ("WEBHOOK_ENCRYPTION_KEYS", [key.strip() for key in self.webhook_encryption_keys.split(",")]),
                 ("BACKUP_ENCRYPTION_KEY", [self.backup_encryption_key]),
                 ("BACKUP_PREVIOUS_ENCRYPTION_KEYS", [key.strip() for key in self.backup_previous_encryption_keys.split(",") if key.strip()]),
             )

@@ -578,7 +578,7 @@ export default function Profile({ onSignOut }) {
         <div className="settings-section">
           <h2 className="settings-title"><Shield size={18} /> Privacy & your data</h2>
           <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.6, margin: "0 0 16px" }}>
-            Export a portable copy of your profile, accounts, transactions, receipts, goals, investments, conversations, and category corrections. Uploaded statement files and webhook secrets are never included. AI conversations {retentionDays > 0 ? `are removed after ${retentionDays} days` : retentionDays === 0 ? "are kept until you delete them" : "follow the configured retention period"}; financial records and receipts remain until you delete them. External backup copies must be deleted separately.
+            Export a portable copy of your profile, accounts, transactions, receipts, goals, investments, conversations, and category corrections. Uploaded statement files are never included. AI conversations {retentionDays > 0 ? `are removed after ${retentionDays} days` : retentionDays === 0 ? "are kept until you delete them" : "follow the configured retention period"}; financial records and receipts remain until you delete them. External backup copies must be deleted separately.
           </p>
           <button className="btn-secondary" onClick={handleFullExport} disabled={exportingData}>
             <Download size={15} /> {exportingData ? "Preparing export…" : "Download all my data"}

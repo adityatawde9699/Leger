@@ -56,7 +56,6 @@ class User(Base):
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")
     budgets: Mapped[list["Budget"]] = relationship(back_populates="user")
     accounts: Mapped[list["Account"]] = relationship(back_populates="user")
-    webhooks: Mapped[list["Webhook"]] = relationship(back_populates="user")
     portfolios: Mapped[list["Portfolio"]] = relationship(back_populates="user")
     goals: Mapped[list["Goal"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
@@ -302,22 +301,6 @@ class Notification(Base):
     payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
-
-
-class Webhook(Base):
-    """User-registered event webhooks."""
-
-    __tablename__ = "webhooks"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    url: Mapped[str] = mapped_column(String(2048))
-    events: Mapped[str] = mapped_column(String(512))
-    secret: Mapped[str] = mapped_column(Text)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_triggered: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    failure_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    user: Mapped["User"] = relationship(back_populates="webhooks")
 
 
 class Portfolio(Base):

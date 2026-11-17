@@ -17,7 +17,6 @@ from app.models import (
     Transaction,
     User,
     UserCategory,
-    Webhook,
 )
 from app.schemas import UserContext
 
@@ -39,8 +38,6 @@ def test_other_user_cannot_access_resource_routes(client):
             Portfolio(id="owned-portfolio", user_id=TEST_USER_ID, name="Private", portfolio_type="stocks"),
             Holding(id="owned-holding", portfolio_id="owned-portfolio", symbol="ABC", name="Private holding",
                     quantity=Decimal("1"), buy_price=Decimal("10"), asset_type="equity"),
-            Webhook(id="owned-webhook", user_id=TEST_USER_ID, url="https://example.com/hook",
-                    events="transaction.created", secret="private-secret"),
             MerchantAlias(id="owned-alias", user_id=TEST_USER_ID, alias_key="private", canonical="Private merchant"),
             UserCategory(id="owned-category", user_id=TEST_USER_ID, name="Private category"),
             RecurringRule(id="owned-rule", user_id=TEST_USER_ID, description="Private", category="Other",
@@ -71,8 +68,6 @@ def test_other_user_cannot_access_resource_routes(client):
         ("DELETE", "/accounts/owned-account", None),
         ("PUT", "/goals/owned-goal", {"name": "Attempt", "goal_type": "custom", "target_amount": "100", "current_amount": "0"}),
         ("DELETE", "/goals/owned-goal", None),
-        ("POST", "/webhooks/owned-webhook/rotate", {"url": "https://example.com/hook", "events": "transaction.created", "secret": "new-secret-long-enough"}),
-        ("DELETE", "/webhooks/owned-webhook", None),
         ("GET", "/portfolios/owned-portfolio/holdings", None),
         ("POST", "/portfolios/owned-portfolio/holdings", {"symbol": "XYZ", "name": "Attempt", "quantity": "1", "buy_price": "10", "asset_type": "equity"}),
         ("DELETE", "/portfolios/owned-portfolio", None),
@@ -91,7 +86,7 @@ def test_other_user_cannot_access_resource_routes(client):
                 options = {"files": {"file": ("receipt.pdf", b"%PDF-test", "application/pdf")}}
             response = client.request(method, path, headers={"Authorization": "Bearer second-user"}, **options)
             assert response.status_code in {403, 404}, (method, path, response.status_code)
-        for path in ("/accounts", "/transactions", "/goals", "/portfolios", "/webhooks",
+        for path in ("/accounts", "/transactions", "/goals", "/portfolios",
                      "/imports/jobs", "/conversations", "/notifications", "/export/full"):
             response = client.get(path, headers={"Authorization": "Bearer second-user"})
             assert response.status_code == 200, (path, response.status_code)
@@ -99,6 +94,5 @@ def test_other_user_cannot_access_resource_routes(client):
         with TestSession() as db:
             assert db.get(Transaction, "owned-transaction") is not None
             assert db.get(ReceiptAttachment, "owned-receipt") is not None
-            assert db.get(Webhook, "owned-webhook") is not None
     finally:
         fastapi_app.dependency_overrides[get_current_user] = lambda: UserContext(id=TEST_USER_ID, email="test@ledger.local")

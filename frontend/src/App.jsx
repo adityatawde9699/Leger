@@ -14,7 +14,7 @@ const Goals         = lazy(() => import("./views/Goals"));
 const Advisor       = lazy(() => import("./views/Advisor"));
 const Accounts      = lazy(() => import("./views/Accounts"));
 const ExportGST     = lazy(() => import("./views/ExportGST"));
-const AuditWebhooks = lazy(() => import("./views/AuditWebhooks"));
+const AuditLog = lazy(() => import("./views/AuditLog"));
 const Investments   = lazy(() => import("./views/Investments"));
 const CreditBenchmarks = lazy(() => import("./views/CreditBenchmarks"));
 const Analytics     = lazy(() => import("./views/Analytics"));
@@ -227,7 +227,7 @@ export default function App() {
       case "investments":  return <Investments />;
       case "credit":       return <CreditBenchmarks />;
       case "export":       return <ExportGST />;
-      case "audit":        return <AuditWebhooks />;
+      case "audit":        return <AuditLog />;
       case "advisor":      return <Advisor onNavigate={navigateTo} />;
       case "profile":      return <Profile onSignOut={handleSignOut} />;
       default:             return <Dashboard userName={displayName} onNavigate={navigateTo} onAddTransaction={() => setSheetOpen(true)} />;

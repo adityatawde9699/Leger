@@ -41,7 +41,6 @@ Please report security issues responsibly:
 ### Data Protection
 - Financial data is stored locally by default (no cloud transmission)
 - AI queries to cloud providers (Anthropic) contain anonymized context only
-- Webhook delivery is HMAC-SHA256 signed; signing secrets are encrypted at rest when a deployment key is configured
 - Audit log provides immutable trail of all data mutations
 
 ### Input Validation
