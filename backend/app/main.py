@@ -3681,6 +3681,35 @@ def encrypted_backup_export(
     return {"format": "ledger-fernet-v1", "encrypted_backup": token}
 
 
+def _validated_backup_records(backup: dict) -> tuple[list[tuple[str, dict]], list[tuple[str, dict]]]:
+    """Validate every backup record against the API schemas before anything is written.
+
+    Returns (id, fields) pairs; raises 400 on the first invalid record so a bad backup
+    restores nothing instead of failing half-way with a 500.
+    """
+    def record_id(item: dict) -> str:
+        value = item.get("id")
+        if not isinstance(value, str) or not 1 <= len(value) <= 36:
+            raise ValueError("missing or invalid id")
+        return value
+
+    raw_accounts, raw_transactions = backup.get("accounts", []), backup.get("transactions", [])
+    if not isinstance(raw_accounts, list) or not isinstance(raw_transactions, list):
+        raise HTTPException(status_code=400, detail="Backup records are malformed")
+    accounts, transactions = [], []
+    try:
+        for item in raw_accounts:
+            fields = AccountIn(**{k: v for k, v in item.items() if k in AccountIn.model_fields}).model_dump()
+            fields["is_active"] = bool(item.get("is_active", True))
+            accounts.append((record_id(item), fields))
+        for item in raw_transactions:
+            fields = TransactionIn(**{k: v for k, v in item.items() if k in TransactionIn.model_fields}).model_dump()
+            transactions.append((record_id(item), fields))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail="Backup contains an invalid record") from exc
+    return accounts, transactions
+
+
 @app.post("/backup/restore")
 def encrypted_backup_restore(
     payload: BackupRestoreRequest,
@@ -3695,37 +3724,32 @@ def encrypted_backup_restore(
                                 settings.backup_previous_encryption_keys)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    accounts = backup.get("accounts", [])
-    transactions = backup.get("transactions", [])
+    # Backups are encrypted with one server-wide key, so the key alone does not prove
+    # ownership: only restore a backup that was exported from this same account.
+    profile = backup.get("profile")
+    if not isinstance(profile, dict) or profile.get("id") != user.id:
+        raise HTTPException(status_code=403, detail="This backup belongs to a different account")
+    accounts, transactions = _validated_backup_records(backup)
     if payload.dry_run:
         log_event(db, user_id=user.id, action="validate", resource_type="backup_restore")
         db.commit()
         return {"ok": True, "dry_run": True, "accounts": len(accounts), "transactions": len(transactions)}
     restored_accounts = 0
-    for item in accounts:
-        if db.get(Account, item.get("id")):
+    for record_id, account in accounts:
+        if db.get(Account, record_id):
             continue
-        db.add(Account(
-            id=item["id"], user_id=user.id, name=item["name"], account_type=item["account_type"],
-            institution=item.get("institution"), balance=Decimal(item.get("balance", "0")),
-            currency=item.get("currency", "INR"), is_active=item.get("is_active", True),
-        ))
+        db.add(Account(id=record_id, user_id=user.id, **account))
         restored_accounts += 1
     restored_transactions = 0
-    for item in transactions:
-        if db.get(Transaction, item.get("id")):
+    for record_id, tx in transactions:
+        if db.get(Transaction, record_id):
             continue
-        account_id = item.get("account_id")
+        account_id = tx.pop("account_id", None)
         if account_id:
             account = db.get(Account, account_id)
             if not account or account.user_id != user.id:
                 account_id = None
-        db.add(Transaction(
-            id=item["id"], user_id=user.id, account_id=account_id,
-            date=date.fromisoformat(item["date"]), type=item["type"], status=item.get("status", "posted"),
-            category=item["category"], amount=Decimal(item["amount"]), description=item["description"],
-            source=item.get("source", "cash"), source_ref=item.get("source_ref"),
-        ))
+        db.add(Transaction(id=record_id, user_id=user.id, account_id=account_id, **tx))
         restored_transactions += 1
     log_event(db, user_id=user.id, action="restore", resource_type="backup",
               details={"accounts": restored_accounts, "transactions": restored_transactions})
