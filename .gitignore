@@ -57,3 +57,8 @@ logs/
 
 # Misc generated files
 .cache/
+
+# Test coverage data
+.coverage
+.coverage.*
+htmlcov/

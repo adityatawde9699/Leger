@@ -37,12 +37,18 @@ from app.main import app
 from app.models import User
 from app.schemas import UserContext
 
-# In-memory SQLite for tests
-TEST_ENGINE = create_engine(
-    "sqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
+# In-memory SQLite by default. Set TEST_DATABASE_URL (e.g. a throwaway PostgreSQL
+# database in CI) to run the same suite against the production database engine.
+# Tables are created and dropped around every test, so never point it at real data.
+_TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+if _TEST_DATABASE_URL:
+    TEST_ENGINE = create_engine(_TEST_DATABASE_URL, connect_args={"prepare_threshold": None})
+else:
+    TEST_ENGINE = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
 TestSession = sessionmaker(bind=TEST_ENGINE)
 
 # Stable test identity
