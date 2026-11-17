@@ -1418,7 +1418,7 @@ def create_split_transaction(
     db.flush()
     log_event(
         db, user_id=user.id, action="create", resource_type="split_transaction",
-        resource_id=group_id, details={"line_count": len(items), "total": str(payload.amount)},
+        resource_id=group_id.removeprefix("split:"), details={"line_count": len(items), "total": str(payload.amount)},
         ip_address=_client_ip(request),
     )
     db.commit()
