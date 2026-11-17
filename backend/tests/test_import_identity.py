@@ -285,3 +285,28 @@ def test_import_worker_hides_internal_error_details(monkeypatch):
         assert "server error" in job.error_message
     finally:
         db.close()
+
+
+def test_stale_failed_import_payloads_are_purged_after_retention():
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    db = TestSession()
+    try:
+        jobs = {
+            "old-failed": ImportJob(user_id=TEST_USER_ID, status="failed", updated_at=now - timedelta(days=5)),
+            "old-cancelled": ImportJob(user_id=TEST_USER_ID, status="cancelled", updated_at=now - timedelta(days=5)),
+            "recent-failed": ImportJob(user_id=TEST_USER_ID, status="failed", updated_at=now - timedelta(hours=1)),
+            "old-pending": ImportJob(user_id=TEST_USER_ID, status="pending", updated_at=now - timedelta(days=5)),
+        }
+        for name, job in jobs.items():
+            job.id, job.file_name, job.file_extension, job.file_content = name, f"{name}.csv", "csv", b"Date,Amount\n"
+            db.add(job)
+        db.commit()
+
+        assert main._purge_stale_import_payloads(db, now=now) == 2
+
+        remaining = {job.id: job.file_content is not None for job in db.query(ImportJob).all()}
+        assert remaining == {"old-failed": False, "old-cancelled": False, "recent-failed": True, "old-pending": True}
+    finally:
+        db.close()

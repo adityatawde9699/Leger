@@ -2250,6 +2250,22 @@ async def _import_recovery_loop() -> None:
             await asyncio.sleep(5)
 
 
+def _purge_stale_import_payloads(db: Session, now: datetime | None = None) -> int:
+    """Erase raw statement files from failed/cancelled imports past the retry window.
+
+    Successful imports clear their payload immediately; without this, a failed or
+    cancelled job kept the user's full bank statement in the database indefinitely.
+    """
+    cutoff = (now or datetime.now(UTC)) - timedelta(hours=settings.import_payload_retention_hours)
+    purged = db.query(ImportJob).filter(
+        ImportJob.status.in_(("failed", "cancelled")),
+        ImportJob.file_content.isnot(None),
+        ImportJob.updated_at < cutoff,
+    ).update({ImportJob.file_content: None}, synchronize_session=False)
+    db.commit()
+    return purged
+
+
 async def _maintenance_loop() -> None:
     """Run bounded, deterministic maintenance work in a recoverable loop.
 
@@ -2264,6 +2280,8 @@ async def _maintenance_loop() -> None:
         try:
             db.query(AppSession).filter(AppSession.expires_at < datetime.now(UTC)).delete()
             db.commit()
+            if purged := _purge_stale_import_payloads(db):
+                logger.info("maintenance.import_payloads_purged count=%d", purged)
             for db_user in db.query(User).all():
                 purge_expired_conversations(db, db_user.id, settings.ai_conversation_retention_days)
                 if db_user.insight_frequency == "off" or _account_currency_mismatch_count(db, db_user.id):

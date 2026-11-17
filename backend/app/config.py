@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     # Statement-import bounds (protect the 512MB worker from huge uploads).
     max_upload_mb: int = 10
     max_import_rows: int = 5000
+    # Failed/cancelled imports keep the raw statement only long enough to retry it.
+    import_payload_retention_hours: int = 72
 
     # Logging
     log_level: str = "info"
