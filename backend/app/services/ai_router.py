@@ -478,7 +478,12 @@ class AIRouter:
         task_type: str = "default",
         prefer_local: bool = False,
     ) -> AsyncIterator[str]:
-        """Stream tokens from the first available provider."""
+        """Yield the reply of the first provider that completes successfully.
+
+        Each attempt is buffered and released only when that provider finishes, so a
+        provider failing mid-reply is discarded instead of being concatenated with the
+        fallback provider's output (which corrupted structured JSON replies).
+        """
         system = redact_sensitive_text(system)
         messages = [{**message, "content": redact_sensitive_text(str(message.get("content", "")))}
                     for message in messages]
@@ -500,21 +505,21 @@ class AIRouter:
             try:
                 logger.debug("Streaming with %s (task=%s, tokens=%d)", name, task_type, effective_tokens)
                 iterator = adapter.stream(system, messages, effective_tokens)
-                try:
-                    first_token = await asyncio.wait_for(
-                        anext(iterator), timeout=settings.ai_provider_timeout_seconds,
-                    )
-                except StopAsyncIteration:
-                    first_token = ""
-
-                yield first_token
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + settings.ai_provider_stream_total_seconds
+                buffered: list[str] = []
                 while True:
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        raise TimeoutError(f"{name} exceeded the total stream time limit")
                     try:
                         token = await asyncio.wait_for(
-                            anext(iterator), timeout=settings.ai_provider_timeout_seconds,
+                            anext(iterator), timeout=min(settings.ai_provider_timeout_seconds, remaining),
                         )
                     except StopAsyncIteration:
                         break
+                    buffered.append(token)
+                for token in buffered:
                     yield token
                 record_telemetry(
                     "ai.provider",

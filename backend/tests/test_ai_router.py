@@ -119,3 +119,72 @@ def test_provider_health_reports_safe_counters_and_latency(monkeypatch):
     assert health["last_outcome"] == "success"
     assert isinstance(health["last_latency_ms"], float)
     assert "api_key" not in health
+
+
+class FakeStreamAdapter:
+    """Streams the given tokens, then optionally raises; can pause between tokens."""
+
+    def __init__(self, tokens, fail_after=False, delay=0.0):
+        self.tokens = tokens
+        self.fail_after = fail_after
+        self.delay = delay
+        self.max_tokens = None
+
+    async def is_available(self):
+        return True
+
+    async def stream(self, system, messages, max_tokens):
+        self.max_tokens = max_tokens
+        for token in self.tokens:
+            if self.delay:
+                await asyncio.sleep(self.delay)
+            yield token
+        if self.fail_after:
+            raise ConnectionError("provider dropped mid-reply")
+
+
+def _collect(router, **kwargs):
+    async def run():
+        return "".join([token async for token in router.stream("system", [{"role": "user", "content": "q"}], **kwargs)])
+    return asyncio.run(run())
+
+
+def _allow_all(monkeypatch, names):
+    monkeypatch.setattr(settings, "ai_provider_allowlist", ",".join(names))
+    monkeypatch.setattr(settings, "ai_task_provider_policy", "")
+    monkeypatch.setattr(settings, "ai_provider_max_attempts", 3)
+
+
+def test_stream_failover_discards_partial_output_from_failed_provider(monkeypatch):
+    router = AIRouter()
+    router.adapters = [
+        ("Flaky", FakeStreamAdapter(['{"schema": "adv', 'isor.v1", "cla'], fail_after=True)),
+        ("Stable", FakeStreamAdapter(['{"ok": ', "true}"])),
+    ]
+    _allow_all(monkeypatch, ["Flaky", "Stable"])
+
+    assert _collect(router) == '{"ok": true}'
+
+
+def test_stream_enforces_total_time_limit_per_provider(monkeypatch):
+    router = AIRouter()
+    router.adapters = [
+        ("Trickle", FakeStreamAdapter(["a"] * 50, delay=0.02)),
+        ("Quick", FakeStreamAdapter(["done"])),
+    ]
+    _allow_all(monkeypatch, ["Trickle", "Quick"])
+    monkeypatch.setattr(settings, "ai_provider_timeout_seconds", 1.0)
+    monkeypatch.setattr(settings, "ai_provider_stream_total_seconds", 0.2)
+
+    assert _collect(router) == "done"
+
+
+def test_stream_uses_task_token_budget(monkeypatch):
+    router = AIRouter()
+    adapter = FakeStreamAdapter(["x"])
+    router.adapters = [("Only", adapter)]
+    _allow_all(monkeypatch, ["Only"])
+
+    _collect(router, task_type="advisor")
+
+    assert adapter.max_tokens == 900

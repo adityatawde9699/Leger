@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     ai_provider_allowlist: str = ""
     ai_task_provider_policy: str = ""
     ai_provider_timeout_seconds: float = 20.0
+    # Upper bound for a whole streamed reply from one provider (the timeout above applies per token).
+    ai_provider_stream_total_seconds: float = 60.0
     ai_provider_max_attempts: int = 3
     # Open a provider circuit after repeated failures so a degraded upstream
     # does not consume every request's retry budget. The cooldown is short by

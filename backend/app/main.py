@@ -2816,7 +2816,9 @@ async def advisor_stream(
     async def event_generator():
         full_reply = []
         try:
-            async for token in ai_router.stream(f"{SYSTEM_PROMPT}\n\n{ADVISOR_RESPONSE_INSTRUCTION}", messages):
+            async for token in ai_router.stream(
+                f"{SYSTEM_PROMPT}\n\n{ADVISOR_RESPONSE_INSTRUCTION}", messages, task_type="advisor"
+            ):
                 full_reply.append(token)
             raw_reply = "".join(full_reply)
             reply_text, _contract = ground_advisor_reply(raw_reply)
