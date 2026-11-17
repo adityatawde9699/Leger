@@ -22,6 +22,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from ..config import settings
+from .ai_router import ai_router
 from .categorizer import categorize
 
 logger = logging.getLogger("ledger.statements")
@@ -354,20 +355,7 @@ def _parse_ai_rows(text: str) -> list[dict]:
     return []
 
 
-async def _gemini_parse_pdf(content: bytes) -> str:
-    """Send the PDF to Gemini 1.5 Flash to extract transaction text."""
-    if not settings.gemini_api_key:
-        return ""
-
-    logger.info("Sending PDF to Gemini for extraction...")
-    try:
-        import google.generativeai as genai
-
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
-
-        pdf_part = {"mime_type": "application/pdf", "data": content}
-        prompt = """Extract every bank statement transaction from this PDF.
+_PDF_EXTRACTION_PROMPT = """Extract every bank statement transaction from this PDF.
 Return only JSON with this shape:
 {"transactions":[{"date":"DD/MM/YYYY","description":"...","debit":"0.00","credit":"0.00","balance":"0.00"}]}
 Rules:
@@ -375,10 +363,15 @@ Rules:
 - Preserve full UPI narration/merchant text in description.
 - Use debit for withdrawals/expenses and credit for deposits/income. Use empty string or 0.00 for the unused side."""
 
-        response = await model.generate_content_async([pdf_part, prompt])
-        return response.text
+
+async def _gemini_parse_pdf(content: bytes) -> str:
+    """Extract statement rows from a scanned PDF with a file-capable provider via the AI router."""
+    try:
+        return await ai_router.generate_from_file(
+            _PDF_EXTRACTION_PROMPT, content, "application/pdf", task_type="statement_ocr", json_output=True,
+        )
     except Exception as e:
-        logger.warning("Gemini PDF extraction failed: %s: %s", type(e).__name__, e)
+        logger.warning("PDF extraction failed: %s", type(e).__name__)
         return ""
 
 

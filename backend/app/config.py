@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     ai_provider_allowlist: str = ""
     ai_task_provider_policy: str = ""
     ai_provider_timeout_seconds: float = 20.0
+    # Gemini model for chat and file extraction. gemini-2.0-flash was shut down on 2026-06-01;
+    # gemini-3.6-flash is Google's listed replacement. Override when Google retires it.
+    gemini_model: str = "gemini-3.6-flash"
     # Upper bound for a whole streamed reply from one provider (the timeout above applies per token).
     ai_provider_stream_total_seconds: float = 60.0
     ai_provider_max_attempts: int = 3

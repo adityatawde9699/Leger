@@ -5,7 +5,8 @@ Groq -> Cerebras -> Gemini -> Cohere -> OpenRouter.
 Upgrade notes (v2):
 - Added generate() method (non-streaming) — fixes bill_negotiator bug
 - Upgraded Groq: llama-3.3-70b-versatile (better financial reasoning)
-- Upgraded Gemini: gemini-2.0-flash (faster, more capable)
+- Gemini runs on the google-genai SDK; the model comes from GEMINI_MODEL
+- generate_from_file() sends receipts and scanned PDFs through the same policy, budgets and circuit breaker
 - Added per-task max_tokens tuning via task_type parameter
 - Added exponential backoff retry on transient errors
 """
@@ -34,8 +35,12 @@ TASK_TOKENS = {
     "advisor_tools": 180,
     "negotiate": 700,          # up to 10 bills × ~60 tokens
     "receipt": 300,
+    "statement_ocr": 8192,     # a full statement page set extracted as JSON rows
     "default": 512,
 }
+
+# File extraction (OCR) is slower than chat; these tasks get a longer per-call timeout.
+TASK_TIMEOUT_SECONDS = {"receipt": 45.0, "statement_ocr": 120.0}
 
 
 class AIProviderAuthError(RuntimeError):
@@ -49,6 +54,9 @@ def _status_code(exc: Exception) -> int | None:
     status = getattr(exc, "status_code", None)
     if status:
         return int(status)
+    code = getattr(exc, "code", None)  # google.genai.errors.APIError
+    if isinstance(code, int):
+        return code
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
     return int(status) if status else None
@@ -149,53 +157,71 @@ class CerebrasAdapter:
         return response.choices[0].message.content or ""
 
 
+def _gemini_client():
+    """One google-genai client per API key; it holds the HTTP connection pool."""
+    from google import genai
+
+    key = settings.gemini_api_key
+    if _GEMINI_CLIENT.get("key") != key:
+        _GEMINI_CLIENT.update(key=key, client=genai.Client(api_key=key))
+    return _GEMINI_CLIENT["client"]
+
+
+_GEMINI_CLIENT: dict = {}
+
+
 class GeminiAdapter:
-    """Calls Google Gemini API — upgraded to gemini-2.0-flash."""
+    """Calls Google Gemini through the google-genai SDK (model set by GEMINI_MODEL)."""
+
+    supports_files = True
 
     async def is_available(self) -> bool:
         return bool(settings.gemini_api_key)
 
-    async def stream(self, system: str, messages: list[dict], max_tokens: int) -> AsyncIterator[str]:
-        import google.generativeai as genai
+    @staticmethod
+    def _contents(messages: list[dict]):
+        from google.genai import types
 
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash", system_instruction=system)
+        return [
+            types.Content(role="user" if msg["role"] == "user" else "model",
+                          parts=[types.Part.from_text(text=str(msg["content"]))])
+            for msg in messages
+        ]
 
-        formatted_messages = []
-        for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            formatted_messages.append({"role": role, "parts": [msg["content"]]})
+    @staticmethod
+    def _config(max_tokens: int, system: str | None = None, json_output: bool = False):
+        from google.genai import types
 
-        response = await model.generate_content_async(
-            formatted_messages,
-            stream=True,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=max_tokens,
-                temperature=0.1,
-            ),
+        return types.GenerateContentConfig(
+            system_instruction=system or None,
+            max_output_tokens=max_tokens,
+            temperature=0.1,
+            response_mime_type="application/json" if json_output else None,
         )
 
+    async def stream(self, system: str, messages: list[dict], max_tokens: int) -> AsyncIterator[str]:
+        response = await _gemini_client().aio.models.generate_content_stream(
+            model=settings.gemini_model, contents=self._contents(messages), config=self._config(max_tokens, system),
+        )
         async for chunk in response:
             if chunk.text:
                 yield chunk.text
 
     async def generate(self, system: str, messages: list[dict], max_tokens: int) -> str:
-        import google.generativeai as genai
+        response = await _gemini_client().aio.models.generate_content(
+            model=settings.gemini_model, contents=self._contents(messages), config=self._config(max_tokens, system),
+        )
+        return response.text or ""
 
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash", system_instruction=system)
+    async def generate_with_file(self, prompt: str, data: bytes, mime_type: str, max_tokens: int,
+                                 json_output: bool = False) -> str:
+        """Multimodal request: one file (image or PDF) plus an instruction."""
+        from google.genai import types
 
-        formatted_messages = []
-        for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            formatted_messages.append({"role": role, "parts": [msg["content"]]})
-
-        response = await model.generate_content_async(
-            formatted_messages,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=max_tokens,
-                temperature=0.1,
-            ),
+        response = await _gemini_client().aio.models.generate_content(
+            model=settings.gemini_model,
+            contents=[types.Part.from_bytes(data=data, mime_type=mime_type), prompt],
+            config=self._config(max_tokens, json_output=json_output),
         )
         return response.text or ""
 
@@ -597,11 +623,40 @@ class AIRouter:
                     for message in messages]
 
         effective_tokens = TASK_TOKENS.get(task_type, max_tokens)
+        return await self._first_success(
+            task_type, lambda adapter: adapter.generate(system, messages, effective_tokens),
+        )
 
+    async def generate_from_file(
+        self,
+        prompt: str,
+        data: bytes,
+        mime_type: str,
+        task_type: str,
+        json_output: bool = False,
+    ) -> str:
+        """Extract text from an image or PDF with a file-capable provider.
+
+        Same task policy, budgets, circuit breaker, timeouts and health tracking as
+        generate(). The file itself cannot be redacted, so callers must only use this
+        for users who opted in to cloud AI.
+        """
+        effective_tokens = TASK_TOKENS.get(task_type, 512)
+        return await self._first_success(
+            task_type,
+            lambda adapter: adapter.generate_with_file(prompt, data, mime_type, effective_tokens, json_output),
+            files=True,
+        )
+
+    async def _first_success(self, task_type: str, call, files: bool = False) -> str:
+        """Try allowed providers in order and return the first non-empty result."""
         last_error = None
         attempts = 0
         max_attempts = max(1, settings.ai_provider_max_attempts)
+        timeout = max(settings.ai_provider_timeout_seconds, TASK_TIMEOUT_SECONDS.get(task_type, 0.0))
         for name, adapter in self._adapters_for(task_type):
+            if files and not getattr(adapter, "supports_files", False):
+                continue
             if not await adapter.is_available():
                 continue
             if not await self._budget_allows(name):
@@ -612,11 +667,8 @@ class AIRouter:
             attempts += 1
             started = time.perf_counter()
             try:
-                logger.debug("Generating with %s (task=%s, tokens=%d)", name, task_type, effective_tokens)
-                result = await asyncio.wait_for(
-                    adapter.generate(system, messages, effective_tokens),
-                    timeout=settings.ai_provider_timeout_seconds,
-                )
+                logger.debug("Generating with %s (task=%s)", name, task_type)
+                result = await asyncio.wait_for(call(adapter), timeout=timeout)
                 if result:
                     record_telemetry(
                         "ai.provider",

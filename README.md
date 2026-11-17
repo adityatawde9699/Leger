@@ -133,6 +133,7 @@ CEREBRAS_API_KEY="your_cerebras_key"
 | `CORS_ORIGINS` | Production | Local frontend origins | Comma-separated exact HTTPS frontend origins in production |
 | `GROQ_API_KEY` | No | — | Groq API key (primary) |
 | `GEMINI_API_KEY` | No | — | Gemini API key (multimodal extraction) |
+| `GEMINI_MODEL` | No | `gemini-3.6-flash` | Gemini model code; update when Google retires a model |
 | `CEREBRAS_API_KEY` | No | — | Cerebras API key (high speed fallback) |
 | `GOOGLE_CLIENT_ID` | If Google auth | — | Google Cloud Web OAuth client ID used to verify ID tokens |
 | `UPSTASH_REDIS_REST_URL` | Production | — | HTTPS REST endpoint from the Upstash Console |

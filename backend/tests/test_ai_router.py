@@ -3,6 +3,8 @@ import asyncio
 import pytest
 
 from app.config import settings
+from app.services import ai_router as ai_router_module
+from app.services.ai_budget import AIRequestBudget
 from app.services.ai_router import AIRouter
 
 
@@ -188,3 +190,121 @@ def test_stream_uses_task_token_budget(monkeypatch):
     _collect(router, task_type="advisor")
 
     assert adapter.max_tokens == 900
+
+
+# ── File extraction (receipts, scanned statements) ────────────────────────────
+class FakeFileAdapter(FakeAdapter):
+    supports_files = True
+
+    def __init__(self, result=None, error=None, delay=0.0):
+        super().__init__(result=result, error=error)
+        self.delay = delay
+        self.file_calls = []
+
+    async def generate_with_file(self, prompt, data, mime_type, max_tokens, json_output=False):
+        self.file_calls.append((mime_type, max_tokens, json_output))
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def _file_router(monkeypatch, adapters, policy=""):
+    router = AIRouter()
+    router.adapters = adapters
+    monkeypatch.setattr(settings, "ai_provider_allowlist", "")
+    monkeypatch.setattr(settings, "ai_task_provider_policy", policy)
+    monkeypatch.setattr(settings, "ai_provider_max_attempts", 3)
+    return router
+
+
+def test_file_extraction_only_uses_file_capable_providers(monkeypatch):
+    text_only = FakeAdapter(result="text")
+    vision = FakeFileAdapter(result='{"ok": true}')
+    router = _file_router(monkeypatch, [("TextOnly", text_only), ("Vision", vision)])
+
+    result = asyncio.run(router.generate_from_file("p", b"img", "image/png", task_type="receipt", json_output=True))
+
+    assert result == '{"ok": true}'
+    assert text_only.calls == 0
+    assert vision.file_calls == [("image/png", 300, True)]
+
+
+def test_file_extraction_falls_back_and_respects_task_policy(monkeypatch):
+    failing = FakeFileAdapter(error=ConnectionError("down"))
+    backup = FakeFileAdapter(result="rows")
+    blocked = FakeFileAdapter(result="not allowed")
+    router = _file_router(monkeypatch, [("Blocked", blocked), ("Failing", failing), ("Backup", backup)],
+                          policy='{"statement_ocr": ["Failing", "Backup"]}')
+
+    assert asyncio.run(router.generate_from_file("p", b"%PDF", "application/pdf", task_type="statement_ocr")) == "rows"
+    assert blocked.file_calls == []
+    assert failing.file_calls and backup.file_calls
+
+
+def test_file_extraction_counts_against_the_daily_budget(monkeypatch):
+    vision = FakeFileAdapter(result="ok")
+    router = _file_router(monkeypatch, [("Vision", vision)])
+    router._budget = AIRequestBudget(global_limit=1)
+
+    assert asyncio.run(router.generate_from_file("p", b"img", "image/png", task_type="receipt")) == "ok"
+    with pytest.raises(RuntimeError):
+        asyncio.run(router.generate_from_file("p", b"img", "image/png", task_type="receipt"))
+    assert len(vision.file_calls) == 1
+
+
+def test_ocr_tasks_get_a_longer_timeout_than_chat(monkeypatch):
+    slow = FakeFileAdapter(result="ok", delay=0.05)
+    router = _file_router(monkeypatch, [("Slow", slow)])
+    monkeypatch.setattr(settings, "ai_provider_timeout_seconds", 0.01)
+    monkeypatch.setitem(ai_router_module.TASK_TIMEOUT_SECONDS, "receipt", 1.0)
+
+    assert asyncio.run(router.generate_from_file("p", b"img", "image/png", task_type="receipt")) == "ok"
+
+
+def test_genai_api_error_status_is_recognised_as_an_auth_failure():
+    from google.genai import errors
+
+    assert ai_router_module._status_code(errors.ClientError(403, {"error": {"message": "denied"}})) == 403
+
+
+# ── Gemini adapter request shape (google-genai SDK) ───────────────────────────
+@pytest.fixture()
+def genai_client(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    client = MagicMock()
+    client.aio.models.generate_content = AsyncMock(return_value=MagicMock(text="reply"))
+    monkeypatch.setattr(ai_router_module, "_gemini_client", lambda: client)
+    monkeypatch.setattr(settings, "gemini_model", "gemini-test-model")
+    return client
+
+
+def test_gemini_adapter_sends_system_prompt_roles_and_token_limit(genai_client):
+    adapter = ai_router_module.GeminiAdapter()
+    messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+
+    assert asyncio.run(adapter.generate("be brief", messages, 123)) == "reply"
+
+    request = genai_client.aio.models.generate_content.call_args.kwargs
+    assert request["model"] == "gemini-test-model"
+    assert [(c.role, c.parts[0].text) for c in request["contents"]] == [("user", "hi"), ("model", "hello")]
+    assert request["config"].system_instruction == "be brief"
+    assert request["config"].max_output_tokens == 123
+
+
+def test_gemini_adapter_streams_chunks(genai_client):
+    from unittest.mock import AsyncMock, MagicMock
+
+    async def chunks():
+        for text in ("a", None, "b"):
+            yield MagicMock(text=text)
+
+    genai_client.aio.models.generate_content_stream = AsyncMock(return_value=chunks())
+    adapter = ai_router_module.GeminiAdapter()
+
+    async def collect():
+        return [t async for t in adapter.stream("s", [{"role": "user", "content": "q"}], 50)]
+
+    assert asyncio.run(collect()) == ["a", "b"]

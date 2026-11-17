@@ -1,6 +1,9 @@
 """
 Receipt OCR — extract transaction data from receipt images.
-Uses Google Gemini Vision capabilities to extract and structure data in one step.
+
+The image goes to a file-capable provider (Gemini) through the AI router, so the
+task policy, daily budgets, circuit breaker and timeouts apply. Callers must check
+that the user opted in to cloud AI: an image cannot be redacted.
 """
 
 import json
@@ -9,7 +12,7 @@ import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from ..config import settings
+from .ai_router import ai_router
 from .categorizer import categorize
 
 logger = logging.getLogger("ledger.receipt")
@@ -52,31 +55,12 @@ def _clean_amount(val) -> Decimal | None:
 
 
 async def parse_receipt_image(image_bytes: bytes) -> dict | None:
-    """
-    Parse a receipt image into structured transaction data.
-    Uses Gemini Vision capabilities.
-    """
-    if not settings.gemini_api_key:
-        logger.warning("No Gemini API key found. Cannot parse receipt image.")
-        return None
-
-    logger.info("Sending receipt image to Gemini for extraction...")
-
+    """Parse a receipt image into structured transaction data, or None if it cannot be read."""
     try:
-        import google.generativeai as genai
-
-        genai.configure(api_key=settings.gemini_api_key)
-
-        model = genai.GenerativeModel(
-            "gemini-2.0-flash",
-            generation_config={"response_mime_type": "application/json"},
+        output_text = await ai_router.generate_from_file(
+            EXTRACTION_PROMPT, image_bytes, _detect_image_mime(image_bytes),
+            task_type="receipt", json_output=True,
         )
-
-        mime_type = _detect_image_mime(image_bytes)
-        image_part = {"mime_type": mime_type, "data": image_bytes}
-
-        response = await model.generate_content_async([image_part, EXTRACTION_PROMPT])
-        output_text = getattr(response, "text", "") or ""
 
         # Extract JSON block if surrounded by markdown codeblocks or plain json
         try:
@@ -86,7 +70,7 @@ async def parse_receipt_image(image_bytes: bytes) -> dict | None:
             if json_match:
                 parsed_data = json.loads(json_match.group(0))
             else:
-                logger.warning("Gemini returned unparseable non-JSON text: %s", output_text[:200])
+                logger.warning("Receipt extraction returned non-JSON text (%d chars)", len(output_text))
                 return None
 
         # Validate and clean amount (handles strings, currencies, commas)
@@ -130,5 +114,5 @@ async def parse_receipt_image(image_bytes: bytes) -> dict | None:
         }
 
     except Exception as e:
-        logger.warning("Gemini extraction failed or returned invalid JSON: %s: %s", type(e).__name__, e, exc_info=True)
+        logger.warning("Receipt extraction failed: %s", type(e).__name__)
         return None

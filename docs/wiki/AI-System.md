@@ -28,7 +28,7 @@ For operations that need language understanding, Ledger uses a custom AI router 
 **Fallback Chain:**
 1. **Groq** (`llama-3.1-8b-instant`) — Extremely fast, primary choice for extraction and categorization.
 2. **Cerebras** (`llama-3.3-70b`) — High intelligence, ultra-low latency fallback.
-3. **Gemini** (`gemini-1.5-flash`) — Robust multimodal model used for extraction and enrichment.
+3. **Gemini** (`GEMINI_MODEL`, default `gemini-3.6-flash`) — Multimodal; the only provider used for receipt images and scanned PDFs, which go through the router's policy, budgets and circuit breaker.
 4. **Cohere** (`command-r-plus-08-2024`) — High quality fallback.
 5. **OpenRouter** (`meta-llama/llama-3-8b-instruct:free`) — Final fallback.
 
@@ -148,6 +148,7 @@ Every AI service uses a strict system prompt that:
 | `GROQ_API_KEY` | No | Enables Groq fallback layer |
 | `CEREBRAS_API_KEY` | No | Enables Cerebras fallback layer |
 | `GEMINI_API_KEY` | No | Enables Gemini fallback layer |
+| `GEMINI_MODEL` | No | Gemini model code (default `gemini-3.6-flash`); change it when Google retires a model |
 | `COHERE_API_KEY` | No | Enables Cohere fallback layer |
 | `OPENROUTER_API_KEY` | No | Enables OpenRouter fallback layer |
 

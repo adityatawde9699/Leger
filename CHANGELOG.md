@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Gemini calls work again.** `gemini-2.0-flash` was shut down by Google on 2026-06-01, so receipt scanning, scanned-PDF extraction and the Gemini chat fallback were failing. Ledger now uses the `google-genai` SDK (the old `google-generativeai` package is end-of-life) and `gemini-3.6-flash`, configurable with `GEMINI_MODEL`.
+
+### Changed
+- Receipt OCR and scanned-PDF extraction go through the AI router, so the task policy, daily request budgets, circuit breaker, timeouts and provider health now apply to them.
+
 ### Removed
 - **Webhooks.** Endpoints could be registered, but no event ever triggered a delivery. The `/webhooks` API, the Webhooks tab, the SSRF guard and signing code that only served it, and the `WEBHOOK_ENCRYPTION_KEYS` setting are gone. Migration `0003` drops the `webhooks` table (endpoint URLs and encrypted signing secrets only; no financial data).
 
