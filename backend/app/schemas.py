@@ -150,20 +150,26 @@ class ReconciliationOut(BaseModel):
 # ── Transactions ─────────────────────────────────────────────────────────────
 
 
+MAX_TRANSACTION_AMOUNT = Decimal("9999999999.99")  # transactions.amount is Numeric(12, 2)
+MAX_BALANCE = Decimal("999999999999.99")  # running_balance is Numeric(14, 2)
+
+
 class TransactionIn(BaseModel):
     date: date
     type: str = Field(pattern="^(income|expense|refund|reimbursement|transfer)$")
     status: str = Field(default="posted", pattern="^(posted|pending|excluded)$")
-    category: str
-    amount: Decimal = Field(gt=0)
+    # Bounds mirror the database columns so oversized input is a 422, not a 500.
+    category: str = Field(min_length=1, max_length=64)
+    amount: Decimal = Field(gt=0, le=MAX_TRANSACTION_AMOUNT)
     description: str = Field(min_length=1, max_length=500)
-    source: str = "cash"
-    source_ref: str | None = None
-    account_id: str | None = None
-    tags: str | None = None
-    notes: str | None = None
-    running_balance: Decimal | None = None  # Bank balance after this transaction
-    stmt_seq: int | None = None  # Row index in bank statement (0-based)
+    source: str = Field(default="cash", min_length=1, max_length=32)
+    source_ref: str | None = Field(default=None, max_length=128)
+    account_id: str | None = Field(default=None, max_length=36)
+    tags: str | None = Field(default=None, max_length=512)
+    notes: str | None = Field(default=None, max_length=5000)
+    # Bank balance after this transaction
+    running_balance: Decimal | None = Field(default=None, ge=-MAX_BALANCE, le=MAX_BALANCE)
+    stmt_seq: int | None = Field(default=None, ge=0)  # Row index in bank statement (0-based)
 
 
 class TransactionOut(BaseModel):
@@ -215,7 +221,7 @@ class PaginatedTransactions(BaseModel):
 
 
 class BulkDeleteRequest(BaseModel):
-    transaction_ids: list[str]
+    transaction_ids: list[str] = Field(min_length=1, max_length=500)
 
 
 # ── Budgets ───────────────────────────────────────────────────────────────────

@@ -313,3 +313,35 @@ def test_transaction_rejects_another_users_account(client):
         headers=AUTH_HEADER,
     )
     assert r.status_code == 400
+
+
+def _tx_payload(**overrides):
+    return {"date": "2026-03-01", "type": "expense", "category": "Food", "amount": "10.00",
+            "description": "Bounds check", **overrides}
+
+
+def test_transaction_fields_larger_than_columns_are_rejected_not_500(client):
+    for overrides in (
+        {"category": "c" * 65},
+        {"amount": "10000000000.00"},
+        {"tags": "t" * 513},
+        {"source_ref": "r" * 129},
+        {"source": "s" * 33},
+        {"running_balance": "1000000000000.00"},
+    ):
+        response = client.post("/transactions", json=_tx_payload(**overrides), headers=AUTH_HEADER)
+        assert response.status_code == 422, (overrides, response.status_code)
+
+    assert client.post("/transactions", json=_tx_payload(category="c" * 64), headers=AUTH_HEADER).status_code == 201
+
+
+def test_malformed_month_filter_returns_400(client):
+    for month in ("2026-13", "march", "2026-3", "2026-03-01"):
+        response = client.get("/transactions", params={"month": month}, headers=AUTH_HEADER)
+        assert response.status_code == 400, (month, response.status_code)
+    assert client.get("/transactions", params={"month": "2026-03"}, headers=AUTH_HEADER).status_code == 200
+
+
+def test_bulk_delete_rejects_unbounded_id_lists(client):
+    response = client.post("/transactions/bulk-delete", json={"transaction_ids": ["x"] * 501}, headers=AUTH_HEADER)
+    assert response.status_code == 422

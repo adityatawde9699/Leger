@@ -584,7 +584,12 @@ async def stop_import_recovery() -> None:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _month_range(month: str) -> tuple[date, date]:
-    start = date.fromisoformat(f"{month}-01")
+    try:
+        if len(month) != 7:
+            raise ValueError(month)
+        start = date.fromisoformat(f"{month}-01")
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="month must be in YYYY-MM format") from exc
     if start.month == 12:
         end = date(start.year + 1, 1, 1)
     else:
