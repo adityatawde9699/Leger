@@ -680,6 +680,41 @@ def _recurring_payload(rule: RecurringRule) -> dict:
     }
 
 
+_BALANCE_CREDIT_TYPES = ("income", "refund", "reimbursement")
+
+
+def _imported_running_balances(rows: list[dict], prior_balance: Decimal | None) -> list[Decimal | None]:
+    """Running balance for each new statement row, in the order given.
+
+    Rows are walked oldest-first, carrying the balance from row to row; a row with a
+    bank-reported balance re-anchors the running total. Statements may list newest
+    first, so same-day rows are walked in reverse file order when the file descends.
+    Rows that don't move the balance (pending, transfers, cash) get None.
+    """
+    if not rows:
+        return []
+    descending = rows[0]["date"] > rows[-1]["date"]
+    order = sorted(range(len(rows)), key=lambda i: (rows[i]["date"], -i if descending else i))
+    balances: list[Decimal | None] = [None] * len(rows)
+    cursor = prior_balance
+    for i in order:
+        row = rows[i]
+        if row.get("running_balance") is not None:
+            cursor = Decimal(str(row["running_balance"]))
+            balances[i] = cursor
+            continue
+        if cursor is None or row.get("source") == "cash" or row.get("status", "posted") != "posted":
+            continue
+        if row["type"] in _BALANCE_CREDIT_TYPES:
+            cursor = cursor + row["amount"]
+        elif row["type"] == "expense":
+            cursor = cursor - row["amount"]
+        else:
+            continue
+        balances[i] = cursor
+    return balances
+
+
 def _get_balance_at(
     db: Session,
     user_id: str,
@@ -2078,7 +2113,23 @@ async def _process_import_job(job_id: str) -> None:
                 ).all()
             }
 
-        prior_bal = _get_balance_at(worker_db, user_id, as_of_date=None)
+        # Work out which rows will actually be inserted, then their running balances.
+        to_insert: list[str] = []
+        planned: set[str] = set()
+        for _, _, _, fingerprint in prepared:
+            if fingerprint in existing_refs or fingerprint in planned or fingerprint in excluded_fingerprints:
+                continue
+            planned.add(fingerprint)
+            to_insert.append(fingerprint)
+        validated_by_fp = {fp: validated for validated, _, _, fp in prepared}
+        balance_by_fp = dict(zip(
+            to_insert,
+            _imported_running_balances(
+                [validated_by_fp[fp] for fp in to_insert],
+                _get_balance_at(worker_db, user_id, as_of_date=None),
+            ),
+            strict=True,
+        ))
         saved_count = 0
         seen: set[str] = set()
         pending = 0
@@ -2103,11 +2154,8 @@ async def _process_import_job(job_id: str) -> None:
             new_tx.merchant_normalized = _resolve_merchant_alias(worker_db, user_id, new_tx.description, merchant_norm)
             if ai_confidence is not None:
                 new_tx.confidence = ai_confidence
-            if new_tx.running_balance is None and new_tx.source != "cash" and prior_bal is not None:
-                if new_tx.type in ("income", "refund", "reimbursement") and new_tx.status == "posted":
-                    new_tx.running_balance = prior_bal + new_tx.amount
-                elif new_tx.type == "expense" and new_tx.status == "posted":
-                    new_tx.running_balance = prior_bal - new_tx.amount
+            if new_tx.running_balance is None:
+                new_tx.running_balance = balance_by_fp.get(fingerprint)
             worker_db.add(new_tx)
             saved_count += 1
             pending += 1

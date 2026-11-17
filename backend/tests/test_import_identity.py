@@ -181,3 +181,78 @@ def test_retry_failed_import_requeues_and_processes(client, monkeypatch):
         assert db.query(Transaction).filter(Transaction.description == "Retry coffee").count() == 1
     finally:
         db.close()
+
+
+def _row(day, tx_type, amount, **extra):
+    return {"date": date(2026, 3, day), "type": tx_type, "amount": Decimal(amount), "status": "posted",
+            "source": "statement", **extra}
+
+
+def test_imported_running_balance_accumulates_across_rows():
+    rows = [_row(1, "income", "1000.00"), _row(2, "expense", "200.00"), _row(3, "expense", "50.00")]
+
+    balances = main._imported_running_balances(rows, Decimal("500.00"))
+
+    assert balances == [Decimal("1500.00"), Decimal("1300.00"), Decimal("1250.00")]
+
+
+def test_imported_running_balance_handles_newest_first_statements():
+    rows = [_row(3, "expense", "50.00"), _row(2, "expense", "200.00"), _row(1, "income", "1000.00")]
+
+    balances = main._imported_running_balances(rows, Decimal("500.00"))
+
+    assert balances == [Decimal("1250.00"), Decimal("1300.00"), Decimal("1500.00")]
+
+
+def test_imported_running_balance_reanchors_on_bank_balance_and_skips_pending():
+    rows = [
+        _row(1, "expense", "100.00"),
+        _row(2, "expense", "10.00", running_balance=Decimal("2000.00")),
+        _row(3, "expense", "40.00", status="pending"),
+        _row(4, "transfer", "30.00"),
+        _row(5, "expense", "25.00"),
+    ]
+
+    balances = main._imported_running_balances(rows, Decimal("500.00"))
+
+    assert balances == [Decimal("400.00"), Decimal("2000.00"), None, None, Decimal("1975.00")]
+
+
+def test_imported_running_balance_without_prior_balance_waits_for_anchor():
+    rows = [_row(1, "expense", "100.00"), _row(2, "expense", "10.00", running_balance=Decimal("900.00")),
+            _row(3, "income", "50.00")]
+
+    assert main._imported_running_balances(rows, None) == [None, Decimal("900.00"), Decimal("950.00")]
+
+
+def test_statement_import_worker_carries_running_balance_between_rows(monkeypatch):
+    monkeypatch.setattr(main, "SessionLocal", TestSession)
+    db = TestSession()
+    try:
+        db.add(Transaction(
+            user_id=TEST_USER_ID, date=date(2026, 1, 1), type="income", amount=Decimal("500.00"),
+            category="Salary", description="Opening", source="statement", source_ref="opening",
+            running_balance=Decimal("500.00"),
+        ))
+        job = ImportJob(
+            user_id=TEST_USER_ID, status="pending", file_name="feb.csv", file_extension="csv",
+            file_content=b"Date,Description,Amount\n02/02/2026,Groceries run,-100.00\n03/02/2026,Pharmacy visit,-40.00\n",
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+    finally:
+        db.close()
+
+    asyncio.run(main._process_import_job(job_id))
+
+    db = TestSession()
+    try:
+        assert db.get(ImportJob, job_id).status == "done"
+        balances = {
+            tx.description: tx.running_balance
+            for tx in db.query(Transaction).filter(Transaction.description.in_(["Groceries run", "Pharmacy visit"]))
+        }
+        assert balances == {"Groceries run": Decimal("400.00"), "Pharmacy visit": Decimal("360.00")}
+    finally:
+        db.close()
