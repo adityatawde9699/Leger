@@ -10,6 +10,15 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from ..models import Transaction
 from .gst import compute_gst
 
+# Spreadsheet apps execute cells that start with these characters as formulas.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(value: str | None) -> str:
+    """Neutralise CSV formula injection in free text (bank/SMS descriptions, notes)."""
+    text = value or ""
+    return f"'{text}" if text.startswith(_FORMULA_PREFIXES) else text
+
 
 def export_csv(transactions: list[Transaction]) -> str:
     """Export transactions as CSV string."""
@@ -39,13 +48,13 @@ def export_csv(transactions: list[Transaction]) -> str:
                 tx.date.isoformat(),
                 tx.type,
                 getattr(tx, "status", "posted"),
-                tx.category,
+                _safe_cell(tx.category),
                 str(tx.amount),
-                tx.description,
-                tx.merchant_normalized or "",
-                tx.source,
-                tx.tags or "",
-                tx.notes or "",
+                _safe_cell(tx.description),
+                _safe_cell(tx.merchant_normalized),
+                _safe_cell(tx.source),
+                _safe_cell(tx.tags),
+                _safe_cell(tx.notes),
                 gst["gst_rate"],
                 str(gst["gst_amount"]),
                 gst["hsn_code"] or "",
