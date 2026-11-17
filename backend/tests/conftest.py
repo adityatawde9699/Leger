@@ -2,6 +2,29 @@
 Shared test fixtures — in-memory SQLite database and FastAPI test client.
 """
 
+import os
+
+# Force a safe, isolated configuration BEFORE any app module is imported. Settings
+# give real environment variables precedence over backend/.env, so a developer whose
+# .env points at production (ENVIRONMENT=production, a live DATABASE_URL, real AI keys)
+# can run the suite without failing startup validation, running bootstrap DDL against
+# that database, or calling paid AI providers.
+os.environ.update({
+    "ENVIRONMENT": "test",
+    "AUTH_PROVIDER": "dev",
+    "DATABASE_URL": "sqlite://",
+    "CORS_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173",
+    "RUN_DB_BOOTSTRAP": "false",
+    "UPSTASH_REDIS_REST_URL": "",
+    "UPSTASH_REDIS_REST_TOKEN": "",
+    "GROQ_API_KEY": "",
+    "GEMINI_API_KEY": "",
+    "CEREBRAS_API_KEY": "",
+    "OPENROUTER_API_KEY": "",
+    "MISTRAL_API_KEY": "",
+    "COHERE_API_KEY": "",
+})
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

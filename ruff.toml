@@ -15,3 +15,7 @@ ignore = [
 
 [lint.isort]
 known-first-party = ["app"]
+
+[lint.per-file-ignores]
+# conftest must set environment variables before importing the app.
+"backend/tests/conftest.py" = ["E402"]
