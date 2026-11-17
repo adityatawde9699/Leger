@@ -2189,7 +2189,13 @@ async def _process_import_job(job_id: str) -> None:
         worker_job = worker_db.get(ImportJob, job_id)
         if worker_job:
             worker_job.status = "failed"
-            worker_job.error_message = str(exc)[:500]
+            # Parser/validation errors describe the user's own file and are safe to show;
+            # anything else (database, provider, internal errors) is logged, not returned.
+            if isinstance(exc, ValueError):
+                worker_job.error_message = str(exc)[:500]
+            else:
+                logger.exception("import.worker_failed job=%s", job_id)
+                worker_job.error_message = "Import failed because of a server error. Please retry the import."
             worker_db.commit()
             record_telemetry(
                 "import.completed",
@@ -2872,9 +2878,9 @@ async def advisor_stream(
             reply_text, _contract = ground_advisor_reply(raw_reply)
             yield f"data: {json.dumps(advisor_meta)}\n\n"
             yield f"data: {json.dumps(reply_text)}\n\n"
-        except Exception as e:
+        except Exception:
             logger.exception("advisor.stream.error user=%s", user.id)
-            yield f"data: [ERROR] {str(e)[:100]}\n\n"
+            yield "data: [ERROR] The advisor could not answer right now. Please try again.\n\n"
         finally:
             # Persist assistant reply
             if full_reply:

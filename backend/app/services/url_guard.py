@@ -20,8 +20,15 @@ class UnsafeURLError(ValueError):
 
 
 def _ip_is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # IPv4-mapped IPv6 (::ffff:10.0.0.1) must be judged by the IPv4 address it carries.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _ip_is_blocked(mapped)
     return (
-        ip.is_private
+        # not is_global also covers ranges such as carrier-grade NAT (100.64.0.0/10)
+        # and benchmarking/documentation nets that is_private misses.
+        not ip.is_global
+        or ip.is_private
         or ip.is_loopback
         or ip.is_link_local  # covers 169.254.0.0/16 (cloud metadata)
         or ip.is_reserved
@@ -66,9 +73,9 @@ def validate_webhook_url(url: str) -> list[str]:
         try:
             ip = ipaddress.ip_address(addr)
         except ValueError as e:
-            raise UnsafeURLError(f"invalid resolved address: {addr}") from e
+            raise UnsafeURLError("host resolved to an invalid address") from e
         if _ip_is_blocked(ip):
-            raise UnsafeURLError(f"host resolves to a non-public address ({addr})")
+            raise UnsafeURLError("host resolves to a non-public address")
     return sorted(addrs)
 
 

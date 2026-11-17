@@ -256,3 +256,32 @@ def test_statement_import_worker_carries_running_balance_between_rows(monkeypatc
         assert balances == {"Groceries run": Decimal("400.00"), "Pharmacy visit": Decimal("360.00")}
     finally:
         db.close()
+
+
+def test_import_worker_hides_internal_error_details(monkeypatch):
+    monkeypatch.setattr(main, "SessionLocal", TestSession)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("psycopg.OperationalError: connection to server at 10.1.2.3 failed")
+
+    monkeypatch.setattr(main, "parse_csv", explode)
+    db = TestSession()
+    try:
+        job = ImportJob(user_id=TEST_USER_ID, status="pending", file_name="x.csv", file_extension="csv",
+                        file_content=b"Date,Description,Amount\n")
+        db.add(job)
+        db.commit()
+        job_id = job.id
+    finally:
+        db.close()
+
+    asyncio.run(main._process_import_job(job_id))
+
+    db = TestSession()
+    try:
+        job = db.get(ImportJob, job_id)
+        assert job.status == "failed"
+        assert "10.1.2.3" not in job.error_message
+        assert "server error" in job.error_message
+    finally:
+        db.close()

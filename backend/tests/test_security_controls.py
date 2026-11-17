@@ -255,11 +255,24 @@ def test_webhook_delivery_uses_validated_ip_without_second_dns_lookup(monkeypatc
     assert json.loads(body)["timestamp"].encode() in headers
 
 
-@pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fc00::1"])
+@pytest.mark.parametrize("address", [
+    "127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fc00::1",
+    "100.64.0.1",       # carrier-grade NAT, missed by is_private
+    "198.18.0.1",       # benchmarking range
+    "::ffff:10.0.0.1",  # IPv4-mapped private address
+])
 def test_webhook_rejects_private_dns_answers(monkeypatch, address):
     monkeypatch.setattr(url_guard.socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, (address, 443))])
-    with pytest.raises(url_guard.UnsafeURLError):
+    with pytest.raises(url_guard.UnsafeURLError) as excinfo:
         url_guard.validate_webhook_url("https://example.com/hook")
+    # The resolved internal address must not be echoed back (internal DNS enumeration).
+    assert address not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("address", ["93.184.215.14", "2606:4700::1111", "::ffff:8.8.8.8"])
+def test_webhook_allows_public_dns_answers(monkeypatch, address):
+    monkeypatch.setattr(url_guard.socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, (address, 443))])
+    assert url_guard.validate_webhook_url("https://example.com/hook") == [address]
 
 
 def test_webhook_rejects_unusual_port():
