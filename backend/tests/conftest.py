@@ -49,7 +49,8 @@ else:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-TestSession = sessionmaker(bind=TEST_ENGINE)
+# Same session options as production (app.db.SessionLocal), so tests see the same flush behaviour.
+TestSession = sessionmaker(bind=TEST_ENGINE, autoflush=False, autocommit=False)
 
 # Stable test identity
 TEST_USER_ID = "test-user-1"

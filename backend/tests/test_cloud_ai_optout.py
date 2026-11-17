@@ -44,7 +44,8 @@ def _set_cloud_ai(enabled: bool) -> None:
 
 def _unmatched_description() -> str:
     # Unique per test so the process-wide category cache cannot answer it.
-    return f"zqx ref {uuid4().hex}"
+    # Digits only: a random hex suffix can spell a rule keyword such as "cafe" or "fee".
+    return f"zqx ref {uuid4().int}"
 
 
 def test_categorize_endpoints_skip_llm_when_cloud_ai_disabled(client, provider_calls):

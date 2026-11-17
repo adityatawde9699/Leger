@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -93,6 +94,9 @@ class Account(Base):
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="account")
 
 
+SOURCE_REF_UNIQUE_WHERE = "source_ref IS NOT NULL AND source_ref NOT LIKE 'split:%'"
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -126,6 +130,13 @@ class Transaction(Base):
     __table_args__ = (
         Index("ix_transactions_user_date", "user_id", "date"),
         Index("ix_transactions_user_category", "user_id", "category"),
+        # One transaction per external identity (statement row fingerprint, SMS hash,
+        # offline request id), so concurrent or repeated imports cannot double-count.
+        # Lines of one split transaction intentionally share their "split:<id>" group ref.
+        Index(
+            "uq_transactions_user_source_ref", "user_id", "source", "source_ref", unique=True,
+            postgresql_where=text(SOURCE_REF_UNIQUE_WHERE), sqlite_where=text(SOURCE_REF_UNIQUE_WHERE),
+        ),
     )
 
 

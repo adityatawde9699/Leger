@@ -16,13 +16,14 @@ from zipfile import BadZipFile, ZipFile
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import case, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .auth import SESSION_COOKIE, SESSION_HOURS, _verify_token, create_session, get_current_user, require_recent_auth
@@ -263,6 +264,14 @@ app = FastAPI(title="Ledger API", version="1.4.0", docs_url=None if settings.env
               openapi_url=None if settings.environment == "production" else "/openapi.json")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(IntegrityError)
+async def _integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+    # A unique or foreign-key constraint rejected the write (for example a duplicate
+    # source_ref). Report a conflict instead of a 500, without echoing database details.
+    logger.warning("db.integrity_error path=%s error=%s", request.url.path, type(exc.orig).__name__)
+    return JSONResponse(status_code=409, content={"detail": "This conflicts with an existing record"})
 
 
 @app.middleware("http")
@@ -1202,49 +1211,62 @@ def list_transactions(
     )
 
 
+def _existing_offline_transaction(db: Session, user_id: str, payload: TransactionIn) -> Transaction | None:
+    """The transaction an offline draft already created, so replays stay idempotent."""
+    existing = db.query(Transaction).filter(
+        Transaction.user_id == user_id,
+        Transaction.source == payload.source,
+        Transaction.source_ref == payload.source_ref,
+    ).first()
+    if existing and any((
+        existing.date != payload.date,
+        existing.type != payload.type,
+        existing.status != payload.status,
+        existing.category != payload.category,
+        existing.amount != payload.amount,
+        existing.description != payload.description,
+        existing.account_id != payload.account_id,
+    )):
+        raise HTTPException(status_code=409, detail="Offline request ID was already used for a different transaction")
+    return existing
+
+
 @app.post("/transactions", response_model=TransactionOut, status_code=201)
 def create_transaction(
     payload: TransactionIn,
     user: UserContext = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if payload.source_ref and payload.source_ref.startswith("offline:"):
-        existing = db.query(Transaction).filter(
-            Transaction.user_id == user.id, Transaction.source_ref == payload.source_ref
-        ).first()
-        if existing:
-            if any((
-                existing.date != payload.date,
-                existing.type != payload.type,
-                existing.status != payload.status,
-                existing.category != payload.category,
-                existing.amount != payload.amount,
-                existing.description != payload.description,
-                existing.account_id != payload.account_id,
-                existing.source != payload.source,
-            )):
-                raise HTTPException(status_code=409, detail="Offline request ID was already used for a different transaction")
-            return existing
+    offline = bool(payload.source_ref and payload.source_ref.startswith("offline:"))
+    if offline and (existing := _existing_offline_transaction(db, user.id, payload)):
+        return existing
     if payload.account_id:
         account = db.get(Account, payload.account_id)
         if not account or account.user_id != user.id or not account.is_active:
             raise HTTPException(status_code=400, detail="Account is not available for this user")
     tx = Transaction(user_id=user.id, **payload.model_dump())
     tx.merchant_normalized = _resolve_merchant_alias(db, user.id, tx.description, tx.merchant_normalized)
-    db.add(tx)
-    db.flush()  # assign tx.id before backfill query
+    try:
+        db.add(tx)
+        db.flush()  # assign tx.id before backfill query
 
-    # Backfill running_balance so the DB is always the source of truth.
-    # running_balance = (last known balance) ± this transaction's amount.
-    if tx.running_balance is None and tx.source != "cash":
-        prior_balance = _get_balance_at(db, user.id, as_of_date=None, exclude_id=tx.id)
-        if prior_balance is not None:
-            if tx.type in ("income", "refund", "reimbursement") and tx.status == "posted":
-                tx.running_balance = prior_balance + tx.amount
-            elif tx.type == "expense" and tx.status == "posted":
-                tx.running_balance = prior_balance - tx.amount
+        # Backfill running_balance so the DB is always the source of truth.
+        # running_balance = (last known balance) ± this transaction's amount.
+        if tx.running_balance is None and tx.source != "cash":
+            prior_balance = _get_balance_at(db, user.id, as_of_date=None, exclude_id=tx.id)
+            if prior_balance is not None:
+                if tx.type in ("income", "refund", "reimbursement") and tx.status == "posted":
+                    tx.running_balance = prior_balance + tx.amount
+                elif tx.type == "expense" and tx.status == "posted":
+                    tx.running_balance = prior_balance - tx.amount
 
-    db.commit()
+        db.commit()
+    except IntegrityError:
+        # A concurrent replay of the same offline entry won the unique index race.
+        db.rollback()
+        if offline and (existing := _existing_offline_transaction(db, user.id, payload)):
+            return existing
+        raise
     db.refresh(tx)
     logger.info("transaction.created user=%s id=%s", user.id, tx.id)
     return tx
@@ -1628,6 +1650,41 @@ def get_summary(
 
 
 # ── SMS Import ────────────────────────────────────────────────────────────────
+def _save_new_sms_transactions(
+    db: Session, user_id: str, messages: list[str], device_id: str | None = None,
+) -> list[Transaction]:
+    """Parse and store SMS messages, skipping any already imported (or repeated in this batch).
+
+    Each insert runs in a savepoint, so a concurrent request that stores the same
+    message first only skips that message instead of failing the whole batch.
+    """
+    saved: list[Transaction] = []
+    seen: set[str] = set()
+    for message in messages:
+        parsed = parse_sms(message)
+        if not parsed or parsed["source_ref"] in seen:
+            continue
+        seen.add(parsed["source_ref"])
+        if device_id:
+            parsed["notes"] = f"SMS bridge device: {device_id}"
+        duplicate = db.query(Transaction.id).filter(
+            Transaction.user_id == user_id,
+            Transaction.source == "sms",
+            Transaction.source_ref == parsed["source_ref"],
+        ).first()
+        if duplicate:
+            continue
+        tx = Transaction(user_id=user_id, **parsed)
+        try:
+            with db.begin_nested():
+                db.add(tx)
+        except IntegrityError:
+            continue
+        saved.append(tx)
+    db.commit()
+    return saved
+
+
 @app.post("/imports/sms", response_model=list[TransactionOut])
 @limiter.limit(settings.import_rate_limit)
 async def import_sms(
@@ -1637,26 +1694,7 @@ async def import_sms(
     db: Session = Depends(get_db),
 ):
     saved = []
-    pending_txs: list[Transaction] = []
-    for message in payload.messages:
-        parsed = parse_sms(message)
-        if not parsed:
-            continue
-        duplicate = (
-            db.query(Transaction)
-            .filter(
-                Transaction.user_id == user.id,
-                Transaction.source == "sms",
-                Transaction.source_ref == parsed["source_ref"],
-            )
-            .first()
-        )
-        if duplicate:
-            continue
-        tx = Transaction(user_id=user.id, **parsed)
-        db.add(tx)
-        pending_txs.append(tx)
-    db.commit()
+    pending_txs = _save_new_sms_transactions(db, user.id, payload.messages)
 
     # ── AI Categorization upgrade pass ────────────────────────────────────────
     # parse_sms uses keyword rules — upgrade with the full 4-tier pipeline.
@@ -1695,28 +1733,7 @@ async def import_sms_webhook(
 ):
     """Receive SMS payloads from an Android companion bridge and reuse the SMS parser."""
     saved = []
-    pending_txs: list[Transaction] = []
-    for message in payload.messages:
-        parsed = parse_sms(message)
-        if not parsed:
-            continue
-        if payload.device_id:
-            parsed["notes"] = f"SMS bridge device: {payload.device_id}"
-        duplicate = (
-            db.query(Transaction)
-            .filter(
-                Transaction.user_id == user.id,
-                Transaction.source == "sms",
-                Transaction.source_ref == parsed["source_ref"],
-            )
-            .first()
-        )
-        if duplicate:
-            continue
-        tx = Transaction(user_id=user.id, **parsed)
-        db.add(tx)
-        pending_txs.append(tx)
-    db.commit()
+    pending_txs = _save_new_sms_transactions(db, user.id, payload.messages, device_id=payload.device_id)
 
     # ── AI Categorization upgrade pass ────────────────────────────────────────
     if pending_txs:
@@ -1882,6 +1899,32 @@ async def preview_statement_import(
     return result
 
 
+def _insert_import_batch(db: Session, batch: list[Transaction]) -> int:
+    """Insert imported rows and return how many were stored.
+
+    If another import of the same statement stored some of these rows first, the
+    unique (user, source, source_ref) index rejects the batch; retry it row by row
+    so only the conflicting rows are skipped.
+    """
+    if not batch:
+        return 0
+    try:
+        with db.begin_nested():
+            db.add_all(batch)
+        return len(batch)
+    except IntegrityError:
+        pass
+    saved = 0
+    for tx in batch:
+        try:
+            with db.begin_nested():
+                db.add(tx)
+            saved += 1
+        except IntegrityError:
+            continue
+    return saved
+
+
 async def _process_import_job(job_id: str) -> None:
     """Process one stored import job using a fresh session.
 
@@ -2019,10 +2062,11 @@ async def _process_import_job(job_id: str) -> None:
         ))
         saved_count = 0
         seen: set[str] = set()
-        pending = 0
+        batch: list[Transaction] = []
         for validated, merchant_norm, ai_confidence, fingerprint in prepared:
             cancel_requested = worker_db.query(ImportJob.cancel_requested).filter(ImportJob.id == job_id).scalar()
             if cancel_requested:
+                saved_count += _insert_import_batch(worker_db, batch)
                 worker_job.status = "cancelled"
                 worker_job.cancel_requested = True
                 worker_job.row_count = saved_count
@@ -2043,13 +2087,13 @@ async def _process_import_job(job_id: str) -> None:
                 new_tx.confidence = ai_confidence
             if new_tx.running_balance is None:
                 new_tx.running_balance = balance_by_fp.get(fingerprint)
-            worker_db.add(new_tx)
-            saved_count += 1
-            pending += 1
+            batch.append(new_tx)
             worker_job.processed_rows += 1
-            if pending >= 100:
+            if len(batch) >= 100:
+                saved_count += _insert_import_batch(worker_db, batch)
+                batch = []
                 worker_db.commit()
-                pending = 0
+        saved_count += _insert_import_batch(worker_db, batch)
 
         worker_job.status = "failed" if not rows else "done"
         worker_job.processed_rows = len(rows)

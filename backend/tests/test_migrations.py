@@ -1,5 +1,7 @@
 """Alembic migrations must produce exactly the schema the models declare."""
 
+from datetime import date, datetime
+
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
@@ -63,3 +65,27 @@ def test_baseline_upgrades_a_legacy_database_in_place(engine):
         assert not row.cloud_ai_enabled
         assert row.currency_preference == "INR"
 
+
+def test_duplicate_source_refs_are_retagged_not_deleted(engine):
+    from alembic import command
+
+    from app.migrate import alembic_config
+
+    with engine.begin() as conn:
+        command.upgrade(alembic_config(conn), "0001")
+        conn.execute(text("INSERT INTO users (id, currency_preference, region, pay_cycle, risk_comfort, "
+                          "household_mode, recurring_tolerance, onboarding_completed, cloud_ai_enabled, "
+                          "insight_frequency, quiet_hours_start, quiet_hours_end, proactive_daily_cap, created_at) "
+                          "VALUES ('u1', 'INR', 'IN', 'monthly', 'not_sure', 'individual', 'standard', false, false, "
+                          "'daily', 22, 7, 3, CURRENT_TIMESTAMP)"))
+        for tx_id, ref, minute in (("a", "fp1", 1), ("b", "fp1", 2), ("c", "split:g", 3), ("d", "split:g", 4)):
+            conn.execute(text(
+                "INSERT INTO transactions (id, user_id, date, type, status, category, amount, description, "
+                "source, source_ref, created_at) VALUES (:id, 'u1', :day, 'expense', 'posted', 'Food', "
+                "10, 'x', 'statement', :ref, :created)"
+            ), {"id": tx_id, "ref": ref, "day": date(2026, 3, 1), "created": datetime(2026, 3, 1, 10, minute)})
+    with engine.begin() as conn:
+        upgrade_schema(conn)
+    with engine.connect() as conn:
+        refs = dict(conn.execute(text("SELECT id, source_ref FROM transactions ORDER BY id")).all())
+    assert refs == {"a": "fp1", "b": "dup:b", "c": "split:g", "d": "split:g"}
