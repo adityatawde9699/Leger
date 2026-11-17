@@ -1,4 +1,4 @@
-from app.main import TTLCache
+from app.cache import TTLCache
 from app.services.shared_cache import SharedTTLCache
 
 

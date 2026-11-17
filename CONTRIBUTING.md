@@ -124,7 +124,7 @@ cd frontend && npm run build
 1. Create service in `backend/app/services/your_service.py`
 2. Add Pydantic schemas in `schemas.py`
 3. Add SQLAlchemy models in `models.py` (if new tables)
-4. Add endpoint in `main.py`
+4. Add the endpoint to the matching router in `app/routers/` (a new area gets its own module, included in `app/main.py`)
 5. Add audit logging via `log_event()` for data mutations
 6. Write tests in `backend/tests/test_your_service.py`
 

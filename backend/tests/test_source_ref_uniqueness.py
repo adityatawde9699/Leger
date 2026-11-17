@@ -6,7 +6,8 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-import app.main as main
+import app.routers.transactions as transactions_router
+import app.workers.imports as worker
 from app.models import Transaction, User
 
 from .conftest import AUTH_HEADER, TEST_USER_ID, TestSession
@@ -52,14 +53,14 @@ def test_offline_replay_that_loses_the_race_returns_the_stored_transaction(clien
     first = client.post("/transactions", json=payload, headers=AUTH_HEADER).json()
 
     # Simulate the race: the pre-insert lookup misses the row a concurrent request stored.
-    real_lookup = main._existing_offline_transaction
+    real_lookup = transactions_router._existing_offline_transaction
     calls = []
 
     def lookup_misses_first_time(db, user_id, incoming):
         calls.append(1)
         return None if len(calls) == 1 else real_lookup(db, user_id, incoming)
 
-    monkeypatch.setattr(main, "_existing_offline_transaction", lookup_misses_first_time)
+    monkeypatch.setattr(transactions_router, "_existing_offline_transaction", lookup_misses_first_time)
     replay = client.post("/transactions", json=payload, headers=AUTH_HEADER)
 
     assert replay.status_code == 201
@@ -86,7 +87,7 @@ def test_import_batch_skips_only_rows_another_import_already_stored():
     with TestSession() as db:
         db.add(_tx("fp-2"))
         db.commit()
-        saved = main._insert_import_batch(db, [_tx("fp-1"), _tx("fp-2"), _tx("fp-3")])
+        saved = worker._insert_import_batch(db, [_tx("fp-1"), _tx("fp-2"), _tx("fp-3")])
         db.commit()
 
         assert saved == 2

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from app.main import _user_cache_version
+from app.cache import _user_cache_version
 from app.models import AuditLog
 
 from .conftest import TEST_USER_ID, TestSession

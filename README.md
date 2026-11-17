@@ -204,7 +204,12 @@ ledger/
 │   └── ISSUE_TEMPLATE/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py               # FastAPI app + all routes
+│   │   ├── main.py               # App assembly: middleware, routers, lifespan
+│   │   ├── routers/              # One APIRouter per area (transactions, imports, advisor, …)
+│   │   ├── workers/              # Import job worker and maintenance loop
+│   │   ├── helpers.py            # Request helpers shared by routers and workers
+│   │   ├── rate_limit.py         # Per-route and shared Redis rate limits
+│   │   ├── migrate.py            # Alembic upgrade entry point
 │   │   ├── models.py             # SQLAlchemy models (10 tables)
 │   │   ├── schemas.py            # Pydantic request/response models
 │   │   ├── config.py             # Settings + production validation

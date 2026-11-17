@@ -13,10 +13,11 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app import auth
-from app import main as app_main
 from app.config import Settings, settings
-from app.main import _validate_statement_content
 from app.models import AppSession
+from app.routers import auth as auth_router
+from app.routers import receipts as receipts_router
+from app.routers.imports import _validate_statement_content
 from app.services.ai_router import AIRouter
 from app.services.backups import decrypt_backup, encrypt_backup
 from tests.conftest import TestSession, fastapi_app
@@ -158,7 +159,7 @@ def test_receipt_scan_does_not_send_opted_out_image(client, monkeypatch):
     async def provider_must_not_run(*args):
         raise AssertionError("Receipt was sent to cloud AI")
 
-    monkeypatch.setattr(app_main, "parse_receipt_image", provider_must_not_run)
+    monkeypatch.setattr(receipts_router, "parse_receipt_image", provider_must_not_run)
     image = BytesIO()
     Image.new("RGB", (1, 1)).save(image, format="PNG")
     response = client.post("/receipts/scan", files={"file": ("receipt.png", image.getvalue(), "image/png")})
@@ -207,7 +208,7 @@ def test_ai_router_redacts_before_provider(monkeypatch):
 
 def test_cookie_session_origin_logout_and_headers(monkeypatch):
     monkeypatch.setattr(settings, "auth_provider", "google")
-    monkeypatch.setattr(app_main, "_verify_token", lambda _: auth.UserContext(id="test-user-1", email="test@ledger.local"))
+    monkeypatch.setattr(auth_router, "_verify_token", lambda _: auth.UserContext(id="test-user-1", email="test@ledger.local"))
     original = fastapi_app.dependency_overrides.pop(auth.get_current_user)
     try:
         with TestClient(fastapi_app) as client:
@@ -244,7 +245,8 @@ def test_rate_limit_identity_keys_signed_in_users_by_session_not_ip():
     and a spoofed X-Forwarded-For must not mint a new bucket for the same session."""
     from starlette.requests import Request as StarletteRequest
 
-    from app.main import SESSION_COOKIE, _rate_limit_identity
+    from app.auth import SESSION_COOKIE
+    from app.rate_limit import _rate_limit_identity
 
     def request(ip: str, cookie: str | None = None) -> StarletteRequest:
         headers = [(b"cookie", f"{SESSION_COOKIE}={cookie}".encode())] if cookie else []

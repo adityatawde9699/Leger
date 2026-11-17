@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-from app.main import _apply_import_review_overrides, _statement_row_fingerprint
+from app.helpers import _apply_import_review_overrides, _statement_row_fingerprint
 
 
 def test_import_review_overrides_win_over_inference_and_reject_unknown_type():

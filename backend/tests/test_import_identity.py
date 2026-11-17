@@ -5,8 +5,10 @@ from decimal import Decimal
 
 import pytest
 
-import app.main as main
-from app.main import _statement_row_fingerprint
+import app.routers.imports as imports_router
+import app.workers.imports as worker
+import app.workers.maintenance as maintenance
+from app.helpers import _statement_row_fingerprint
 from app.models import ImportJob, Transaction
 
 from .conftest import AUTH_HEADER, TEST_USER_ID, TestSession
@@ -25,7 +27,7 @@ def scheduled_imports(monkeypatch):
         asyncio.get_running_loop()  # endpoints must schedule from inside the event loop
         scheduled.append(job_id)
 
-    monkeypatch.setattr(main, "_schedule_import", schedule)
+    monkeypatch.setattr(imports_router, "_schedule_import", schedule)
     return scheduled
 
 
@@ -123,8 +125,10 @@ def test_statement_preview_review_commit_persists_only_included_rows(client, mon
             for row in rows
         ]
 
-    monkeypatch.setattr(main, "SessionLocal", TestSession)
-    monkeypatch.setattr(main, "categorize_batch", categorize)
+    monkeypatch.setattr(worker, "SessionLocal", TestSession)
+    # Categorisation runs in the preview route and again in the worker.
+    monkeypatch.setattr(imports_router, "categorize_batch", categorize)
+    monkeypatch.setattr(worker, "categorize_batch", categorize)
     content = b"Date,Description,Amount\n02/01/2026,Coffee,-100.00\n03/01/2026,Groceries,-250.00\n"
 
     preview = client.post(
@@ -147,7 +151,7 @@ def test_statement_preview_review_commit_persists_only_included_rows(client, mon
     job_id = response.json()["id"]
 
     assert scheduled_imports == [job_id]
-    asyncio.run(main._process_import_job(job_id))
+    asyncio.run(worker._process_import_job(job_id))
 
     db = TestSession()
     try:
@@ -166,7 +170,7 @@ def test_statement_preview_review_commit_persists_only_included_rows(client, mon
 
 def test_retry_failed_import_requeues_and_processes(client, monkeypatch, scheduled_imports):
     """Retry used to raise RuntimeError (no event loop in a sync route) and return 500."""
-    monkeypatch.setattr(main, "SessionLocal", TestSession)
+    monkeypatch.setattr(worker, "SessionLocal", TestSession)
     db = TestSession()
     try:
         job = ImportJob(
@@ -187,7 +191,7 @@ def test_retry_failed_import_requeues_and_processes(client, monkeypatch, schedul
     db = TestSession()
     try:
         assert scheduled_imports == [job_id]
-        asyncio.run(main._process_import_job(job_id))
+        asyncio.run(worker._process_import_job(job_id))
         job = db.get(ImportJob, job_id)
         assert job.status == "done"
         assert db.query(Transaction).filter(Transaction.description == "Retry coffee").count() == 1
@@ -203,7 +207,7 @@ def _row(day, tx_type, amount, **extra):
 def test_imported_running_balance_accumulates_across_rows():
     rows = [_row(1, "income", "1000.00"), _row(2, "expense", "200.00"), _row(3, "expense", "50.00")]
 
-    balances = main._imported_running_balances(rows, Decimal("500.00"))
+    balances = worker._imported_running_balances(rows, Decimal("500.00"))
 
     assert balances == [Decimal("1500.00"), Decimal("1300.00"), Decimal("1250.00")]
 
@@ -211,7 +215,7 @@ def test_imported_running_balance_accumulates_across_rows():
 def test_imported_running_balance_handles_newest_first_statements():
     rows = [_row(3, "expense", "50.00"), _row(2, "expense", "200.00"), _row(1, "income", "1000.00")]
 
-    balances = main._imported_running_balances(rows, Decimal("500.00"))
+    balances = worker._imported_running_balances(rows, Decimal("500.00"))
 
     assert balances == [Decimal("1250.00"), Decimal("1300.00"), Decimal("1500.00")]
 
@@ -225,7 +229,7 @@ def test_imported_running_balance_reanchors_on_bank_balance_and_skips_pending():
         _row(5, "expense", "25.00"),
     ]
 
-    balances = main._imported_running_balances(rows, Decimal("500.00"))
+    balances = worker._imported_running_balances(rows, Decimal("500.00"))
 
     assert balances == [Decimal("400.00"), Decimal("2000.00"), None, None, Decimal("1975.00")]
 
@@ -234,11 +238,11 @@ def test_imported_running_balance_without_prior_balance_waits_for_anchor():
     rows = [_row(1, "expense", "100.00"), _row(2, "expense", "10.00", running_balance=Decimal("900.00")),
             _row(3, "income", "50.00")]
 
-    assert main._imported_running_balances(rows, None) == [None, Decimal("900.00"), Decimal("950.00")]
+    assert worker._imported_running_balances(rows, None) == [None, Decimal("900.00"), Decimal("950.00")]
 
 
 def test_statement_import_worker_carries_running_balance_between_rows(monkeypatch):
-    monkeypatch.setattr(main, "SessionLocal", TestSession)
+    monkeypatch.setattr(worker, "SessionLocal", TestSession)
     db = TestSession()
     try:
         db.add(Transaction(
@@ -256,7 +260,7 @@ def test_statement_import_worker_carries_running_balance_between_rows(monkeypatc
     finally:
         db.close()
 
-    asyncio.run(main._process_import_job(job_id))
+    asyncio.run(worker._process_import_job(job_id))
 
     db = TestSession()
     try:
@@ -271,12 +275,12 @@ def test_statement_import_worker_carries_running_balance_between_rows(monkeypatc
 
 
 def test_import_worker_hides_internal_error_details(monkeypatch):
-    monkeypatch.setattr(main, "SessionLocal", TestSession)
+    monkeypatch.setattr(worker, "SessionLocal", TestSession)
 
     def explode(*args, **kwargs):
         raise RuntimeError("psycopg.OperationalError: connection to server at 10.1.2.3 failed")
 
-    monkeypatch.setattr(main, "parse_csv", explode)
+    monkeypatch.setattr(worker, "parse_csv", explode)
     db = TestSession()
     try:
         job = ImportJob(user_id=TEST_USER_ID, status="pending", file_name="x.csv", file_extension="csv",
@@ -287,7 +291,7 @@ def test_import_worker_hides_internal_error_details(monkeypatch):
     finally:
         db.close()
 
-    asyncio.run(main._process_import_job(job_id))
+    asyncio.run(worker._process_import_job(job_id))
 
     db = TestSession()
     try:
@@ -316,7 +320,7 @@ def test_stale_failed_import_payloads_are_purged_after_retention():
             db.add(job)
         db.commit()
 
-        assert main._purge_stale_import_payloads(db, now=now) == 2
+        assert maintenance._purge_stale_import_payloads(db, now=now) == 2
 
         remaining = {job.id: job.file_content is not None for job in db.query(ImportJob).all()}
         assert remaining == {"old-failed": False, "old-cancelled": False, "recent-failed": True, "old-pending": True}
