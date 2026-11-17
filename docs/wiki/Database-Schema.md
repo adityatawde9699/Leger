@@ -151,18 +151,24 @@
 
 ## Migrations
 
-```bash
-# Initialize Alembic (first time)
-cd backend
-pip install alembic
-alembic init alembic
+Schema changes are Alembic revisions in `backend/migrations/versions`. Production
+applies them on container start (`python -m app.migrate` in `entrypoint.sh`); local
+development applies them on app startup unless `RUN_DB_BOOTSTRAP=false`.
 
-# Generate migration from model changes
+```bash
+cd backend
+
+# After changing app/models.py, generate a revision and review it by hand
 alembic revision --autogenerate -m "add portfolios and holdings"
 
-# Apply migrations
+# Apply migrations (uses DATABASE_URL from settings)
 alembic upgrade head
 
-# Rollback one version
+# Roll back one revision (the 0001 baseline cannot be downgraded)
 alembic downgrade -1
 ```
+
+`0001_baseline` is idempotent: it creates whatever tables, columns and indexes are
+missing, so databases created before Alembic was adopted upgrade without a manual
+`alembic stamp`. `tests/test_migrations.py` fails if the migrations and the models
+ever describe different schemas.

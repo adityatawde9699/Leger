@@ -137,9 +137,9 @@ cd frontend && npm run build
 
 ## Database Changes
 
-- Always create an Alembic migration: `alembic revision --autogenerate -m "description"`
+- Always create an Alembic migration (from `backend/`): `alembic revision --autogenerate -m "description"`, then review the generated file
 - Ensure `downgrade()` is functional
-- Test migration on a fresh DB before submitting PR
+- `tests/test_migrations.py` checks that migrations reproduce the models' schema on SQLite and PostgreSQL
 
 ## Security
 

@@ -63,8 +63,9 @@ npm run build
 ```
 
 ### Database
+The Docker entrypoint applies migrations automatically. To run them by hand:
 ```bash
-alembic upgrade head
+cd backend && alembic upgrade head
 ```
 
 ### Daily Backups

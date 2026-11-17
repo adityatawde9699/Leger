@@ -22,12 +22,13 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy import case, func, inspect, or_, text
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from .auth import SESSION_COOKIE, SESSION_HOURS, _verify_token, create_session, get_current_user, require_recent_auth
 from .config import settings
-from .db import Base, SessionLocal, engine, get_db
+from .db import SessionLocal, get_db
+from .migrate import run_migrations
 from .models import (
     Account,
     AIConversation,
@@ -158,7 +159,7 @@ from .services.telemetry import record_telemetry
 from .services.upstash_redis import get_redis_client
 from .services.url_guard import UnsafeURLError, validate_webhook_url
 from .services.webhook_dispatcher import _deliver
-from .services.webhook_secrets import encrypt_secret, migrate_plaintext_secrets
+from .services.webhook_secrets import encrypt_secret
 
 
 # ── Tiered TTL Cache (L1: in-memory with TTL) ─────────────────────────────────
@@ -234,131 +235,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ledger.api")
 
-# ── Database bootstrap ────────────────────────────────────────────────────────
-# NOTE: In production, use `alembic upgrade head` instead. entrypoint.sh runs the
-# same DDL on container start, so set RUN_DB_BOOTSTRAP=false in production to skip
-# these redundant inspector round-trips on every cold start.
+# ── Database schema ───────────────────────────────────────────────────────────
+# Schema changes are Alembic revisions in backend/migrations. Production applies them
+# in entrypoint.sh (`python -m app.migrate`) and sets RUN_DB_BOOTSTRAP=false; local
+# development applies them here on startup.
 if settings.run_db_bootstrap:
-    Base.metadata.create_all(bind=engine)
-    if engine.dialect.name == "postgresql":
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE webhooks ALTER COLUMN secret TYPE TEXT"))
-    with SessionLocal() as migration_db:
-        migrate_plaintext_secrets(migration_db)
-
-    # Ad-hoc migration: Ensure avatar_url exists since Alembic is not configured
-    try:
-        inspector = inspect(engine)
-        if inspector.has_table("app_sessions"):
-            session_columns = [col["name"] for col in inspector.get_columns("app_sessions")]
-            if "reauthed_at" not in session_columns:
-                with engine.begin() as conn:
-                    conn.execute(text("ALTER TABLE app_sessions ADD COLUMN reauthed_at TIMESTAMP"))
-                    conn.execute(text("UPDATE app_sessions SET reauthed_at = created_at WHERE reauthed_at IS NULL"))
-        if inspector.has_table("users"):
-            columns = [col["name"] for col in inspector.get_columns("users")]
-            with engine.begin() as conn:
-                if "avatar_url" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN avatar_url TEXT"))
-                    logger.info("Migrated: Added avatar_url to users table.")
-                if "region" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN region VARCHAR(16) NOT NULL DEFAULT 'IN'"))
-                    logger.info("Migrated: Added users.region.")
-                if "income_pattern" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN income_pattern VARCHAR(16)"))
-                    logger.info("Migrated: Added users.income_pattern.")
-                if "pay_cycle" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN pay_cycle VARCHAR(16) NOT NULL DEFAULT 'monthly'"))
-                    logger.info("Migrated: Added users.pay_cycle.")
-                if "risk_comfort" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN risk_comfort VARCHAR(16) NOT NULL DEFAULT 'not_sure'"))
-                    logger.info("Migrated: Added users.risk_comfort.")
-                if "household_mode" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN household_mode VARCHAR(16) NOT NULL DEFAULT 'individual'"))
-                    logger.info("Migrated: Added users.household_mode.")
-                if "recurring_tolerance" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN recurring_tolerance VARCHAR(16) NOT NULL DEFAULT 'standard'"))
-                    logger.info("Migrated: Added users.recurring_tolerance.")
-                if "onboarding_completed" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE"))
-                    logger.info("Migrated: Added users.onboarding_completed.")
-                if "cloud_ai_enabled" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN cloud_ai_enabled BOOLEAN NOT NULL DEFAULT TRUE"))
-                    logger.info("Migrated: Added users.cloud_ai_enabled.")
-                if "insight_frequency" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN insight_frequency VARCHAR(16) NOT NULL DEFAULT 'daily'"))
-                    logger.info("Migrated: Added users.insight_frequency.")
-                if "quiet_hours_start" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN quiet_hours_start INTEGER NOT NULL DEFAULT 22"))
-                if "quiet_hours_end" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN quiet_hours_end INTEGER NOT NULL DEFAULT 7"))
-                if "proactive_daily_cap" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN proactive_daily_cap INTEGER NOT NULL DEFAULT 3"))
-                if "obligations_reviewed_at" not in columns:
-                    conn.execute(text("ALTER TABLE users ADD COLUMN obligations_reviewed_at TIMESTAMP"))
-                    logger.info("Migrated: Added users.obligations_reviewed_at.")
-        if inspector.has_table("import_jobs"):
-            columns = [col["name"] for col in inspector.get_columns("import_jobs")]
-            with engine.begin() as conn:
-                if "file_extension" not in columns:
-                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN file_extension VARCHAR(8) DEFAULT ''"))
-                    logger.info("Migrated: Added import_jobs.file_extension.")
-                if "file_fingerprint" not in columns:
-                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN file_fingerprint VARCHAR(64)"))
-                    logger.info("Migrated: Added import_jobs.file_fingerprint.")
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_import_jobs_file_fingerprint ON import_jobs (file_fingerprint)"))
-                if "account_id" not in columns:
-                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN account_id VARCHAR(36)"))
-                    logger.info("Migrated: Added import_jobs.account_id.")
-                if "file_content" not in columns:
-                    blob_type = "BYTEA" if engine.dialect.name == "postgresql" else "BLOB"
-                    conn.execute(text(f"ALTER TABLE import_jobs ADD COLUMN file_content {blob_type}"))
-                    logger.info("Migrated: Added import_jobs.file_content.")
-                if "total_rows" not in columns:
-                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN total_rows INTEGER"))
-                    logger.info("Migrated: Added import_jobs.total_rows.")
-                if "processed_rows" not in columns:
-                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN processed_rows INTEGER NOT NULL DEFAULT 0"))
-                    logger.info("Migrated: Added import_jobs.processed_rows.")
-                if "cancel_requested" not in columns:
-                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN cancel_requested BOOLEAN NOT NULL DEFAULT FALSE"))
-                    logger.info("Migrated: Added import_jobs.cancel_requested.")
-                if "excluded_row_fingerprints" not in columns:
-                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN excluded_row_fingerprints TEXT"))
-                    logger.info("Migrated: Added import_jobs.excluded_row_fingerprints.")
-                if "review_overrides" not in columns:
-                    conn.execute(text("ALTER TABLE import_jobs ADD COLUMN review_overrides TEXT"))
-                    logger.info("Migrated: Added import_jobs.review_overrides.")
-        if inspector.has_table("accounts"):
-            columns = [col["name"] for col in inspector.get_columns("accounts")]
-            with engine.begin() as conn:
-                if "last_reconciled_at" not in columns:
-                    conn.execute(text("ALTER TABLE accounts ADD COLUMN last_reconciled_at TIMESTAMP"))
-                    logger.info("Migrated: Added accounts.last_reconciled_at.")
-                if "last_reconciled_balance" not in columns:
-                    conn.execute(text("ALTER TABLE accounts ADD COLUMN last_reconciled_balance NUMERIC(14,2)"))
-                    logger.info("Migrated: Added accounts.last_reconciled_balance.")
-                if "reconciliation_note" not in columns:
-                    conn.execute(text("ALTER TABLE accounts ADD COLUMN reconciliation_note TEXT"))
-                    logger.info("Migrated: Added accounts.reconciliation_note.")
-                if "credit_limit" not in columns:
-                    conn.execute(text("ALTER TABLE accounts ADD COLUMN credit_limit NUMERIC(14,2)"))
-                    logger.info("Migrated: Added accounts.credit_limit.")
-                if "minimum_payment" not in columns:
-                    conn.execute(text("ALTER TABLE accounts ADD COLUMN minimum_payment NUMERIC(14,2)"))
-                    logger.info("Migrated: Added accounts.minimum_payment.")
-                if "payment_due_date" not in columns:
-                    conn.execute(text("ALTER TABLE accounts ADD COLUMN payment_due_date DATE"))
-                    logger.info("Migrated: Added accounts.payment_due_date.")
-        if inspector.has_table("transactions"):
-            columns = [col["name"] for col in inspector.get_columns("transactions")]
-            if "status" not in columns:
-                with engine.begin() as conn:
-                    conn.execute(text("ALTER TABLE transactions ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'posted'"))
-                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_transactions_status ON transactions (status)"))
-                    logger.info("Migrated: Added transactions.status.")
-    except Exception as e:
-        logger.warning("Failed to auto-migrate schema: %s", type(e).__name__)
+    run_migrations()
 
 # ── Rate limiter ──────────────────────────────────────────────────────────────
 def _rate_limit_identity(request: Request) -> str:
