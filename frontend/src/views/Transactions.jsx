@@ -171,7 +171,7 @@ export default function Transactions({ initialFilter = "All" }) {
 
   return (
     <div className="view-transactions-activity">
-      <div style={{ padding: "0 20px" }}>
+      <div className="activity-head">
         <h1 className="activity-title">Activity</h1>
         
         {/* Search */}

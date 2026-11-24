@@ -75,3 +75,44 @@ test("command palette traps focus and restores it on Escape", async ({ page }) =
   await expect(dialog).toBeHidden();
   await expect(search).toBeFocused();
 });
+
+test("quick add fits a small phone and covers the bottom navigation", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await signedIn(page);
+  await page.getByRole("button", { name: "Skip setup" }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Add Transaction" });
+  await expect(sheet).toBeVisible();
+
+  const layout = await sheet.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const clipped = [...el.querySelectorAll("*")].filter((child) => {
+      const b = child.getBoundingClientRect();
+      if (!b.width) return false;
+      for (let p = child.parentElement; p && p !== el; p = p.parentElement) {
+        if (getComputedStyle(p).overflowX !== "visible") return false; // scrolls on purpose
+      }
+      return b.right > box.right + 1 || b.left < box.left - 1;
+    }).map((child) => child.textContent.trim().slice(0, 30));
+    const bottom = document.elementFromPoint(innerWidth / 2, innerHeight - 10);
+    return { clipped, top: box.top, sheetOnTop: el.contains(bottom) };
+  });
+  expect(layout.clipped).toEqual([]);
+  expect(layout.top).toBeGreaterThanOrEqual(0);
+  expect(layout.sheetOnTop).toBe(true);
+  await expect(page.getByRole("button", { name: "Enter an amount" })).toBeInViewport();
+});
+
+test("main views never scroll sideways on a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await signedIn(page);
+  for (const view of ["dashboard", "budgets", "transactions", "analytics", "advisor", "profile"]) {
+    await page.goto(`/?view=${view}`);
+    await page.waitForLoadState("networkidle");
+    const widest = await page.evaluate(() => Math.max(...[...document.querySelectorAll("main *")].map((el) => {
+      for (let p = el.parentElement; p; p = p.parentElement) if (["auto", "scroll"].includes(getComputedStyle(p).overflowX)) return 0;
+      return el.getBoundingClientRect().right;
+    })));
+    expect(widest, `${view} is wider than the screen`).toBeLessThanOrEqual(361);
+  }
+});

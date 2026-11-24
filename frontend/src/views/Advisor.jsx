@@ -371,14 +371,14 @@ export default function Advisor({ onNavigate }) {
 
           {/* Input */}
           <div className="chat-input-row">
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
+            <label className="chat-mode">
               <span className="sr-only">Answer mode</span>
               <select
                 value={answerMode}
                 onChange={(e) => setAnswerMode(e.target.value)}
                 disabled={streaming}
                 aria-label="Answer mode"
-                style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "8px 6px", background: "var(--surface)", color: "var(--text-primary)", fontSize: 11 }}
+                className="chat-mode-select"
               >
                 <option value="quick">Quick answer</option>
                 <option value="math">Show the math</option>

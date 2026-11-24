@@ -916,7 +916,7 @@ function QuickAddSheet({ open, onClose, onSaved, ownerId }) {
         aria-hidden={!open}
       >
         <div className="sheet-handle" />
-        <button className="btn-secondary" type="button" onClick={onClose} aria-label="Close quick add" style={{ alignSelf: "flex-end", marginBottom: 8 }}><X size={16} /> Close</button>
+        <button className="btn-secondary sheet-close" type="button" onClick={onClose} aria-label="Close quick add"><X size={16} /> Close</button>
 
         <div className="add-content">
           {/* Segmented Control */}

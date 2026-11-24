@@ -232,7 +232,7 @@ export default function Analytics({ onNavigate }) {
       </div>
 
       {/* KPI Row */}
-      <div className="account-grid" style={{ marginBottom: 24 }}>
+      <div className="account-grid kpi-grid" style={{ marginBottom: 24 }}>
         {[
           { label: "Average monthly spending", val: money(avgMonthlyExpense), sub: `Over ${months_covered} month${months_covered === 1 ? "" : "s"}` },
           { label: "Income",                   val: money(income),           sub: summary?.period_start && summary?.period_end ? formatRange(summary.period_start, summary.period_end) : "All time" },
@@ -589,7 +589,7 @@ export default function Analytics({ onNavigate }) {
             </div>
           </div>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={forecastBars} barGap={3} barCategoryGap="25%">
+            <BarChart data={forecastBars} barGap={3} barCategoryGap="25%" margin={{ top: 5, right: 28, bottom: 5, left: 0 }}>
               <CartesianGrid stroke={INK.grid} vertical={false} />
               <XAxis dataKey="cat" tick={AXIS} axisLine={false} tickLine={false} />
               <YAxis tick={AXIS} axisLine={false} tickLine={false} width={64}

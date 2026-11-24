@@ -2981,3 +2981,124 @@ input:focus, select:focus, textarea:focus {
   gap: 8px;
 }
 .add-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOBILE FIT LAYER
+   Keeps every screen inside the phone's visible area. Appended last on purpose.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Text for assistive technology only (labels that are visual noise on screen). */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* 100vh includes the area under mobile browser toolbars; dvh is what is actually visible. */
+.app { min-height: 100vh; min-height: 100dvh; }
+
+/* Quick Add: the transaction type tabs and import buttons size to their labels. */
+.add-segmented-control { gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.add-segmented-control::-webkit-scrollbar { display: none; }
+.add-segmented-control button { flex: 1 0 auto; padding: 8px 12px; white-space: nowrap; }
+.add-action-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.add-action-btn { min-width: 0; padding: 12px 8px; white-space: nowrap; }
+.add-action-btn.active { border-color: var(--primary); }
+.add-form-row { gap: 12px; }
+.row-input { flex: 1; min-width: 0; width: auto; }
+.add-submit-btn:disabled { opacity: 1; background: var(--surface-secondary); color: var(--text-muted); }
+.sheet-close { display: flex; width: fit-content; margin: 0 0 8px auto; }
+
+/* Advisor composer */
+.chat-mode { display: flex; align-items: center; }
+.chat-mode-select {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 6px;
+  background: var(--surface); color: var(--text-primary); font-size: 12px;
+}
+.chat-input { min-width: 0; }
+
+.activity-head { padding: 0 20px; }
+
+@media (max-width: 900px) {
+  /* iOS Safari zooms into any focused field under 16px and leaves the page wider
+     than the screen. max() keeps larger fields (the Quick Add amount) as they are. */
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: max(16px, 1em) !important; }
+
+  /* Sheets cover the bottom nav instead of sliding under it, and fit the visible screen. */
+  .sheet-backdrop { z-index: 1040; }
+  .bottom-sheet {
+    z-index: 1050;
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px - env(safe-area-inset-top));
+    padding: 4px 16px calc(16px + env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
+  }
+  .sheet-handle { margin: 8px auto 12px; }
+  .add-content { padding: 0; }
+  /* The save button stays reachable however long the form gets. */
+  .add-submit-btn { position: sticky; bottom: 0; z-index: 1; box-shadow: 0 -16px 16px var(--bg); }
+  .add-amount-display { font-size: clamp(40px, 13vw, 56px); }
+  .add-currency { font-size: 0.7em; }
+  .add-segmented-control, .add-amount-hint { margin-bottom: 16px; }
+  .add-action-buttons, .add-categories-wrap, .add-form-list { margin-bottom: 20px; }
+  .add-form-row { padding: 12px 16px; }
+  .custom-keypad { gap: 8px; margin-bottom: 16px; }
+  .keypad-btn { padding: 12px; font-size: 22px; }
+
+  .advisor-sidebar.open { max-height: 75vh; max-height: 75dvh; }
+
+  /* Advisor: answer mode gets its own row so the message box keeps its width. */
+  .chat-window { min-height: 40vh; min-height: 40dvh; max-height: 60vh; max-height: 60dvh; }
+  .chat-input-row { flex-wrap: wrap; gap: 8px; }
+  .chat-mode { flex: 1 0 100%; }
+  .chat-input { flex: 1 1 0; padding: 12px 14px !important; }
+  .chat-send { flex: 0 0 48px; padding: 0; justify-content: center; }
+}
+
+@media (max-width: 640px) {
+  /* Activity: one page gutter instead of three nested ones. */
+  .view-transactions-activity { padding-top: 0; }
+  .activity-head { padding: 0; }
+  .activity-title { font-size: 24px; margin-bottom: 16px; }
+  .activity-search { height: 44px; margin-bottom: 16px; }
+  .activity-filters { margin-bottom: 20px; padding-right: 24px; mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent); }
+  .activity-list { gap: 20px; }
+  .tx-group-header { padding: 0 4px; margin-bottom: 8px; }
+  .tx-group-items { padding: 0; }
+  .activity-tx-card { padding: 12px; gap: 10px; border-radius: 14px; }
+
+  /* Period picker spans the width and fits five periods on a 360px screen. */
+  .segmented { display: flex; width: 100%; }
+  .segmented button { flex: 1 0 auto; padding: 0 6px; font-size: 12px; }
+
+  /* Summary figures two per row instead of one tall card each. */
+  .summary-strip, .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .summary-strip > :last-child:nth-child(odd), .kpi-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .summary-strip .stat-card { padding: 14px 16px; }
+  .summary-strip .stat-card-value { font-size: clamp(18px, 5.5vw, 24px); overflow-wrap: anywhere; }
+  .kpi-grid .account-card { padding: 16px; min-height: 0; }
+  .kpi-grid .account-card-header { margin-bottom: 8px; }
+  .kpi-grid .account-amount { font-size: clamp(18px, 5.5vw, 24px); overflow-wrap: anywhere; }
+}
+
+@media (max-width: 640px) {
+  /* Card headers with a picker: the picker drops under the title instead of truncating. */
+  .chart-card-header { flex-wrap: wrap; gap: 12px; }
+  .chart-card-header > .premium-select { flex: 1 0 100%; width: 100%; min-width: 0; }
+
+  /* Quick Add: show that the type tabs scroll, and keep the close button compact. */
+  .add-segmented-control { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); padding-right: 24px; }
+  .sheet-close { min-height: 36px; padding: 6px 12px; }
+}
+
+/* Amount field: never wider than the sheet. Browsers that can size a field to its
+   text keep the symbol beside the number; others centre the number in the space. */
+.add-amount-display input { flex: 1 1 0; width: 0 !important; min-width: 0; padding: 0 8px; text-align: center; }
+@supports (field-sizing: content) {
+  .add-amount-display input { flex: 0 1 auto; width: auto !important; field-sizing: content; min-width: 1ch; max-width: 100%; text-align: left; }
+}
+
+@media (max-width: 480px) {
+  /* Import buttons stack icon over label so three fit on a phone. */
+  .add-action-btn { flex-direction: column; gap: 4px; padding: 10px 4px; font-size: 13px; }
+}
