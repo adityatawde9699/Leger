@@ -3,13 +3,24 @@ import sys
 from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./ledger_dev.db"
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg3_driver(cls, url: str) -> str:
+        # Neon, Render and Heroku hand out postgres:// or postgresql:// URLs, which make
+        # SQLAlchemy load psycopg2. Ledger ships psycopg 3 (and db.py passes its
+        # prepare_threshold option), so name that driver explicitly.
+        for scheme in ("postgres://", "postgresql://"):
+            if url.startswith(scheme):
+                return "postgresql+psycopg://" + url[len(scheme):]
+        return url
 
     # Auth
     auth_provider: str = "dev"
