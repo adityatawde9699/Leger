@@ -3102,3 +3102,90 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   /* Import buttons stack icon over label so three fit on a phone. */
   .add-action-btn { flex-direction: column; gap: 4px; padding: 10px 4px; font-size: 13px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DASHBOARD
+   Base rules reproduce the previous inline styles; the phone block below is
+   where the dashboard is made shorter and denser.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.position-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.position-fact { min-width: 0; padding: 16px 20px; border-left: 1px solid var(--border); }
+.position-fact-label { color: var(--text-secondary); font-size: 13px; line-height: 20px; }
+.position-fact-value { color: var(--text-primary); font-weight: 500; font-size: 20px; line-height: 28px; margin-top: 4px; }
+.position-fact-value.lead { color: var(--primary); }
+.position-fact-value.unverified { color: var(--text-muted); font-size: 14px; }
+.position-fact-hint { color: var(--text-muted); font-size: 12px; line-height: 16px; margin-top: 4px; }
+.position-notes { padding: 12px 20px 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; color: var(--text-secondary); font-size: 13px; line-height: 20px; }
+.position-why { display: flex; flex-direction: column; gap: 8px; }
+.position-why-toggle { display: none; }
+.position-action { border-top: 1px solid var(--border); padding: 16px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.position-action-body { flex: 1 1 320px; }
+.position-review { padding: 0 20px 16px; }
+
+.quality-notice .notice-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.notice-toggle { display: none; padding: 0; font-size: 12px; }
+
+.dashboard-callout { margin-bottom: 16px; padding: 20px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.dashboard-callout-body { flex: 1 1 360px; }
+
+.chart-box { height: 220px; }
+.chart-box-lead { height: 300px; }
+.chart-empty { padding: 48px 0; color: var(--text-muted); font-size: 13px; text-align: center; }
+
+.insight-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+.insight-why { margin-top: 8px; font-size: 12px; line-height: 18px; color: var(--text-muted); }
+
+@media (max-width: 640px) {
+  .dashboard-header { margin-bottom: 16px; gap: 12px; }
+  .view-dashboard .card { padding: 16px; }
+
+  /* Data-quality warning: one line, details on demand. */
+  .quality-notice .notice-detail { display: none; }
+  .quality-notice.expanded .notice-detail { display: block; margin-top: 4px; }
+  .notice-toggle { display: inline; }
+
+  /* Balance card: same content, about half the height. */
+  .balance-card { aspect-ratio: auto; min-height: 0; padding: 18px 20px; }
+  .balance-card-chip { display: none; }
+  .balance-card-label { margin-top: 16px; }
+  .balance-card-value { font-size: 32px; }
+  .balance-card-foot { margin-top: 12px; }
+  .dashboard-top { gap: 12px; margin-bottom: 12px; }
+  .dashboard-figures { gap: 10px; }
+  .dashboard-figures .account-card { padding: 14px 16px; }
+  .dashboard-figures .account-card-header { margin-bottom: 6px; }
+  .dashboard-figures .account-amount { font-size: clamp(20px, 6vw, 24px); }
+  .dashboard-figures .account-change { margin-top: 4px; font-size: 12px; line-height: 16px; }
+
+  /* Today: tighter figures; the method explanation folds behind a toggle. */
+  .position-head { padding: 12px 16px; }
+  .position-fact { padding: 12px 16px; }
+  .position-fact-label { font-size: 12px; line-height: 16px; }
+  .position-fact-value { font-size: 18px; line-height: 24px; margin-top: 2px; }
+  .position-fact-value.unverified { font-size: 13px; }
+  .position-fact-hint { font-size: 11px; line-height: 14px; margin-top: 2px; }
+  .position-notes { padding: 10px 16px 12px; }
+  .position-why { display: none; }
+  .position-notes.expanded .position-why { display: flex; }
+  .position-why-toggle { display: inline; align-self: flex-start; padding: 0; font-size: 13px; }
+  .position-action { padding: 14px 16px; gap: 12px; }
+  .position-action-body { flex-basis: 100%; }
+  .position-action .btn-primary, .position-review .btn-secondary { width: 100%; justify-content: center; }
+  .position-review { padding: 0 16px 14px; }
+
+  .dashboard-callout { padding: 16px; gap: 12px; margin-bottom: 12px; }
+  .dashboard-callout-body { flex-basis: 100%; }
+  .dashboard-callout .btn-secondary { width: 100%; justify-content: center; }
+
+  /* Charts: shorter on a phone; empty periods take one line. */
+  .chart-box { height: 180px; }
+  .chart-box-lead { height: 220px; }
+  .chart-empty { padding: 16px 0 4px; text-align: left; }
+  .view-dashboard .charts-grid { gap: 12px; margin-bottom: 12px; }
+
+  .insight-actions { gap: 4px 12px; }
+}
+/* "Useful? Yes / Needs correction / Too generic" wraps as one group. */
+.insight-feedback { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+/* Long recommended actions wrap inside their button instead of widening the card. */
+.insight-action-btn { white-space: normal; text-align: left; height: auto; min-height: 32px; padding-top: 6px; padding-bottom: 6px; max-width: 100%; }

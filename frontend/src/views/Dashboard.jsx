@@ -36,6 +36,7 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
   const [historySummary, setHistorySummary] = React.useState(null);
   const [loading,   setLoading]   = React.useState(true);
   const [timeRange, setTimeRange] = React.useState("this_month");
+  const [showQuality, setShowQuality] = React.useState(false);
   const [anomalies, setAnomalies] = React.useState([]);
   const [forecast,  setForecast]  = React.useState(null);
   const [goals, setGoals] = React.useState([]);
@@ -353,11 +354,17 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
 
       {/* Make analytical limits visible before showing recommendations. */}
       {summary?.data_quality?.warnings?.length > 0 && (
-        <div className="notice warning" style={{ marginBottom: 16 }}>
+        <div className={`notice warning quality-notice${showQuality ? " expanded" : ""}`} style={{ marginBottom: 16 }}>
           <Info aria-hidden="true" />
-          <div>
-            <strong>Analysis confidence: {summary.data_quality.coverage}</strong>
-            <div>{summary.data_quality.warnings.join(" · ")}. Insights use only the data currently in Ledger.</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="notice-head">
+              <strong>Analysis confidence: {summary.data_quality.coverage}</strong>
+              {/* Shown on phones only: the warnings collapse to keep the figures above the fold. */}
+              <button type="button" className="btn-link notice-toggle" aria-expanded={showQuality} onClick={() => setShowQuality((v) => !v)}>
+                {showQuality ? "Hide" : "Details"}
+              </button>
+            </div>
+            <div className="notice-detail">{summary.data_quality.warnings.join(" · ")}. Insights use only the data currently in Ledger.</div>
           </div>
         </div>
       )}
@@ -420,8 +427,8 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
       />}
 
       {!analyticsOnly && comparison?.status === "ready" && comparison.current.transaction_count >= 5 && comparison.previous.transaction_count >= 5 && (
-        <div className="card" style={{ marginBottom: 16, padding: 20, display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 360px" }}>
+        <div className="card dashboard-callout">
+          <div className="dashboard-callout-body">
             <div className="chart-title">Last 30 days vs the 30 before</div>
             <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: "20px", margin: "4px 0 0" }}>
               Spending {Number(comparison.changes.expenses) > 0 ? "rose" : Number(comparison.changes.expenses) < 0 ? "fell" : "was unchanged"} by <span className="num" style={{ color: "var(--text-primary)" }}>{money(Math.abs(Number(comparison.changes.expenses)))}</span>.
@@ -432,8 +439,8 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
         </div>
       )}
       {!analyticsOnly && allQuality.transaction_count > 0 && comparison?.status !== "error" && (!comparison || comparison.status !== "ready" || comparison.current.transaction_count < 5 || comparison.previous.transaction_count < 5) && (
-        <div className="card" style={{ marginBottom: 16, padding: 20, display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 360px" }}>
+        <div className="card dashboard-callout">
+          <div className="dashboard-callout-body">
             <div className="chart-title">Not enough history to compare yet</div>
             <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: "20px", margin: "4px 0 0" }}>
               Ledger needs at least five posted transactions in each of two consecutive 30-day windows. Add or import older activity to build a comparison.
@@ -554,14 +561,14 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
             <div>
               <div className="chart-title">Cash flow</div>
               <div className="chart-subtitle">
-                {flowKey === "month" ? `Income and spending across ${summary?.months_covered || monthRows.length} months` : `Income and spending, last ${dayRows.length} days`}
+                {flowRows.length === 0 ? "Nothing recorded this period" : flowKey === "month" ? `Income and spending across ${summary?.months_covered || monthRows.length} months` : `Income and spending, last ${dayRows.length} days`}
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <div className="chart-legend" aria-hidden="true">
+              {flowRows.length > 0 && <div className="chart-legend" aria-hidden="true">
                 <span><i style={{ background: INK.accent }} />Income</span>
                 <span><i style={{ background: INK.neutralLight }} />Spending</span>
-              </div>
+              </div>}
               {monthRows.length > 1 && (
                 <div className="segmented" role="group" aria-label="Cash flow scale">
                   <button type="button" aria-pressed={flowKey === "month"} onClick={() => setFlowView("months")}>Months</button>
@@ -570,7 +577,11 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
               )}
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={300}>
+          {flowRows.length === 0 ? (
+            <div className="chart-empty">No income or spending in this period</div>
+          ) : (
+          <div className="chart-box chart-box-lead">
+          <ResponsiveContainer width="100%" height="100%">
             {flowKey === "month" ? (
               <AreaChart data={flowRows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
@@ -597,6 +608,8 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
               </BarChart>
             )}
           </ResponsiveContainer>
+          </div>
+          )}
         </div>
 
         <div className="card">
@@ -607,7 +620,7 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
             </div>
           </div>
           {pieRows.length === 0 ? (
-            <div style={{ padding: "48px 0", color: "var(--text-muted)", fontSize: 13, textAlign: "center" }}>No spending in this period</div>
+            <div className="chart-empty">No spending in this period</div>
           ) : (
             <div className="ledger-list has-bars">
               {pieRows.slice(0, 7).map((r, i) => (
@@ -638,7 +651,7 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
                   <span><i style={{ background: INK.accent }} />Projected</span>
                 </div>
               </div>
-              <ResponsiveContainer width="100%" height={220}>
+              <div className="chart-box"><ResponsiveContainer width="100%" height="100%">
                 <BarChart data={forecastBars} barGap={2} barCategoryGap="36%" margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid stroke={INK.grid} vertical={false} />
                   <XAxis dataKey="cat" tick={{ ...INK.axis, fontFamily: "IBM Plex Sans, sans-serif", fontSize: 12 }} axisLine={false} tickLine={false} dy={8} />
@@ -647,7 +660,7 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
                   <Bar dataKey="actual" name="So far" fill={INK.neutral} radius={[2, 2, 0, 0]} maxBarSize={20} />
                   <Bar dataKey="projected" name="Projected" fill={INK.accent} radius={[2, 2, 0, 0]} maxBarSize={20} />
                 </BarChart>
-              </ResponsiveContainer>
+              </ResponsiveContainer></div>
               {forecast?.budget_warnings?.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
                   {forecast.budget_warnings.map((w) => (
@@ -694,33 +707,33 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
           </div>
           <div className="ledger-list">
             {dashboardInsightClaims.length > 0 ? dashboardInsightClaims.map((item) => (
-              <div key={item.id} className="ledger-row" style={{ gridTemplateColumns: "1fr", padding: "12px 0" }}>
+              <div key={item.id} className="ledger-row" style={{ gridTemplateColumns: "minmax(0, 1fr)", padding: "12px 0" }}>
                 <div>
                   <p style={{ fontSize: 14, lineHeight: "22px", color: "var(--text-primary)", margin: 0 }}>{item.claim}</p>
                   <div className="sub" style={{ marginTop: 4 }}>
                     Based on {item.evidence?.transaction_ids?.length || 0} transaction{item.evidence?.transaction_ids?.length === 1 ? "" : "s"} · {item.evidence?.method} · {item.confidence} confidence
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 8 }}>
-                    <button className="btn-secondary btn-sm" type="button" onClick={() => openInsightAction(item)}>
+                    <button className="btn-secondary btn-sm insight-action-btn" type="button" onClick={() => openInsightAction(item)}>
                       {item.recommended_action || "Review evidence"}
                     </button>
                     {insightFeedback[item.id] ? (
                       <span className="sub">Marked {insightFeedback[item.id].replace("_", " ")}</span>
                     ) : (
-                      <>
-                        <span className="sub" style={{ marginLeft: 8 }}>Useful?</span>
+                      <span className="insight-feedback sub">
+                        <span>Useful?</span>
                         {[["helpful", "Yes"], ["inaccurate", "Not accurate"], ["too_generic", "Too generic"]].map(([value, label]) => (
                           <button key={value} type="button" className="btn-link" onClick={() => sendInsightFeedback(item, value)} style={{ fontSize: 12, padding: 0 }}>
                             {label}
                           </button>
                         ))}
-                      </>
+                      </span>
                     )}
                   </div>
                 </div>
               </div>
             )) : summary.insights.map((item) => (
-              <div key={item} className="ledger-row" style={{ gridTemplateColumns: "1fr", padding: "12px 0" }}>
+              <div key={item} className="ledger-row" style={{ gridTemplateColumns: "minmax(0, 1fr)", padding: "12px 0" }}>
                 <p style={{ fontSize: 14, lineHeight: "22px", color: "var(--text-primary)", margin: 0 }}>{item}</p>
               </div>
             ))}

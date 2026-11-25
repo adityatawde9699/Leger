@@ -15,6 +15,7 @@ export default function ProactiveInsights({ onNavigate }) {
   const [insights,   setInsights]   = React.useState([]);
   const [loading,    setLoading]    = React.useState(true);
   const [feedback,   setFeedback]   = React.useState({});
+  const [openWhy,    setOpenWhy]    = React.useState(null);
   const [dismissed,  setDismissed]  = React.useState(() => {
     try {
       const stored = JSON.parse(localStorage.getItem("dismissed_insights") || "{}");
@@ -87,6 +88,7 @@ export default function ProactiveInsights({ onNavigate }) {
         {visible.map((ins, i) => {
           const cfg = TYPE_CONFIG[ins.type] || TYPE_CONFIG.info;
           const key = `${ins.text}_${i}`;
+          const hasWhy = ins.evidence?.length > 0 || ins.data_quality?.coverage;
           return (
             <div key={key} className="ledger-row" style={{ gridTemplateColumns: "auto 1fr auto", alignItems: "start", padding: "12px 0" }}>
               <span className="status-dot" style={{ background: cfg.dot, marginTop: 8 }} aria-hidden="true" />
@@ -98,40 +100,42 @@ export default function ProactiveInsights({ onNavigate }) {
                   {cfg.label}{ins.priority >= 4 ? ` · ${PRIORITY_LABEL[ins.priority]} priority` : ""}
                   {ins.action && <> · Next step: {ins.action}</>}
                 </div>
-                {(ins.evidence?.length > 0 || ins.data_quality?.coverage) && (
-                  <details style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)" }}>
-                    <summary style={{ cursor: "pointer", userSelect: "none" }}>Why am I seeing this</summary>
-                    <div style={{ paddingTop: 4, lineHeight: "18px" }}>
-                      {ins.evidence?.length > 0 && (
-                        <div>Based on {ins.evidence.length} transaction{ins.evidence.length === 1 ? "" : "s"}
-                          {ins.category ? ` in ${ins.category}` : ""}.</div>
-                      )}
-                      {ins.data_quality?.period_start && (
-                        <div>Data: {formatRange(ins.data_quality.period_start, ins.data_quality.period_end) || `${ins.data_quality.period_start} – ${ins.data_quality.period_end}`} · {ins.data_quality.coverage} coverage.</div>
-                      )}
-                      <div>Confidence: {ins.confidence || "medium"} · {ins.source === "ai" ? "AI explanation" : "Ledger calculation"}.</div>
-                    </div>
-                  </details>
-                )}
-                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginTop: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                <div className="insight-actions">
                   {ins.category && (
                     <button className="btn-link" onClick={() => onNavigate?.("transactions")} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, padding: 0, color: "var(--text-primary)" }}>
                       View {ins.category} <ChevronRight size={12} />
                     </button>
                   )}
+                  {hasWhy && (
+                    <button className="btn-link" aria-expanded={openWhy === key} onClick={() => setOpenWhy(openWhy === key ? null : key)} style={{ fontSize: 12, padding: 0 }}>
+                      {openWhy === key ? "Hide why" : "Why this?"}
+                    </button>
+                  )}
                   {ins.id && (feedback[ins.id] ? (
                     <span>Marked {feedback[ins.id].replace("_", " ")}</span>
                   ) : (
-                    <>
+                    <span className="insight-feedback">
                       <span>Useful?</span>
                       {[["helpful", "Yes"], ["inaccurate", "Needs correction"], ["too_generic", "Too generic"]].map(([value, label]) => (
                         <button key={value} className="btn-link" onClick={() => sendFeedback(ins, value)} style={{ fontSize: 12, padding: 0 }}>
                           {label}
                         </button>
                       ))}
-                    </>
+                    </span>
                   ))}
                 </div>
+                {hasWhy && openWhy === key && (
+                  <div className="insight-why">
+                    {ins.evidence?.length > 0 && (
+                      <div>Based on {ins.evidence.length} transaction{ins.evidence.length === 1 ? "" : "s"}
+                        {ins.category ? ` in ${ins.category}` : ""}.</div>
+                    )}
+                    {ins.data_quality?.period_start && (
+                      <div>Data: {formatRange(ins.data_quality.period_start, ins.data_quality.period_end) || `${ins.data_quality.period_start} – ${ins.data_quality.period_end}`} · {ins.data_quality.coverage} coverage.</div>
+                    )}
+                    <div>Confidence: {ins.confidence || "medium"} · {ins.source === "ai" ? "AI explanation" : "Ledger calculation"}.</div>
+                  </div>
+                )}
               </div>
 
               {/* Seven-day snooze: the insight can return after the user has had time to act. */}

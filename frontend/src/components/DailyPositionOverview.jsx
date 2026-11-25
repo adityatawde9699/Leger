@@ -4,12 +4,12 @@ import { useToast } from "./ui";
 
 function Fact({ label, value, currency, hint, lead }) {
   return (
-    <div style={{ minWidth: 0, padding: "16px 20px", borderLeft: "1px solid var(--border)" }} className="position-fact">
-      <div style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: "20px" }}>{label}</div>
-      <div className="num" style={{ color: value == null ? "var(--text-muted)" : lead ? "var(--primary)" : "var(--text-primary)", fontWeight: 500, fontSize: value == null ? 14 : 20, lineHeight: "28px", marginTop: 4 }}>
+    <div className="position-fact">
+      <div className="position-fact-label">{label}</div>
+      <div className={`num position-fact-value${value == null ? " unverified" : lead ? " lead" : ""}`}>
         {value == null ? "Not verified" : money(value, currency)}
       </div>
-      {hint && <div style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: "16px", marginTop: 4 }}>{hint}</div>}
+      {hint && <div className="position-fact-hint">{hint}</div>}
     </div>
   );
 }
@@ -19,6 +19,7 @@ export default function DailyPositionOverview({ position, onReviewed, nextAction
   const [showReview, setShowReview] = React.useState(false);
   const [confirmed, setConfirmed] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [showWhy, setShowWhy] = React.useState(false);
   if (!position) return null;
   if (position.error) return <div className="notice negative" role="alert" style={{ marginBottom: 16 }}>
     <span><strong>Today’s position could not load.</strong> {position.error}. Refresh before relying on these numbers.</span>
@@ -52,7 +53,7 @@ export default function DailyPositionOverview({ position, onReviewed, nextAction
 
   return (
     <section className="card position-card" aria-label="Today, this month, and next action" style={{ marginBottom: 16, padding: 0, overflow: "hidden" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+      <div className="position-head">
         <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: 15, fontWeight: 500 }}>Today</h2>
           <span className="num" style={{ color: "var(--text-muted)", fontSize: 12 }}>{formatDay(position.as_of, { year: true })} · {position.currency}</span>
@@ -70,7 +71,7 @@ export default function DailyPositionOverview({ position, onReviewed, nextAction
         <Fact label="Committed spending" value={position.committed_spend} currency={position.currency} hint="Categories with confirmed recurring rules" />
         <Fact label="Flexible spending" value={position.flexible_spend} currency={position.currency} hint="All other categories" />
       </div>
-      <div style={{ padding: "12px 20px 16px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8, color: "var(--text-secondary)", fontSize: 13, lineHeight: "20px" }}>
+      <div className={`position-notes${showWhy ? " expanded" : ""}`}>
         {upcoming.length > 0 && (
           <div>
             <span style={{ color: "var(--text-primary)" }}>Upcoming bills</span>{" · "}
@@ -80,15 +81,21 @@ export default function DailyPositionOverview({ position, onReviewed, nextAction
             {upcoming.length > 3 ? ` · ${upcoming.length - 3} more` : ""}
           </div>
         )}
-        {position.reasons.length > 0 && (
-          <div><span style={{ color: "var(--text-primary)" }}>What affects this</span> · {position.reasons.join(" ")}</div>
-        )}
-        <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{position.method}</div>
+        {/* Shown on phones only: the method text collapses behind this toggle. */}
+        <button type="button" className="btn-link position-why-toggle" aria-expanded={showWhy} onClick={() => setShowWhy((v) => !v)}>
+          {showWhy ? "Hide details" : "What affects this estimate"}
+        </button>
+        <div className="position-why">
+          {position.reasons.length > 0 && (
+            <div><span style={{ color: "var(--text-primary)" }}>What affects this</span> · {position.reasons.join(" ")}</div>
+          )}
+          <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{position.method}</div>
+        </div>
       </div>
 
       {suggested && (
-        <div style={{ borderTop: "1px solid var(--border)", padding: "16px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 320px" }}>
+        <div className="position-action">
+          <div className="position-action-body">
             <h2 style={{ margin: 0, fontSize: 15, fontWeight: 500 }}>Next action: {suggested.title}</h2>
             <p style={{ margin: "4px 0 0", color: "var(--text-secondary)", fontSize: 13, lineHeight: "20px" }}>{suggested.reason}</p>
           </div>
@@ -96,7 +103,7 @@ export default function DailyPositionOverview({ position, onReviewed, nextAction
         </div>
       )}
       {missingReview && (
-        <div style={{ padding: "0 20px 16px" }}>
+        <div className="position-review">
           <button type="button" className="btn-secondary" onClick={() => setShowReview((value) => !value)}>
             {showReview ? "Close obligations review" : "Review this month's obligations"}
           </button>
