@@ -17,7 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from .db import Base
 
@@ -252,6 +252,14 @@ class ImportJob(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    # Computed in SQL, so listing jobs can report it without loading the statement file.
+    has_payload: Mapped[bool] = column_property(file_content.isnot(None))
+
+    @property
+    def can_retry(self) -> bool:
+        """A failed or cancelled job can be retried only while its uploaded file is still stored."""
+        return self.status in ("failed", "cancelled") and bool(self.has_payload)
 
 
 class AIConversation(Base):

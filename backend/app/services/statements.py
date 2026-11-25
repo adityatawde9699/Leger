@@ -58,6 +58,14 @@ class StatementRow(BaseModel):
         return self
 
 
+class StatementError(ValueError):
+    """A problem with the uploaded statement whose message is written for the user.
+
+    The import worker shows only these messages; any other exception text stays in
+    the server log, because it can describe internals rather than the user's file.
+    """
+
+
 def _parse_date_value(value) -> date | None:
     import pandas as pd
 

@@ -6,7 +6,14 @@ const profile = {
   onboarding_completed: false, obligations_reviewed_at: null,
 };
 
-async function mockLedgerApi(page) {
+const emptySummary = {
+  income: 0, expenses: 0, net: 0, cash_income: 0, cash_expenses: 0, cash_net: 0,
+  by_category: {}, by_day: {}, by_month: {}, top_merchants: [], recurring: [], insights: [],
+  period_start: null, period_end: null, months_covered: 0,
+  data_quality: { transaction_count: 0, pending_transactions: 0, excluded_transactions: 0, failed_imports: 0, uncategorized_count: 0, unassigned_account_count: 0, stale_account_count: 0, warnings: [], coverage: "none", currency_mismatch_count: 0 },
+};
+
+async function mockLedgerApi(page, overrides = {}) {
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -14,14 +21,14 @@ async function mockLedgerApi(page) {
     const path = url.pathname.slice("/api".length);
     let body = {};
     let status = 200;
+    const override = overrides[`${request.method()} ${path}`] || overrides[path];
+    if (override) {
+      const result = override(request);
+      return route.fulfill({ status: result.status || 200, contentType: "application/json", body: result.body === undefined ? "" : JSON.stringify(result.body) });
+    }
     if (path === "/profile" && request.method() === "GET") body = profile;
     else if (path === "/profile" && request.method() === "PUT") body = { ...profile, ...JSON.parse(request.postData() || "{}") };
-    else if (path.startsWith("/summary")) body = {
-      income: 0, expenses: 0, net: 0, cash_income: 0, cash_expenses: 0, cash_net: 0,
-      by_category: {}, by_day: {}, by_month: {}, top_merchants: [], recurring: [], insights: [],
-      period_start: null, period_end: null, months_covered: 0,
-      data_quality: { transaction_count: 0, pending_transactions: 0, excluded_transactions: 0, failed_imports: 0, uncategorized_count: 0, unassigned_account_count: 0, stale_account_count: 0, warnings: [], coverage: "none", currency_mismatch_count: 0 },
-    };
+    else if (path.startsWith("/summary")) body = emptySummary;
     else if (path === "/daily-position") body = { as_of: "2026-09-25", month_end: "2026-09-30", currency: "USD", income: null, committed_spend: null, flexible_spend: null, cash_available: null, upcoming_obligations: [], reserve_remaining: null, safe_to_spend_estimate: null, status: "unavailable", reasons: ["Add and reconcile a cash, wallet, checking, or savings account."], method: "This is an estimate, not a bank balance.", obligations_reviewed_at: null };
     else if (path.startsWith("/analytics/compare")) body = { status: "insufficient_data", current: { transaction_count: 0 }, previous: { transaction_count: 0 } };
     else if (path === "/analytics/anomalies") body = [];
@@ -35,9 +42,9 @@ async function mockLedgerApi(page) {
   });
 }
 
-async function signedIn(page) {
+async function signedIn(page, overrides) {
   await page.addInitScript(() => localStorage.setItem("dev-session", JSON.stringify({ access_token: "dev-user", user: { email: "dev@ledger.local" } })));
-  await mockLedgerApi(page);
+  await mockLedgerApi(page, overrides);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 }
@@ -115,4 +122,53 @@ test("main views never scroll sideways on a phone", async ({ page }) => {
     })));
     expect(widest, `${view} is wider than the screen`).toBeLessThanOrEqual(361);
   }
+});
+
+test("a long recommended action stays inside the screen on a phone", async ({ page }) => {
+  const longText = "Review Other transactions and adjust the budget or pause discretionary spending until next month";
+  const summary = {
+    ...emptySummary,
+    insight_claims: [{
+      id: "claim-1",
+      claim: "Other is over budget by GBP 474,422.88: GBP 476,729.13 against a GBP 2,306.25 limit.",
+      evidence: { transaction_ids: ["t1", "t2"], method: "sum of posted category expenses compared with the user budget" },
+      confidence: "high",
+      recommended_action: longText,
+    }],
+  };
+  await page.setViewportSize({ width: 360, height: 740 });
+  await signedIn(page, { "/summary": () => ({ body: summary }) });
+  await page.getByRole("button", { name: "Skip setup" }).click();
+
+  const card = page.locator(".card").filter({ hasText: "What to look at" });
+  await expect(card.getByRole("button", { name: longText })).toBeVisible();
+  const overflow = await card.evaluate((el) => {
+    const right = Math.min(el.getBoundingClientRect().right, document.documentElement.clientWidth);
+    return [...el.querySelectorAll("*")]
+      .filter((child) => child.getBoundingClientRect().right > right + 1)
+      .map((child) => child.textContent.trim().slice(0, 40));
+  });
+  expect(overflow).toEqual([]);
+});
+
+test("a failed import whose file expired offers upload again and can be dismissed", async ({ page }) => {
+  let jobs = [{
+    id: "job-1", status: "failed", file_name: "acc.ods", processed_rows: 0, cancel_requested: false,
+    error_message: "This import failed. Upload the statement again.", can_retry: false, created_at: "2026-09-18T19:56:13Z",
+  }];
+  const deleted = [];
+  await signedIn(page, {
+    "GET /imports/jobs": () => ({ body: jobs }),
+    "DELETE /imports/jobs/job-1": () => { deleted.push("job-1"); jobs = []; return { status: 204 }; },
+  });
+  await page.getByRole("button", { name: "Skip setup" }).click();
+
+  const imports = page.locator(".card").filter({ hasText: "Statement imports" });
+  await expect(imports.getByText("acc.ods")).toBeVisible();
+  await expect(imports.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(imports.getByRole("button", { name: "Upload again" })).toBeVisible();
+
+  await imports.getByRole("button", { name: "Dismiss import acc.ods" }).click();
+  await expect(page.getByText("Statement imports")).toHaveCount(0);
+  expect(deleted).toEqual(["job-1"]);
 });

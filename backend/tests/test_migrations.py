@@ -89,3 +89,53 @@ def test_duplicate_source_refs_are_retagged_not_deleted(engine):
     with engine.connect() as conn:
         refs = dict(conn.execute(text("SELECT id, source_ref FROM transactions ORDER BY id")).all())
     assert refs == {"a": "fp1", "b": "dup:b", "c": "split:g", "d": "split:g"}
+
+
+def test_0004_replaces_raw_exception_text_on_failed_imports(engine):
+    from alembic import command
+    from sqlalchemy.orm import Session
+
+    from app.migrate import alembic_config
+    from app.models import ImportJob, User
+
+    with engine.begin() as conn:
+        command.upgrade(alembic_config(conn), "0003")
+    unreadable = ("Ledger couldn't read this statement. Check that it is an unedited export from your bank "
+                  "(CSV, XLS, XLSX, ODS or PDF) and upload it again.")
+    jobs = {
+        "raw": ("failed", "too many values to unpack (expected 2, got 4)"),
+        "app": ("failed", unreadable),
+        "limit": ("failed", "Statement has 6000 rows, over the 5000-row limit. Split the file and re-upload."),
+        "cancelled": ("cancelled", "Import cancelled before processing started."),
+        "done": ("done", None),
+    }
+    with Session(engine) as db:
+        db.add(User(id="migration-user"))
+        db.flush()
+        for name, (status, message) in jobs.items():
+            db.add(ImportJob(id=name, user_id="migration-user", file_name=f"{name}.csv", status=status, error_message=message))
+        db.commit()
+
+    with engine.begin() as conn:
+        command.upgrade(alembic_config(conn), "head")
+        stored = dict(conn.execute(text("SELECT id, error_message FROM import_jobs")).all())
+
+    assert stored["raw"] == "This import failed. Upload the statement again."
+    assert stored["app"] == unreadable
+    assert stored["limit"].startswith("Statement has 6000 rows")
+    assert stored["cancelled"] == "Import cancelled before processing started."
+    assert stored["done"] is None
+
+
+def test_0004_keeps_every_message_the_worker_writes():
+    import importlib.util
+    from pathlib import Path
+
+    from app.workers import imports as worker
+
+    path = Path(__file__).resolve().parents[1] / "migrations" / "versions" / "0004_scrub_import_errors.py"
+    spec = importlib.util.spec_from_file_location("m0004", path)
+    m0004 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m0004)
+    assert worker.UNREADABLE_STATEMENT in m0004.APP_MESSAGES
+    assert worker.SERVER_ERROR in m0004.APP_MESSAGES

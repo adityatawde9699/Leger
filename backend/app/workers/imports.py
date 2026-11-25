@@ -23,10 +23,18 @@ from ..models import ImportJob, Transaction, User
 from ..schemas import TransactionIn
 from ..services.auto_categorizer import categorize_batch
 from ..services.categorization_learner import get_user_overrides
-from ..services.statements import parse_csv, parse_excel, parse_pdf
+from ..services.statements import StatementError, parse_csv, parse_excel, parse_pdf
 from ..services.telemetry import record_telemetry
 
 logger = logging.getLogger("ledger.api")
+
+# Messages stored on failed jobs and shown to the user. Migration 0004 rewrites older
+# failures to these, so keep the wording in sync with it.
+UNREADABLE_STATEMENT = (
+    "Ledger couldn't read this statement. Check that it is an unedited export from your bank "
+    "(CSV, XLS, XLSX, ODS or PDF) and upload it again."
+)
+SERVER_ERROR = "Import failed because of a server error. Please retry the import."
 
 
 _BALANCE_CREDIT_TYPES = ("income", "refund", "reimbursement")
@@ -314,13 +322,17 @@ async def _process_import_job(job_id: str) -> None:
         worker_job = worker_db.get(ImportJob, job_id)
         if worker_job:
             worker_job.status = "failed"
-            # Parser/validation errors describe the user's own file and are safe to show;
-            # anything else (database, provider, internal errors) is logged, not returned.
-            if isinstance(exc, ValueError):
+            # Only StatementError messages are written for users. Other parsing failures
+            # (pandas, odf, Python errors such as a failed unpack) describe internals, so
+            # they are logged and the user gets a plain explanation instead.
+            if isinstance(exc, StatementError):
                 worker_job.error_message = str(exc)[:500]
+            elif isinstance(exc, (ValueError, KeyError, IndexError, TypeError, UnicodeError)):
+                logger.exception("import.parse_failed job=%s", job_id)
+                worker_job.error_message = UNREADABLE_STATEMENT
             else:
                 logger.exception("import.worker_failed job=%s", job_id)
-                worker_job.error_message = "Import failed because of a server error. Please retry the import."
+                worker_job.error_message = SERVER_ERROR
             worker_db.commit()
             record_telemetry(
                 "import.completed",

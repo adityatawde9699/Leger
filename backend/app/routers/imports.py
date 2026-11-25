@@ -10,15 +10,16 @@ from zipfile import BadZipFile, ZipFile
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from ..auth import get_current_user
 from ..config import settings
 from ..db import get_db
-from ..helpers import _cloud_ai_allowed, _statement_row_fingerprint
+from ..helpers import _client_ip, _cloud_ai_allowed, _statement_row_fingerprint
 from ..models import Account, ImportJob, Transaction, User
 from ..rate_limit import limiter
 from ..schemas import ImportJobOut, ImportPreviewOut, SmsParseRequest, SmsWebhookRequest, TransactionOut, UserContext
+from ..services.audit import log_event
 from ..services.auto_categorizer import categorize_batch
 from ..services.categorization_learner import get_user_overrides
 from ..services.sms_parser import parse_sms
@@ -386,6 +387,7 @@ def list_import_jobs(
     """List recent statement jobs so users can recover failed imports."""
     return (
         db.query(ImportJob)
+        .options(defer(ImportJob.file_content))  # can_retry comes from has_payload, not the file
         .filter(ImportJob.user_id == user.id)
         .order_by(ImportJob.created_at.desc())
         .limit(limit)
@@ -403,6 +405,28 @@ def get_import_job(
     if not job or job.user_id != user.id:
         raise HTTPException(status_code=404, detail="Import job not found")
     return job
+
+
+@router.delete("/imports/jobs/{job_id}", status_code=204)
+def dismiss_import(
+    request: Request,
+    job_id: str,
+    user: UserContext = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove a failed or cancelled import from the list.
+
+    Transactions it already saved are kept; only the job record and any stored file go.
+    """
+    job = db.get(ImportJob, job_id, options=[defer(ImportJob.file_content)])
+    if not job or job.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Import job not found")
+    if job.status not in ("failed", "cancelled"):
+        raise HTTPException(status_code=409, detail="Only failed or cancelled imports can be dismissed")
+    log_event(db, user_id=user.id, action="delete", resource_type="import", resource_id=job.id,
+              details={"file_name": job.file_name, "status": job.status}, ip_address=_client_ip(request))
+    db.delete(job)
+    db.commit()
 
 
 @router.post("/imports/jobs/{job_id}/retry", response_model=ImportJobOut)

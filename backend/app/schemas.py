@@ -332,6 +332,7 @@ class ImportJobOut(BaseModel):
     review_overrides: str | None = None
     row_count: int | None = None
     error_message: str | None = None
+    can_retry: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

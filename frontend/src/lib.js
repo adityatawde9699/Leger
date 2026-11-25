@@ -95,6 +95,7 @@ export async function apiFetch(path, opts = {}) {
     } catch { /* use response text */ }
     throw new Error(message || `HTTP ${res.status}`);
   }
+  if (res.status === 204) return null;  // success with no body (e.g. a dismissed import)
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("text/event-stream")) return res;
   return res.json();

@@ -3189,3 +3189,4 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .insight-feedback { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 /* Long recommended actions wrap inside their button instead of widening the card. */
 .insight-action-btn { white-space: normal; text-align: left; height: auto; min-height: 32px; padding-top: 6px; padding-bottom: 6px; max-width: 100%; }
+.import-job-actions { display: flex; align-items: center; gap: 8px; }

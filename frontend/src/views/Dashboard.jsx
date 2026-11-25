@@ -51,6 +51,7 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
   const [confirmingRecurring, setConfirmingRecurring] = React.useState(null);
   const [retryingImport, setRetryingImport] = React.useState(null);
   const [cancellingImport, setCancellingImport] = React.useState(null);
+  const [dismissingImport, setDismissingImport] = React.useState(null);
   const [showAllAnomalies, setShowAllAnomalies] = React.useState(false);
   const [dismissedAnomalies, setDismissedAnomalies] = React.useState(() => {
     try { return JSON.parse(localStorage.getItem("dismissed_anomalies") || "[]"); }
@@ -151,6 +152,23 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
       toast(e.message, "error");
     } finally {
       setCancellingImport(null);
+    }
+  };
+
+  const dismissImport = async (job) => {
+    setDismissingImport(job.id);
+    try {
+      await apiFetch(`/imports/jobs/${job.id}`, { method: "DELETE" });
+      setImportJobs((jobs) => jobs.filter((item) => item.id !== job.id));
+      toast(`Removed ${job.file_name} from imports`, "info");
+      // The failed-import warning and next action come from the summaries; refresh them quietly.
+      Promise.all([apiFetch(`/summary?range=${timeRange}`), apiFetch("/summary?range=all")])
+        .then(([current, all]) => { setSummary(current); setHistorySummary(all); })
+        .catch(() => {});
+    } catch (e) {
+      toast(e.message, "error");
+    } finally {
+      setDismissingImport(null);
     }
   };
 
@@ -466,10 +484,18 @@ export default function Dashboard({ analyticsOnly, onNavigate, onAddTransaction 
                     {job.status === "failed" ? (job.error_message || "Import failed") : job.status === "cancelled" ? (job.error_message || "Import cancelled") : job.status === "processing" ? <>Processing <span className="num">{job.processed_rows || 0}/{job.total_rows || "…"}</span> rows</> : "Waiting to process"}
                   </div>
                 </div>
-                <div>
-                  {(job.status === "failed" || job.status === "cancelled") && (
+                <div className="import-job-actions">
+                  {/* Retry needs the stored file; once it has been cleaned up, the user uploads again. */}
+                  {(job.status === "failed" || job.status === "cancelled") && (job.can_retry ? (
                     <button className="btn-secondary btn-sm" disabled={retryingImport === job.id} onClick={() => retryImport(job.id)}>
                       <RefreshCw size={12} /> {retryingImport === job.id ? "Retrying" : "Retry"}
+                    </button>
+                  ) : (
+                    <button className="btn-secondary btn-sm" onClick={onAddTransaction}>Upload again</button>
+                  ))}
+                  {(job.status === "failed" || job.status === "cancelled") && (
+                    <button className="toast-close" disabled={dismissingImport === job.id} onClick={() => dismissImport(job)} aria-label={`Dismiss import ${job.file_name}`} title="Dismiss">
+                      <X size={14} strokeWidth={1.5} />
                     </button>
                   )}
                   {["pending", "processing"].includes(job.status) && (
